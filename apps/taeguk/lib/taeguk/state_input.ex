@@ -1,9 +1,12 @@
 defmodule Taeguk.StateInput do
   @statuses ~w(PASS FAIL UNKNOWN NOT_RUN NOT_APPLICABLE)
   def create!(p) do
+    ensure!(is_map(p))
+
     fields!(
       p,
-      ~w(id command_id actor purpose requirement_ref rule_ref design_ref plan_ref artifact_ref environment_ref checks)
+      ~w(id command_id actor purpose requirement_ref rule_ref design_ref plan_ref artifact_ref environment_ref checks) ++
+        if(Map.has_key?(p, "improvement"), do: ["improvement"], else: [])
     )
 
     uuid!(p["id"])
@@ -31,6 +34,7 @@ defmodule Taeguk.StateInput do
     end)
 
     ensure!(length(Enum.uniq_by(checks, & &1["id"])) == length(checks))
+    if Map.has_key?(p, "improvement"), do: Taeguk.Improvement.validate!(p["improvement"], p)
     p
   end
 
@@ -54,6 +58,9 @@ defmodule Taeguk.StateInput do
 
         "end_run" ->
           ~w(run_id status cleanup_ref result_ref)
+
+        "improvement" ->
+          ~w(phase status evidence reason artifact_ref environment_ref plan_ref)
 
         "complete" ->
           []
@@ -96,6 +103,14 @@ defmodule Taeguk.StateInput do
         text!(p["cleanup_ref"])
         text!(p["result_ref"])
 
+      "improvement" ->
+        ensure!(
+          p["phase"] in ~w(baseline verified applied evaluated) and p["status"] in @statuses
+        )
+
+        Enum.each(~w(reason artifact_ref environment_ref plan_ref), &text!(p[&1]))
+        evidence!(p["evidence"])
+
       "complete" ->
         :ok
     end
@@ -122,13 +137,13 @@ defmodule Taeguk.StateInput do
     end)
   end
 
-  defp fields!(p, fields) do
+  def fields!(p, fields) do
     ensure!(is_map(p) and Enum.sort(Map.keys(p)) == Enum.sort(fields))
     ensure!(byte_size(Jason.encode!(p)) <= 65_536)
   end
 
-  defp text!(s), do: ensure!(is_binary(s) and byte_size(s) in 1..8192 and String.trim(s) != "")
-  defp ensure!(true), do: :ok
-  defp ensure!(_), do: invalid!()
+  def text!(s), do: ensure!(is_binary(s) and byte_size(s) in 1..8192 and String.trim(s) != "")
+  def ensure!(true), do: :ok
+  def ensure!(_), do: invalid!()
   defp invalid!, do: raise(ArgumentError, "invalid_state_input")
 end

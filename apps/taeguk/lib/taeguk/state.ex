@@ -164,7 +164,11 @@ defmodule Taeguk.State do
 
   defp apply!(w, %{"operation" => "retarget"} = p, _) do
     no_running!(w["id"])
-    doc = Map.merge(w["document"], Map.take(p, ~w(artifact_ref environment_ref)))
+
+    doc =
+      Map.merge(w["document"], Map.take(p, ~w(artifact_ref environment_ref)))
+      |> Taeguk.Improvement.reset()
+
     q("UPDATE work_items SET document=?2,completed=0 WHERE id=?1", [uuid(w["id"]), doc])
     %{operation: "retarget"}
   end
@@ -206,6 +210,13 @@ defmodule Taeguk.State do
     %{operation: "end_run", run_id: p["run_id"]}
   end
 
+  defp apply!(w, %{"operation" => "improvement"} = p, revision) do
+    no_running!(w["id"])
+    {document, detail} = Taeguk.Improvement.transition!(w, p, revision, current_observations(w))
+    q("UPDATE work_items SET document=?2 WHERE id=?1", [w["id"], document])
+    detail
+  end
+
   defp apply!(w, %{"operation" => "complete"}, _) do
     if blockers(w, current_observations(w)) != [],
       do: Repo.rollback({:conflict, "completion_evidence_missing"})
@@ -233,6 +244,10 @@ defmodule Taeguk.State do
   end
 
   defp blockers(w, observations) do
+    check_blockers(w, observations) ++ Taeguk.Improvement.blockers(w["document"], observations)
+  end
+
+  defp check_blockers(w, observations) do
     required = Enum.filter(w["document"]["checks"], & &1["required"])
 
     if required == [] do
