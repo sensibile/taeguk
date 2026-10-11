@@ -1,0 +1,206 @@
+{
+  "title": "Tidy First?",
+  "author": "Kent Beck",
+  "checked_on": "2026-10-05",
+  "scope": "2026년 10월 5일 로그인된 O’Reilly 브라우저에서 추천사와 1~33장 본문을 확인했다. 머리말·도입부·각 부의 도입·부록·색인은 정리 범위에 포함하지 않았다. 그림은 재현하지 않았다. 장별 요지는 짧은 한국어 재구성이며 전체 번역본이 아니다. 복습 질문·답·학습 순서·예제·실험 양식은 별도로 작성했다.",
+  "chapters": [
+    {
+      "chapter": 1,
+      "title_ko": "보호 구문",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch01.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 2,
+      "title_ko": "사용하지 않는 코드",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch02.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 3,
+      "title_ko": "같은 의미를 같은 모양으로",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch03.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 4,
+      "title_ko": "새 인터페이스, 기존 구현",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch04.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 5,
+      "title_ko": "읽는 순서",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch05.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 6,
+      "title_ko": "함께 바뀌는 요소의 배치",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch06.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 7,
+      "title_ko": "선언과 초기화를 가까이",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch07.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 8,
+      "title_ko": "의도를 설명하는 변수",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch08.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 9,
+      "title_ko": "의미를 설명하는 상수",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch09.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 10,
+      "title_ko": "입력을 명시하기",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch10.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 11,
+      "title_ko": "문장 묶음 구분하기",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch11.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 12,
+      "title_ko": "보조 함수 추출하기",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch12.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 13,
+      "title_ko": "한곳에 모아 보기",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch13.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 14,
+      "title_ko": "이유를 설명하는 주석",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch14.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 15,
+      "title_ko": "중복 주석 지우기",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch15.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 16,
+      "title_ko": "정리와 동작 변경 분리",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch16.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 17,
+      "title_ko": "작은 정리 이어가기",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch17.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 18,
+      "title_ko": "묶음 크기 조절",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch18.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 19,
+      "title_ko": "작업 리듬",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch19.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 20,
+      "title_ko": "뒤섞인 변경 풀기",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch20.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 21,
+      "title_ko": "먼저·직후·나중·하지 않기",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch21.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 22,
+      "title_ko": "요소 사이에 유익한 관계 만들기",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch22.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 23,
+      "title_ko": "구조와 동작의 가치",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch23.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 24,
+      "title_ko": "시간 가치와 선택 가능성",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch24.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 25,
+      "title_ko": "가치를 얻는 시점",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch25.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 26,
+      "title_ko": "미래의 선택권",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch26.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 27,
+      "title_ko": "지금의 가치와 미래의 가치 비교",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch27.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 28,
+      "title_ko": "되돌릴 수 있는 구조 변경",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch28.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 29,
+      "title_ko": "변경 관점의 결합도",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch29.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 30,
+      "title_ko": "비용과 결합의 관계",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch30.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 31,
+      "title_ko": "결합을 유지할 비용과 줄일 비용",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch31.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 32,
+      "title_ko": "응집도",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch32.html",
+      "verified": "rendered chapter text"
+    },
+    {
+      "chapter": 33,
+      "title_ko": "충분한 만큼 정리하기",
+      "url": "https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch33.html",
+      "verified": "rendered chapter text"
+    }
+  ]
+}

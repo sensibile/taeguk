@@ -1,0 +1,21 @@
+# Taeguk
+
+Mission 가설에서 작은 변경, 교차 검증, 실제 효과와 회고까지 연결하는 로컬 개발 구성이다. 현재는 에이전트·스킬·보조 CLI와 Elixir 웹/API의 초기 기반이다.
+
+- [진행 방향](docs/direction.md)
+- [구성과 실행 계약](docs/architecture.md)
+- [리서치 인덱스](docs/research/index.md)
+- [Codex 설치](docs/codex-installation.md)
+- [검증 기록](docs/validation.md)
+
+```sh
+cargo build --release --manifest-path tools/taeguk-cli/Cargo.toml --locked
+python3 scripts/install_codex.py
+python3 scripts/install_codex.py --apply
+python3 scripts/install_codex.py --check
+cd apps/taeguk
+mix deps.get
+mix phx.server
+```
+
+웹은 기본 `http://127.0.0.1:4000`, API는 `/api/health`와 `/api/capabilities`다. 작업 데이터 저장·예약 실행·자동 배포·MCP는 아직 구현하지 않았다. DB가 필요한 실제 흐름을 정하면 PostgreSQL을 연결한다.

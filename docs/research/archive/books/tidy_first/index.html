@@ -1,0 +1,312 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tidy First? 한국어 학습 노트</title><style>
+:root{--bg:#f4f2ed;--paper:#fffefa;--ink:#20312e;--muted:#52615d;--line:#d9ded5;--green:#245f4d;--wash:#e9efe8;--amber:#f5efdf}*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.85 system-ui,-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif}a{color:var(--green);text-underline-offset:4px}button,input,textarea{font:inherit}button{cursor:pointer}button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,summary:focus-visible{outline:3px solid #d59b26;outline-offset:3px}.shell{max-width:1350px;margin:auto;display:grid;grid-template-columns:250px minmax(0,1fr);gap:50px;padding:32px 40px 80px}aside{position:sticky;top:24px;align-self:start;max-height:calc(100vh - 48px);overflow:auto;padding-right:12px}.brand{font-size:24px;font-weight:800;letter-spacing:-1px}.aside-label,.eyebrow{font-size:12px;letter-spacing:.06em;font-weight:700;color:var(--green)}aside nav{display:grid;gap:6px;margin:24px 0}aside a{font-size:13px;text-decoration:none;padding:4px 7px;border-radius:5px}aside a:hover{background:var(--wash)}.toc{border-top:1px solid var(--line);padding-top:16px}.toc a{display:block;font-size:12px;line-height:1.6;padding:6px}.hero{padding:42px 0 30px;border-bottom:1px solid var(--line)}h1{font-size:clamp(34px,4vw,54px);line-height:1.22;letter-spacing:-2px;margin:15px 0 20px}h2{font-size:26px;line-height:1.4;letter-spacing:-.6px;margin:0 0 18px}h3{font-size:20px;line-height:1.5;letter-spacing:-.3px;margin:12px 0}h4{font-size:14px;margin:20px 0 5px;color:var(--green)}p{margin:10px 0 16px}.lead{font-size:19px;max-width:720px}.meta,.small{font-size:13px;color:var(--muted)}.tag{display:inline-block;background:var(--wash);padding:3px 10px;border-radius:20px;font-size:12px;font-weight:650}.hero-links{display:flex;gap:20px;flex-wrap:wrap;font-size:14px;margin-top:22px}section{margin:44px 0}.panel{border:1px solid var(--line);background:var(--paper);padding:25px;border-radius:12px}.core-item{border-bottom:1px solid var(--line);padding:14px 0}.core-item:first-child{padding-top:0}.core-item:last-child{border:0;padding-bottom:0}.core-item a{font-size:12px}.cycle{display:flex;gap:8px;align-items:center;justify-content:center;padding:18px;background:var(--green);color:#fff;border-radius:8px;margin-bottom:20px;font-size:17px;font-weight:650}.map{display:grid;grid-template-columns:1fr 1fr;gap:18px}.map>div{background:var(--wash);border-radius:10px;padding:20px}.map h3{font-size:17px;margin-top:0}.map span{font-size:12px;color:var(--muted)}.map p{font-size:14px;margin-bottom:0}.sessions{list-style:none;padding:0;counter-reset:session}.sessions li{border-bottom:1px solid var(--line);padding:15px 0}.sessions strong{display:block}.sessions span{font-size:12px;color:var(--green)}.sessions p{font-size:14px;margin-bottom:0}.toolbar{background:var(--paper);border:1px solid var(--line);padding:18px;border-radius:12px;margin:20px 0}.search-label{display:block;font-size:13px;font-weight:700}.toolbar input[type=search]{width:100%;padding:10px 13px;border:1px solid #a9b8b0;border-radius:6px;background:white;margin:6px 0 12px}.filters{display:flex;flex-wrap:wrap;gap:7px}.filters button,.export{border:1px solid #a9b8b0;background:transparent;color:var(--ink);border-radius:6px;font-size:12px;padding:6px 10px}.filters button[aria-pressed=true]{background:var(--green);color:white;border-color:var(--green)}.toolbar-bottom{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-top:12px;font-size:13px}.progress-wrap{margin:16px 0}progress{width:100%;height:8px;accent-color:var(--green)}.practice{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:28px;margin-bottom:22px;scroll-margin-top:22px}.practice[hidden]{display:none}.card-top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.understood{font-size:12px;display:flex;align-items:center;gap:6px}.understood input{accent-color:var(--green);width:17px;height:17px}.practice h3{font-size:23px;margin:14px 0 18px}.summary{font-size:17px}.caution{font-size:14px;border-left:3px solid #b5aa81;background:var(--amber);padding:12px 16px}.caution strong{display:block}.question{background:var(--wash);padding:1px 18px 14px;border-radius:8px}.question h4{margin-top:15px}.question p{margin-bottom:10px}summary{cursor:pointer;color:var(--green);font-size:14px;font-weight:650}details p{font-size:14px}details[open]>summary{margin-bottom:10px}.memo{margin:20px 0}.memo label{display:block;font-size:13px}.memo textarea{width:100%;resize:vertical;border:1px solid #a9b8b0;border-radius:6px;padding:10px;background:white;line-height:1.7}.source{font-size:12px}.hint{font-size:13px;color:var(--muted)}.empty{padding:30px;text-align:center}.code{background:#172722;color:#e5eee9;padding:24px;border-radius:10px;overflow:auto;font:13px/1.7 ui-monospace,Menlo,monospace;tab-size:4}code{font-family:ui-monospace,Menlo,monospace;font-size:.9em}.callout{padding:18px 23px;background:var(--wash);border-radius:8px}dl{display:grid;grid-template-columns:140px 1fr;gap:14px 20px}dt{font-weight:700}dd{margin:0}footer{border-top:1px solid var(--line);padding-top:22px;font-size:12px;color:var(--muted)}.skip{position:absolute;left:-9999px}.skip:focus{left:15px;top:15px;background:white;padding:10px;z-index:5}
+@media(max-width:900px){.shell{display:block;padding:20px 22px 60px}aside{position:static;max-height:none;padding:0}aside nav{display:flex;flex-wrap:wrap;margin:10px 0}.toc{display:none}.hero{padding-top:20px}.map{grid-template-columns:1fr 1fr}.practice{padding:22px}}
+@media(max-width:540px){.shell{padding:16px}.map{grid-template-columns:1fr}h1{font-size:37px}.lead{font-size:17px}.practice{padding:18px}.practice h3{font-size:21px}.cycle{font-size:14px;gap:5px}dl{display:block}dt{margin-top:18px}dd{font-size:14px}.panel{padding:19px}}
+@media print{body{background:white;font-size:11pt}.shell{display:block;padding:0}aside,.toolbar,.understood,.memo,.hero-links,.export,.progress-wrap{display:none}section{margin:22px 0}.practice{break-inside:avoid;border:1px solid #bbb;box-shadow:none}.practice[hidden]{display:block}.question details:not([open])>*:not(summary){display:block!important}.code{white-space:pre-wrap;background:#f5f5f5;color:black}a{color:inherit}.map{grid-template-columns:1fr 1fr}h1{font-size:30pt}}
+</style></head><body>
+<a class="skip" href="#main">본문으로 이동</a><div class="shell"><aside><div class="brand">Tidy First?</div><p class="aside-label">한국어 학습 노트</p><nav><a href="#plan">6회차 학습 순서</a><a href="#practices">33장 핵심 요지</a><a href="#examples">코드 연습</a></nav><div class="toc"><a href="#p1" data-jump="1">01 보호 구문</a><a href="#p2" data-jump="2">02 사용하지 않는 코드</a><a href="#p3" data-jump="3">03 같은 의미를 같은 모양으로</a><a href="#p4" data-jump="4">04 새 인터페이스, 기존 구현</a><a href="#p5" data-jump="5">05 읽는 순서</a><a href="#p6" data-jump="6">06 함께 바뀌는 요소의 배치</a><a href="#p7" data-jump="7">07 선언과 초기화를 가까이</a><a href="#p8" data-jump="8">08 의도를 설명하는 변수</a><a href="#p9" data-jump="9">09 의미를 설명하는 상수</a><a href="#p10" data-jump="10">10 입력을 명시하기</a><a href="#p11" data-jump="11">11 문장 묶음 구분하기</a><a href="#p12" data-jump="12">12 보조 함수 추출하기</a><a href="#p13" data-jump="13">13 한곳에 모아 보기</a><a href="#p14" data-jump="14">14 이유를 설명하는 주석</a><a href="#p15" data-jump="15">15 중복 주석 지우기</a><a href="#p16" data-jump="16">16 정리와 동작 변경 분리</a><a href="#p17" data-jump="17">17 작은 정리 이어가기</a><a href="#p18" data-jump="18">18 묶음 크기 조절</a><a href="#p19" data-jump="19">19 작업 리듬</a><a href="#p20" data-jump="20">20 뒤섞인 변경 풀기</a><a href="#p21" data-jump="21">21 먼저·직후·나중·하지 않기</a><a href="#p22" data-jump="22">22 요소 사이에 유익한 관계 만들기</a><a href="#p23" data-jump="23">23 구조와 동작의 가치</a><a href="#p24" data-jump="24">24 시간 가치와 선택 가능성</a><a href="#p25" data-jump="25">25 가치를 얻는 시점</a><a href="#p26" data-jump="26">26 미래의 선택권</a><a href="#p27" data-jump="27">27 지금의 가치와 미래의 가치 비교</a><a href="#p28" data-jump="28">28 되돌릴 수 있는 구조 변경</a><a href="#p29" data-jump="29">29 변경 관점의 결합도</a><a href="#p30" data-jump="30">30 비용과 결합의 관계</a><a href="#p31" data-jump="31">31 결합을 유지할 비용과 줄일 비용</a><a href="#p32" data-jump="32">32 응집도</a><a href="#p33" data-jump="33">33 충분한 만큼 정리하기</a></div></aside>
+<main id="main"><header class="hero"><span class="tag">읽기 → 설명하기 → 작게 바꾸기</span><h1>정리부터 할까?</h1><p class="lead">다음 변경을 쉽게 만드는 만큼, 작게 정리한다.</p><p class="meta">Kent Beck · O’Reilly · 원문 확인 2026년 10월 5일</p><div class="hero-links"><a href="학습노트.md">한국어 노트</a><a href="실험기록.md">실험 기록 양식</a><a href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/">원서</a></div></header>
+<section class="panel"><h2>공부하는 방법</h2><p>핵심 요지를 읽고 질문에 먼저 답하세요. 자기 코드의 사례로 설명할 수 있으면 이해 표시를 하세요. 한 번에 하나만 실험하고 실제 효과를 기록하세요.</p><p class="small">각 카드의 첫 문단은 책의 요지입니다. 질문과 해설은 학습용으로 별도 작성했습니다.</p><details><summary>확인 범위</summary><p>2026년 10월 5일 로그인된 O’Reilly 브라우저에서 추천사와 1~33장 본문을 확인했다. 머리말·도입부·각 부의 도입·부록·색인은 정리 범위에 포함하지 않았다. 그림은 재현하지 않았다. 장별 요지는 짧은 한국어 재구성이며 전체 번역본이 아니다. 복습 질문·답·학습 순서·예제·실험 양식은 별도로 작성했다.</p></details></section>
+<section class="panel"><h2>시점을 판단하는 네 가지 선택</h2><p><strong>먼저:</strong> 지금의 이해나 다음 변경을 쉽게 만드는 작은 정리가 보일 때.</p><p><strong>직후:</strong> 변경하면서 얻은 맥락을 활용하는 편이 다음에 다시 시작하는 것보다 유리할 때.</p><p><strong>나중:</strong> 당장 이익은 작지만 별도 시간에 작은 단위로 진행할 가치가 있을 때.</p><p><strong>하지 않기:</strong> 향후 변경이나 학습에서 기대하는 이익이 없을 때.</p><a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch21.html">21장 근거 원문 ↗</a></section>
+<section id="plan"><h2>6회차 학습 순서</h2><p>회차당 20~40분을 출발점으로 삼는 학습용 제안입니다. 코드를 바꾸는 실험은 별도 시간에 진행해도 됩니다.</p><ol class="sessions"><li><strong>1회차 · 흐름과 이름</strong><span>1~10장</span><p>실제 함수 하나에서 이해를 방해하는 조건이나 이름을 찾는다. 다음에 필요한 변경을 한 문장으로 적는다.</p></li><li><strong>2회차 · 경계와 설명</strong><span>11~15장</span><p>분리하면 좋은 부분과 모으면 좋은 부분을 각각 찾아 이유를 적는다.</p></li><li><strong>3회차 · 변경 단위</strong><span>16~20장</span><p>최근 변경 하나를 구조 변경과 동작 변경으로 분류한다. 검토자가 확인할 차이를 설명한다.</p></li><li><strong>4회차 · 정리 시점</strong><span>21장</span><p>현재 작업에 먼저·직후·나중·하지 않기 중 하나를 선택하고 선택이 바뀔 조건을 적는다.</p></li><li><strong>5회차 · 가치와 복구</strong><span>22~28장</span><p>현재 이익과 미래 선택을 구분한다. 기대한 이익의 가정과 되돌리는 방법을 적는다.</p></li><li><strong>6회차 · 변경의 전파</strong><span>29~33장</span><p>변경 하나가 전파되는 요소를 나열하고 최소 정리 한 가지를 실험한다.</p></li></ol></section>
+<section id="practices"><h2>33장 핵심 요지와 복습</h2><div class="progress-wrap"><div id="progress-label" aria-live="polite">이해한 항목 0 / 33</div><progress id="progress" max="33" value="0" aria-label="학습 진도"></progress></div>
+<div class="toolbar"><label for="search">내용 검색</label><input id="search" type="search" placeholder="예: 결합, 주석, 시점"><div class="filters"><button data-filter="all" aria-pressed="true">전체</button><button data-filter="1" aria-pressed="false">1부 작은 코드 정리</button><button data-filter="2" aria-pressed="false">2부 정리 작업의 관리</button><button data-filter="3" aria-pressed="false">3부 설계를 판단하는 관점</button></div><div class="toolbar-bottom"><label><input type="checkbox" id="only-pending"> 아직 이해 표시하지 않은 항목만</label><span id="result-count" role="status"></span></div></div>
+<p class="hint" id="save-status">진도와 메모는 현재 브라우저에 저장됩니다. 중요한 기록은 내보내세요. 브라우저나 파일 위치가 달라지면 기록이 보이지 않을 수 있습니다.</p><button class="export" id="export">진도와 메모 내보내기</button><p></p><article class="practice" id="p1" data-part="1">
+<div class="card-top"><span class="eyebrow">1부 · 01장</span><label class="understood"><input type="checkbox" data-done="1"> 이해했어요</label></div>
+<h3>보호 구문</h3><p class="summary">종료 조건을 먼저 드러내면 정상 흐름의 중첩을 줄일 수 있다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>중간 분기를 조기 반환으로 바꾸면 뒤의 필수 작업이 생략되지 않는가?</p><details><summary>해설 보기</summary><p>반환 뒤에 실행되어야 할 작업이 없어야 한다. 정리 전후의 호출 순서도 비교한다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note1">내 코드의 사례와 적용 조건</label><textarea id="note1" data-note="1" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch01.html" target="_blank" rel="noopener noreferrer">1장 원문 ↗</a></article><article class="practice" id="p2" data-part="1">
+<div class="card-top"><span class="eyebrow">1부 · 02장</span><label class="understood"><input type="checkbox" data-done="2"> 이해했어요</label></div>
+<h3>사용하지 않는 코드</h3><p class="summary">실행되지 않는 코드는 작은 단위로 삭제해 읽는 부담을 줄인다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>검색 결과가 없다는 이유만으로 삭제해도 될까?</p><details><summary>해설 보기</summary><p>동적 호출이나 외부 진입점이 있을 수 있다. 사용 여부가 불확실하면 관찰 근거부터 확보한다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note2">내 코드의 사례와 적용 조건</label><textarea id="note2" data-note="2" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch02.html" target="_blank" rel="noopener noreferrer">2장 원문 ↗</a></article><article class="practice" id="p3" data-part="1">
+<div class="card-top"><span class="eyebrow">1부 · 03장</span><label class="understood"><input type="checkbox" data-done="3"> 이해했어요</label></div>
+<h3>같은 의미를 같은 모양으로</h3><p class="summary">같은 일을 하는 표현을 통일하면 의미 없는 차이에 주의를 쓰지 않아도 된다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>겉모양이 비슷한 코드도 통일해야 할까?</p><details><summary>해설 보기</summary><p>먼저 의미와 부작용이 같은지 확인한다. 차이가 필요한 경우까지 없애면 안 된다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note3">내 코드의 사례와 적용 조건</label><textarea id="note3" data-note="3" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch03.html" target="_blank" rel="noopener noreferrer">3장 원문 ↗</a></article><article class="practice" id="p4" data-part="1">
+<div class="card-top"><span class="eyebrow">1부 · 04장</span><label class="understood"><input type="checkbox" data-done="4"> 이해했어요</label></div>
+<h3>새 인터페이스, 기존 구현</h3><p class="summary">호출하기 편한 인터페이스를 만들고 기존 구현에 위임해 변경의 발판을 마련한다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>새 인터페이스 도입과 내부 재작성을 한 번에 해야 할까?</p><details><summary>해설 보기</summary><p>위임부터 도입하면 계약 변화와 내부 변화의 원인을 나누어 확인할 수 있다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note4">내 코드의 사례와 적용 조건</label><textarea id="note4" data-note="4" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch04.html" target="_blank" rel="noopener noreferrer">4장 원문 ↗</a></article><article class="practice" id="p5" data-part="1">
+<div class="card-top"><span class="eyebrow">1부 · 05장</span><label class="understood"><input type="checkbox" data-done="5"> 이해했어요</label></div>
+<h3>읽는 순서</h3><p class="summary">독자가 이해하기 좋은 순서로 코드를 배치하되 다른 정리와 섞지 않는다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>항상 상위 함수를 먼저 놓는 것이 정답일까?</p><details><summary>해설 보기</summary><p>독자가 무엇을 알고 읽는지에 따라 다르다. 선언 순서가 동작에 영향을 주는 언어도 있다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note5">내 코드의 사례와 적용 조건</label><textarea id="note5" data-note="5" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch05.html" target="_blank" rel="noopener noreferrer">5장 원문 ↗</a></article><article class="practice" id="p6" data-part="1">
+<div class="card-top"><span class="eyebrow">1부 · 06장</span><label class="understood"><input type="checkbox" data-done="6"> 이해했어요</label></div>
+<h3>함께 바뀌는 요소의 배치</h3><p class="summary">같이 수정해야 하는 요소를 가까이 두면 변경을 추적하기 쉬워진다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>가까이 놓으면 결합이 사라질까?</p><details><summary>해설 보기</summary><p>아니다. 여러 곳을 함께 바꿔야 하는 관계는 남아도 탐색과 누락의 부담을 줄일 수 있다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note6">내 코드의 사례와 적용 조건</label><textarea id="note6" data-note="6" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch06.html" target="_blank" rel="noopener noreferrer">6장 원문 ↗</a></article><article class="practice" id="p7" data-part="1">
+<div class="card-top"><span class="eyebrow">1부 · 07장</span><label class="understood"><input type="checkbox" data-done="7"> 이해했어요</label></div>
+<h3>선언과 초기화를 가까이</h3><p class="summary">변수 이름과 최초 값이 가까우면 의미를 이해하기 쉽다. 데이터 의존 순서는 보존한다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>초기화를 위로 옮길 때 무엇을 확인할까?</p><details><summary>해설 보기</summary><p>참조하는 값이 준비됐는지와 실행 시점 변화에 따른 부작용을 확인한다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note7">내 코드의 사례와 적용 조건</label><textarea id="note7" data-note="7" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch07.html" target="_blank" rel="noopener noreferrer">7장 원문 ↗</a></article><article class="practice" id="p8" data-part="1">
+<div class="card-top"><span class="eyebrow">1부 · 08장</span><label class="understood"><input type="checkbox" data-done="8"> 이해했어요</label></div>
+<h3>의도를 설명하는 변수</h3><p class="summary">복잡한 식의 일부에 이름을 붙여 이해한 의미를 코드에 남긴다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>짧은 이름을 붙이기만 하면 좋아질까?</p><details><summary>해설 보기</summary><p>값이 무엇을 뜻하는지 드러나야 한다. 계산 횟수나 시점이 바뀌지 않는지도 본다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note8">내 코드의 사례와 적용 조건</label><textarea id="note8" data-note="8" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch08.html" target="_blank" rel="noopener noreferrer">8장 원문 ↗</a></article><article class="practice" id="p9" data-part="1">
+<div class="card-top"><span class="eyebrow">1부 · 09장</span><label class="understood"><input type="checkbox" data-done="9"> 이해했어요</label></div>
+<h3>의미를 설명하는 상수</h3><p class="summary">숫자와 문자열의 의미를 이름으로 드러내되 같은 값과 같은 개념을 혼동하지 않는다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>두 제한값이 모두 5이면 하나의 상수로 묶을까?</p><details><summary>해설 보기</summary><p>재시도 횟수와 보관 일수라면 바뀌는 이유가 다르므로 별개로 유지한다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note9">내 코드의 사례와 적용 조건</label><textarea id="note9" data-note="9" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch09.html" target="_blank" rel="noopener noreferrer">9장 원문 ↗</a></article><article class="practice" id="p10" data-part="1">
+<div class="card-top"><span class="eyebrow">1부 · 10장</span><label class="understood"><input type="checkbox" data-done="10"> 이해했어요</label></div>
+<h3>입력을 명시하기</h3><p class="summary">숨은 입력을 수집하는 부분과 명시적 인자를 받는 계산 부분을 나눈다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>환경 변수를 함수 안에서 직접 읽으면 무엇이 숨겨질까?</p><details><summary>해설 보기</summary><p>함수의 실제 입력과 실행 환경 의존성이 숨겨진다. 외곽에서 읽고 계산에 전달해 본다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note10">내 코드의 사례와 적용 조건</label><textarea id="note10" data-note="10" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch10.html" target="_blank" rel="noopener noreferrer">10장 원문 ↗</a></article><article class="practice" id="p11" data-part="1">
+<div class="card-top"><span class="eyebrow">1부 · 11장</span><label class="understood"><input type="checkbox" data-done="11"> 이해했어요</label></div>
+<h3>문장 묶음 구분하기</h3><p class="summary">빈 줄로 처리 단계의 경계를 드러내는 것도 유용한 작은 설계다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>모든 단계가 바로 별도 함수가 되어야 할까?</p><details><summary>해설 보기</summary><p>먼저 구분만 해도 이해가 개선되는지 본다. 추출은 이후의 별도 판단이다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note11">내 코드의 사례와 적용 조건</label><textarea id="note11" data-note="11" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch11.html" target="_blank" rel="noopener noreferrer">11장 원문 ↗</a></article><article class="practice" id="p12" data-part="1">
+<div class="card-top"><span class="eyebrow">1부 · 12장</span><label class="understood"><input type="checkbox" data-done="12"> 이해했어요</label></div>
+<h3>보조 함수 추출하기</h3><p class="summary">목적이 분명한 코드 묶음을 이름 있는 함수로 만들면 변경할 부분을 구분하기 쉽다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>함수 이름은 구현 방법과 목적 중 무엇을 설명할까?</p><details><summary>해설 보기</summary><p>호출자가 필요한 목적을 설명한다. 전달 인자가 너무 많아지면 경계가 적절한지 다시 본다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note12">내 코드의 사례와 적용 조건</label><textarea id="note12" data-note="12" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch12.html" target="_blank" rel="noopener noreferrer">12장 원문 ↗</a></article><article class="practice" id="p13" data-part="1">
+<div class="card-top"><span class="eyebrow">1부 · 13장</span><label class="understood"><input type="checkbox" data-done="13"> 이해했어요</label></div>
+<h3>한곳에 모아 보기</h3><p class="summary">잘게 흩어진 코드가 이해를 방해하면 모아서 흐름을 확인한 뒤 경계를 다시 찾는다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>작은 함수가 많을수록 항상 좋은가?</p><details><summary>해설 보기</summary><p>호출을 따라가는 부담과 공유 상태를 함께 봐야 한다. 한 화면에서 흐름을 이해하는 편이 나을 수도 있다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note13">내 코드의 사례와 적용 조건</label><textarea id="note13" data-note="13" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch13.html" target="_blank" rel="noopener noreferrer">13장 원문 ↗</a></article><article class="practice" id="p14" data-part="1">
+<div class="card-top"><span class="eyebrow">1부 · 14장</span><label class="understood"><input type="checkbox" data-done="14"> 이해했어요</label></div>
+<h3>이유를 설명하는 주석</h3><p class="summary">코드만으로 알기 어려운 배경과 발견한 의도를 다음 독자에게 남긴다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>좋은 주석의 소재는 무엇일까?</p><details><summary>해설 보기</summary><p>외부 제약, 선택 이유, 쉽게 깨지는 관계처럼 코드가 직접 말해 주지 않는 내용이다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note14">내 코드의 사례와 적용 조건</label><textarea id="note14" data-note="14" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch14.html" target="_blank" rel="noopener noreferrer">14장 원문 ↗</a></article><article class="practice" id="p15" data-part="1">
+<div class="card-top"><span class="eyebrow">1부 · 15장</span><label class="understood"><input type="checkbox" data-done="15"> 이해했어요</label></div>
+<h3>중복 주석 지우기</h3><p class="summary">코드가 이미 명확히 말하는 내용을 반복하는 주석은 제거한다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>정리 전 유용했던 주석이 정리 후 불필요할 수 있을까?</p><details><summary>해설 보기</summary><p>그렇다. 이름과 구조가 설명을 대신하게 됐는지 다시 읽어 판단한다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note15">내 코드의 사례와 적용 조건</label><textarea id="note15" data-note="15" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch15.html" target="_blank" rel="noopener noreferrer">15장 원문 ↗</a></article><article class="practice" id="p16" data-part="2">
+<div class="card-top"><span class="eyebrow">2부 · 16장</span><label class="understood"><input type="checkbox" data-done="16"> 이해했어요</label></div>
+<h3>정리와 동작 변경 분리</h3><p class="summary">구조 변경과 동작 변경을 분리하면 검토자가 각각의 의도를 판단하기 쉬워진다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>이름 변경과 요금 규칙 변경이 섞이면 무엇이 어려울까?</p><details><summary>해설 보기</summary><p>어떤 차이가 결과를 바꿨는지 찾기 어렵다. 팀의 검토 규칙 안에서 변경 단위를 나눈다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note16">내 코드의 사례와 적용 조건</label><textarea id="note16" data-note="16" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch16.html" target="_blank" rel="noopener noreferrer">16장 원문 ↗</a></article><article class="practice" id="p17" data-part="2">
+<div class="card-top"><span class="eyebrow">2부 · 17장</span><label class="understood"><input type="checkbox" data-done="17"> 이해했어요</label></div>
+<h3>작은 정리 이어가기</h3><p class="summary">하나의 정리는 다음 정리를 쉽게 만들지만 계속 확장하려는 충동도 관리해야 한다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>다음 정리를 발견하면 반드시 지금 해야 할까?</p><details><summary>해설 보기</summary><p>현재 필요한 변경을 돕는지 판단한다. 도움 없이 범위만 늘어나면 별도 목록에 남긴다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note17">내 코드의 사례와 적용 조건</label><textarea id="note17" data-note="17" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch17.html" target="_blank" rel="noopener noreferrer">17장 원문 ↗</a></article><article class="practice" id="p18" data-part="2">
+<div class="card-top"><span class="eyebrow">2부 · 18장</span><label class="understood"><input type="checkbox" data-done="18"> 이해했어요</label></div>
+<h3>묶음 크기 조절</h3><p class="summary">큰 묶음의 충돌·상호작용 비용과 작은 묶음의 검토·배포 고정비를 함께 고려한다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>작게 나누기 어려운 팀에서 살펴볼 것은?</p><details><summary>해설 보기</summary><p>변경 내용뿐 아니라 검토 대기와 배포 준비의 고정비도 관찰한다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note18">내 코드의 사례와 적용 조건</label><textarea id="note18" data-note="18" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch18.html" target="_blank" rel="noopener noreferrer">18장 원문 ↗</a></article><article class="practice" id="p19" data-part="2">
+<div class="card-top"><span class="eyebrow">2부 · 19장</span><label class="understood"><input type="checkbox" data-done="19"> 이해했어요</label></div>
+<h3>작업 리듬</h3><p class="summary">짧은 정리와 동작 변경을 반복하면 자주 바꾸는 영역부터 자연스럽게 개선된다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>전체 코드를 먼저 정리해야 시작할 수 있을까?</p><details><summary>해설 보기</summary><p>현재 변경을 막는 부분부터 다룬다. 오래 정리한다면 필요한 범위를 벗어났는지 점검한다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note19">내 코드의 사례와 적용 조건</label><textarea id="note19" data-note="19" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch19.html" target="_blank" rel="noopener noreferrer">19장 원문 ↗</a></article><article class="practice" id="p20" data-part="2">
+<div class="card-top"><span class="eyebrow">2부 · 20장</span><label class="understood"><input type="checkbox" data-done="20"> 이해했어요</label></div>
+<h3>뒤섞인 변경 풀기</h3><p class="summary">구조와 동작 변경이 뒤엉켰음을 빨리 알아차릴수록 다시 설명 가능한 순서로 만들기 쉽다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>혼합된 작업을 발견하면 바로 삭제해야 할까?</p><details><summary>해설 보기</summary><p>현재 작업을 보존한 뒤 분리 또는 재구성을 비교한다. 학습을 위해 처음부터 재현해 보는 방법도 있다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note20">내 코드의 사례와 적용 조건</label><textarea id="note20" data-note="20" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch20.html" target="_blank" rel="noopener noreferrer">20장 원문 ↗</a></article><article class="practice" id="p21" data-part="2">
+<div class="card-top"><span class="eyebrow">2부 · 21장</span><label class="understood"><input type="checkbox" data-done="21"> 이해했어요</label></div>
+<h3>먼저·직후·나중·하지 않기</h3><p class="summary">정리 시점은 즉시 얻는 이익, 미래 변경, 지금 가진 맥락과 비용을 보고 결정한다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>먼저 정리할 가장 직접적인 근거는?</p><details><summary>해설 보기</summary><p>지금의 이해나 다음 동작 변경을 분명히 쉽게 만들며, 작게 정리할 방법을 알고 있다는 것이다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note21">내 코드의 사례와 적용 조건</label><textarea id="note21" data-note="21" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch21.html" target="_blank" rel="noopener noreferrer">21장 원문 ↗</a></article><article class="practice" id="p22" data-part="3">
+<div class="card-top"><span class="eyebrow">3부 · 22장</span><label class="understood"><input type="checkbox" data-done="22"> 이해했어요</label></div>
+<h3>요소 사이에 유익한 관계 만들기</h3><p class="summary">설계는 요소와 관계를 조정해 이해와 변경에 이득을 만드는 활동이다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>관계 수가 줄었다는 사실만으로 개선인가?</p><details><summary>해설 보기</summary><p>새로 생긴 요소의 복잡성과 실제 변경 비용까지 비교해야 한다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note22">내 코드의 사례와 적용 조건</label><textarea id="note22" data-note="22" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch22.html" target="_blank" rel="noopener noreferrer">22장 원문 ↗</a></article><article class="practice" id="p23" data-part="3">
+<div class="card-top"><span class="eyebrow">3부 · 23장</span><label class="understood"><input type="checkbox" data-done="23"> 이해했어요</label></div>
+<h3>구조와 동작의 가치</h3><p class="summary">동작은 현재의 일을 수행하고 구조는 다음에 가능한 변경의 폭과 비용에 영향을 준다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>출력이 같아도 구조 변경이 가치 있을까?</p><details><summary>해설 보기</summary><p>새 요구를 구현하기 쉬워질 수 있다. 다만 기대한 가치와 실제 관찰한 효과를 구분한다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note23">내 코드의 사례와 적용 조건</label><textarea id="note23" data-note="23" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch23.html" target="_blank" rel="noopener noreferrer">23장 원문 ↗</a></article><article class="practice" id="p24" data-part="3">
+<div class="card-top"><span class="eyebrow">3부 · 24장</span><label class="understood"><input type="checkbox" data-done="24"> 이해했어요</label></div>
+<h3>시간 가치와 선택 가능성</h3><p class="summary">빨리 가치를 전달하려는 힘과 미래의 선택을 열어 두려는 힘은 서로 긴장할 수 있다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>설계 논쟁에서 서로 다른 판단이 나오는 이유는?</p><details><summary>해설 보기</summary><p>한쪽은 당장의 전달 시점을, 다른 쪽은 이후 변경 가능성을 중시할 수 있다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note24">내 코드의 사례와 적용 조건</label><textarea id="note24" data-note="24" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch24.html" target="_blank" rel="noopener noreferrer">24장 원문 ↗</a></article><article class="practice" id="p25" data-part="3">
+<div class="card-top"><span class="eyebrow">3부 · 25장</span><label class="understood"><input type="checkbox" data-done="25"> 이해했어요</label></div>
+<h3>가치를 얻는 시점</h3><p class="summary">수익과 비용은 총액뿐 아니라 발생 시점과 확실성까지 보아야 한다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>미래 절감량이 크면 지금의 정리가 항상 옳을까?</p><details><summary>해설 보기</summary><p>절감이 언제 얼마나 확실하게 생기는지와 지금 전달을 늦추는 비용을 함께 본다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note25">내 코드의 사례와 적용 조건</label><textarea id="note25" data-note="25" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch25.html" target="_blank" rel="noopener noreferrer">25장 원문 ↗</a></article><article class="practice" id="p26" data-part="3">
+<div class="card-top"><span class="eyebrow">3부 · 26장</span><label class="understood"><input type="checkbox" data-done="26"> 이해했어요</label></div>
+<h3>미래의 선택권</h3><p class="summary">아직 구현하지 않아도 나중에 더 적은 부담으로 선택할 수 있는 가능성에는 가치가 있다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>선택권을 만든다는 것은 예상 기능을 모두 만드는 뜻인가?</p><details><summary>해설 보기</summary><p>아니다. 낮은 준비 비용으로 여러 선택을 남겨 두는 것과 미리 구현하는 것은 다르다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note26">내 코드의 사례와 적용 조건</label><textarea id="note26" data-note="26" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch26.html" target="_blank" rel="noopener noreferrer">26장 원문 ↗</a></article><article class="practice" id="p27" data-part="3">
+<div class="card-top"><span class="eyebrow">3부 · 27장</span><label class="understood"><input type="checkbox" data-done="27"> 이해했어요</label></div>
+<h3>지금의 가치와 미래의 가치 비교</h3><p class="summary">정리 비용과 이후 변경 비용을 합쳐 비교하되 불확실한 미래의 이익에는 판단이 필요하다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>지금 비용이 늘어도 정리가 타당할 수 있을까?</p><details><summary>해설 보기</summary><p>반복될 변경에서 이익을 얻을 수 있다. 그 반복 가능성은 사실이 아니라 가정일 수 있다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note27">내 코드의 사례와 적용 조건</label><textarea id="note27" data-note="27" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch27.html" target="_blank" rel="noopener noreferrer">27장 원문 ↗</a></article><article class="practice" id="p28" data-part="3">
+<div class="card-top"><span class="eyebrow">3부 · 28장</span><label class="understood"><input type="checkbox" data-done="28"> 이해했어요</label></div>
+<h3>되돌릴 수 있는 구조 변경</h3><p class="summary">작은 구조 변경은 대체로 되돌리기 쉽다. 전파된 결정은 되돌리는 비용이 커질 수 있다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>코드 되돌리기만 가능하면 모든 결과를 복구할 수 있을까?</p><details><summary>해설 보기</summary><p>외부로 전송한 데이터나 바뀐 저장 상태는 별개다. 실제 복구 범위를 확인한다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note28">내 코드의 사례와 적용 조건</label><textarea id="note28" data-note="28" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch28.html" target="_blank" rel="noopener noreferrer">28장 원문 ↗</a></article><article class="practice" id="p29" data-part="3">
+<div class="card-top"><span class="eyebrow">3부 · 29장</span><label class="understood"><input type="checkbox" data-done="29"> 이해했어요</label></div>
+<h3>변경 관점의 결합도</h3><p class="summary">한 요소의 어떤 변경이 다른 요소의 변경을 요구하는지 구체적으로 보아야 한다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>호출 관계가 있다는 말만으로 충분할까?</p><details><summary>해설 보기</summary><p>아니다. 이름 변경인지 계약 변경인지, 어떤 변화가 어디까지 전파되는지 명시한다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note29">내 코드의 사례와 적용 조건</label><textarea id="note29" data-note="29" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch29.html" target="_blank" rel="noopener noreferrer">29장 원문 ↗</a></article><article class="practice" id="p30" data-part="3">
+<div class="card-top"><span class="eyebrow">3부 · 30장</span><label class="understood"><input type="checkbox" data-done="30"> 이해했어요</label></div>
+<h3>비용과 결합의 관계</h3><p class="summary">책은 연쇄적인 큰 변경이 소프트웨어 비용을 지배한다는 관점으로 결합의 중요성을 설명한다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>이 설명을 프로젝트 예산 계산 공식으로 써도 될까?</p><details><summary>해설 보기</summary><p>정확한 측정식이 아니다. 실제 큰 변경 사례를 찾아 원인과 전파 범위를 점검하는 관점으로 쓴다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note30">내 코드의 사례와 적용 조건</label><textarea id="note30" data-note="30" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch30.html" target="_blank" rel="noopener noreferrer">30장 원문 ↗</a></article><article class="practice" id="p31" data-part="3">
+<div class="card-top"><span class="eyebrow">3부 · 31장</span><label class="understood"><input type="checkbox" data-done="31"> 이해했어요</label></div>
+<h3>결합을 유지할 비용과 줄일 비용</h3><p class="summary">결합을 줄이는 데도 비용이 든다. 어떤 변경을 쉽게 만들지 선택해야 한다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>모든 결합을 없애는 것이 목표일까?</p><details><summary>해설 보기</summary><p>현재와 예상 변경에서 얻는 이익을 비교한다. 다른 종류의 변경이 더 어려워질 수도 있다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note31">내 코드의 사례와 적용 조건</label><textarea id="note31" data-note="31" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch31.html" target="_blank" rel="noopener noreferrer">31장 원문 ↗</a></article><article class="practice" id="p32" data-part="3">
+<div class="card-top"><span class="eyebrow">3부 · 32장</span><label class="understood"><input type="checkbox" data-done="32"> 이해했어요</label></div>
+<h3>응집도</h3><p class="summary">함께 변하는 요소를 같은 경계에 모으고 관련 없는 요소는 분리한다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>파일이 짧아지면 응집도가 높아졌다고 할 수 있을까?</p><details><summary>해설 보기</summary><p>줄 수보다 같은 이유로 바뀌는 요소가 모였는지, 경계를 넘는 수정이 줄었는지 본다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note32">내 코드의 사례와 적용 조건</label><textarea id="note32" data-note="32" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch32.html" target="_blank" rel="noopener noreferrer">32장 원문 ↗</a></article><article class="practice" id="p33" data-part="3">
+<div class="card-top"><span class="eyebrow">3부 · 33장</span><label class="understood"><input type="checkbox" data-done="33"> 이해했어요</label></div>
+<h3>충분한 만큼 정리하기</h3><p class="summary">비용·가치·결합·응집을 함께 보고 자신의 작업을 쉽게 만드는 만큼 정리한다.</p>
+<div class="question"><h4>복습 질문 · 별도로 작성</h4><p>오늘의 학습을 실제 작업으로 연결하려면?</p><details><summary>해설 보기</summary><p>다음 변경 하나를 정하고 방해 요소 하나만 정리한다. 예상과 실제 효과를 기록한다.</p></details></div>
+<details class="memo"><summary>내 사례와 생각</summary><label for="note33">내 코드의 사례와 적용 조건</label><textarea id="note33" data-note="33" rows="3"></textarea></details>
+<a class="source" href="https://learning.oreilly.com/library/view/tidy-first/9781098151232/ch33.html" target="_blank" rel="noopener noreferrer">33장 원문 ↗</a></article><p id="empty" hidden>검색 결과가 없습니다.</p></section>
+<section id="examples" class="panel"><h2>코드로 확인하기</h2><p>직접 만든 배송비 계산 예제로 보호 구문과 설명 변수를 연습한다. 비교 범위는 정수 무게와 참·거짓 지역 표시에 한정한다. 잘못된 조기 반환이 감사 기록을 누락하는 반례도 포함한다. 이 테스트는 모든 입력이나 운영 환경에서의 동등성을 증명하지 않는다.</p><p><a href="examples.py">예제 파일</a> · <code>python3 examples.py</code></p><p class="small">정상 결과: <code>17 checks passed; incorrect guard clause detected</code></p><details><summary>예제 코드 펼치기</summary><pre class="code"><code>&quot;&quot;&quot;학습용 독립 예제. 원서 코드의 번역 또는 복제본이 아니다.&quot;&quot;&quot;
+
+
+def fee_before(weight, remote):
+    if weight &gt; 0:
+        if weight &lt;= 20:
+            fee = 3000 + weight * 200
+            if remote:
+                fee += 4000
+            return fee
+    return None
+
+
+def fee_after(weight, remote):
+    if weight &lt;= 0:
+        return None
+    if weight &gt; 20:
+        return None
+
+    base_fee = 3000
+    per_kg_fee = 200
+    remote_fee = 4000
+    shipping_fee = base_fee + weight * per_kg_fee
+    if remote:
+        shipping_fee += remote_fee
+    return shipping_fee
+
+
+def notify_before(active, events):
+    if active:
+        events.append(&quot;notify&quot;)
+    events.append(&quot;audit&quot;)
+
+
+def notify_wrong(active, events):
+    if not active:
+        return
+    events.append(&quot;notify&quot;)
+    events.append(&quot;audit&quot;)
+
+
+def notify_after(active, events):
+    # The audit event is required for both active and inactive users.
+    if active:
+        events.append(&quot;notify&quot;)
+    events.append(&quot;audit&quot;)
+
+
+def run_checks():
+    checks = 0
+    cases = [(-1, False, None), (0, True, None), (1, False, 3200),
+             (1, True, 7200), (20, False, 7000), (20, True, 11000),
+             (21, False, None)]
+    for weight, remote, expected in cases:
+        assert fee_before(weight, remote) == expected
+        assert fee_after(weight, remote) == expected
+        checks += 2
+    for active, expected in [(False, [&quot;audit&quot;]), (True, [&quot;notify&quot;, &quot;audit&quot;])]:
+        before, after = [], []
+        notify_before(active, before)
+        notify_after(active, after)
+        assert before == after == expected
+        checks += 1
+    wrong = []
+    notify_wrong(False, wrong)
+    assert wrong != [&quot;audit&quot;]
+    checks += 1
+    print(f&quot;{checks} checks passed; incorrect guard clause detected&quot;)
+
+
+if __name__ == &quot;__main__&quot;:
+    run_checks()
+</code></pre></details><h3>직접 해보기</h3><p>기존 배송비 결과를 보존하며 구조만 정리하세요. 그다음 별도 단계에서 무료 배송 조건을 추가하고 경계 사례를 확인하세요. 두 단계의 차이를 설명해 보세요.</p></section>
+<section class="panel"><h2>마지막 점검</h2><p>다음 변경은 무엇인가? 정리가 무엇을 쉽게 만들었는가? 결과와 부작용을 보존했는가? 지금 멈춰도 되는가?</p><a href="실험기록.md">작은 정리 실험 기록하기</a><p class="small">책의 비용 설명은 정밀한 예측식이 아닙니다. 검토 절차를 줄이는 제안도 팀의 안전성과 신뢰가 전제이며 실제 팀 정책을 대신하지 않습니다.</p></section>
+<footer>전체 번역본이 아닌 간결한 한국어 요약과 독립 학습 자료입니다. 원문 코드와 그림을 복제하지 않았습니다. 원서 링크는 O’Reilly 접근 권한이 필요합니다.</footer></main></div><script>
+const key = 'tidy-first-study-ko-v1';
+let state = {done: {}, notes: {}};
+let storageAvailable = true;
+try { const raw = localStorage.getItem(key); if(raw) { const parsed = JSON.parse(raw); state = {done: parsed.done || {}, notes: parsed.notes || {}}; } } catch (_) { storageAvailable = false; }
+const cards = [...document.querySelectorAll('.practice')];
+const progress = document.getElementById('progress');
+const search = document.getElementById('search');
+const pending = document.getElementById('only-pending');
+let part = 'all';
+function save() { try { localStorage.setItem(key, JSON.stringify(state)); } catch (_) { storageAvailable = false; document.getElementById('save-status').textContent = '이 브라우저에서 자동 저장을 사용할 수 없습니다. 창을 닫기 전에 진도와 메모를 내보내세요.'; } }
+function update() {
+ const count = cards.filter(c => state.done[c.id.slice(1)] === true).length;
+ progress.value = count;
+ document.getElementById('progress-label').textContent = `이해한 항목 ${count} / ${cards.length}`;
+ const q = search.value.trim().toLocaleLowerCase();
+ let visible = 0;
+ cards.forEach(c => {
+   const id = c.id.slice(1);
+   const text = c.textContent + ' ' + (state.notes[id] || '');
+   const show = (part === 'all' || c.dataset.part === part) && (!pending.checked || state.done[id] !== true) && text.toLocaleLowerCase().includes(q);
+   c.hidden = !show;
+   if(show) visible++;
+ });
+ document.getElementById('result-count').textContent = `${visible}개 표시`;
+ document.getElementById('empty').hidden = visible !== 0;
+}
+document.querySelectorAll('[data-done]').forEach(el => {
+ el.checked = state.done[el.dataset.done] === true;
+ el.addEventListener('change', () => {state.done[el.dataset.done] = el.checked; save(); update();});
+});
+document.querySelectorAll('[data-note]').forEach(el => {
+ el.value = typeof state.notes[el.dataset.note] === 'string' ? state.notes[el.dataset.note] : '';
+ el.addEventListener('input', () => {state.notes[el.dataset.note] = el.value; save();});
+});
+function selectPart(value) {
+ part = value;
+ document.querySelectorAll('[data-filter]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.filter === value)));
+ update();
+}
+document.querySelectorAll('[data-filter]').forEach(b => b.addEventListener('click', () => selectPart(b.dataset.filter)));
+document.querySelectorAll('[data-jump]').forEach(a => a.addEventListener('click', () => {search.value = ''; pending.checked = false; selectPart('all');}));
+search.addEventListener('input', update);
+pending.addEventListener('change', update);
+document.getElementById('export').addEventListener('click', () => {
+ const lines = ['# tidy-first 학습 기록', '', `저장 시각: ${new Date().toLocaleString('ko-KR')}`, ''];
+ cards.forEach(c => {
+   const id = c.id.slice(1);
+   lines.push(`## ${id}장 ${c.querySelector('h3').textContent}`, '', `이해 표시: ${state.done[id] === true ? '완료' : '미완료'}`, '', state.notes[id] || '작성한 메모 없음', '');
+ });
+ const url = URL.createObjectURL(new Blob([lines.join('\n')], {type:'text/markdown;charset=utf-8'}));
+ const a = document.createElement('a'); a.href = url; a.download = 'tidy-first-학습기록.md'; a.click();
+ setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+window.addEventListener('beforeprint', () => document.querySelectorAll('.question details').forEach(d => {d.dataset.wasOpen = String(d.open);d.open = true;}));
+window.addEventListener('afterprint', () => document.querySelectorAll('.question details').forEach(d => {d.open = d.dataset.wasOpen === 'true';}));
+if(!storageAvailable) document.getElementById('save-status').textContent = '저장된 기록을 불러오지 못했거나 로컬 저장소를 사용할 수 없습니다. 중요한 기록은 파일로 내보내세요.';
+update();
+</script></body></html>

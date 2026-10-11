@@ -1,0 +1,8 @@
+_build/
+deps/
+target/
+__pycache__/
+*.pyc
+.env
+.taeguk/
+.DS_Store

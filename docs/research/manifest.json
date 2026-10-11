@@ -1,0 +1,82 @@
+[
+  {
+    "file": "개발-사이클.md",
+    "sha256": "a197423d19af595961e4aae33f9d266e96008ca9021d6882ab4fcd7998b5fc02",
+    "source": "/Users/tonton/Documents/study/개발-사이클.md"
+  },
+  {
+    "file": "규칙-관리.md",
+    "sha256": "93526eba4bad1dc1f4b718d175890e402f3557a4c4a7a5add4aa6355ee7193e7",
+    "source": "/Users/tonton/Documents/study/규칙-관리.md"
+  },
+  {
+    "file": "규칙-목록.md",
+    "sha256": "2a5cfde3c9636a4abead2d76997677265e362b417c182f7d5adab13dd79eea4a",
+    "source": "/Users/tonton/Documents/study/규칙-목록.md"
+  },
+  {
+    "file": "서적-검토.md",
+    "sha256": "cba64e7543450e94c8c3a44e2da15b309b86e8549194f33d8eab6a34ddc0c30f",
+    "source": "/Users/tonton/Documents/study/서적-검토.md"
+  },
+  {
+    "file": "구현-이론-보완계획.md",
+    "sha256": "eed6cb3bb66dbe4e1a5acd54745fac97c64aff41e9779832443baaa453780367",
+    "source": "/Users/tonton/Documents/study/구현-이론-보완계획.md"
+  },
+  {
+    "file": "구현-판단-지침.md",
+    "sha256": "677d78b22338d562bada4c9cfd6537f17ca038927d66a4c87369e985cb0443ab",
+    "source": "/Users/tonton/Documents/study/구현-판단-지침.md"
+  },
+  {
+    "file": "구현-기술-심화.md",
+    "sha256": "176ccb374d8f1cc8bf7722a1faab4829b50e6af97920b139e62c88eae8ef9fd8",
+    "source": "/Users/tonton/Documents/study/구현-기술-심화.md"
+  },
+  {
+    "file": "적용요소-정밀검토.md",
+    "sha256": "ba4bc1f0b142fe30d87cbc51001acbb8e94dbbaf7250a3997489b6da08e6674b",
+    "source": "/Users/tonton/Documents/study/적용요소-정밀검토.md"
+  },
+  {
+    "file": "전체-읽기-기록.md",
+    "sha256": "c90e74b3746e2f1095ad98f30d311265b3f41eba13ca5345dc8faa431f6df5e4",
+    "source": "/Users/tonton/Documents/study/전체-읽기-기록.md"
+  },
+  {
+    "file": "검증-서적-선택검토.md",
+    "sha256": "f6a1327b21543ce6f5135c930e6bf7db4e0774c02c3d82bd9a150ed9b494fe92",
+    "source": "/Users/tonton/Documents/study/검증-서적-선택검토.md"
+  },
+  {
+    "file": "검증-도구-선택-지침.md",
+    "sha256": "b777d95f4a1c91488828641ad01f4994773ff09eeca105f50df5f2b5f9d7182d",
+    "source": "/Users/tonton/Documents/study/검증-도구-선택-지침.md"
+  },
+  {
+    "file": "SRE-운영-지표-검토.md",
+    "sha256": "a67683dba45ea091ad630f0110103ebd356de7fa78b9814c1381e5e0edbf51de",
+    "source": "/Users/tonton/Documents/study/SRE-운영-지표-검토.md"
+  },
+  {
+    "file": "지표-측정-검증-설계.md",
+    "sha256": "7f31283f92fb9710554ee980a73c257a5eec8eef6e25d443d6082bcb862dfbb0",
+    "source": "/Users/tonton/Documents/study/지표-측정-검증-설계.md"
+  },
+  {
+    "file": "LLM-에이전트-적합-특징.md",
+    "sha256": "5f59299541ddef3bb0d8f68ff969e17c5a6b5c655a1b0e0aec3dea4bb56ac5f1",
+    "source": "/Users/tonton/Documents/study/LLM-에이전트-적합-특징.md"
+  },
+  {
+    "file": "에이전트-스킬-도구-분담안.md",
+    "sha256": "fe573b337ee7a9ddd961e4397779e2f6c05578a31f85a12e4922d5cda4e344a5",
+    "source": "/Users/tonton/Documents/study/에이전트-스킬-도구-분담안.md"
+  },
+  {
+    "file": "검토-안내.md",
+    "sha256": "bc579ac07e6f90316faa64de3e9b60876700b595e27d9dfbda13454d4bc88d85",
+    "source": "/Users/tonton/Documents/study/검토-안내.md"
+  }
+]

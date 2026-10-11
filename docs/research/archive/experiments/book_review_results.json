@@ -1,0 +1,77 @@
+{
+  "python": "3.13.16",
+  "sqlite": "3.53.1",
+  "uniqueness": {
+    "cases": 121,
+    "wrong_outputs_accepted_by_weak": 121,
+    "wrong_outputs_rejected_by_strong": 121
+  },
+  "conversion": {
+    "whole_number_hides_error": true,
+    "fractional_number_detects_error": true
+  },
+  "interleavings": {
+    "model": "read-check-write without a shared atomic boundary",
+    "schedules": 6,
+    "invariant_violations": 4,
+    "example": [
+      "A.read",
+      "B.read",
+      "A.write",
+      "B.write"
+    ]
+  },
+  "idempotent_replay": {
+    "atomic": [
+      {
+        "stop": "before_marker",
+        "interrupted": {
+          "markers": 0,
+          "amount": 0
+        },
+        "after_two_replays": {
+          "markers": 1,
+          "amount": 7
+        }
+      },
+      {
+        "stop": "after_marker",
+        "interrupted": {
+          "markers": 0,
+          "amount": 0
+        },
+        "after_two_replays": {
+          "markers": 1,
+          "amount": 7
+        }
+      },
+      {
+        "stop": "after_effect",
+        "interrupted": {
+          "markers": 0,
+          "amount": 0
+        },
+        "after_two_replays": {
+          "markers": 1,
+          "amount": 7
+        }
+      },
+      {
+        "stop": "after_commit",
+        "interrupted": {
+          "markers": 1,
+          "amount": 7
+        },
+        "after_two_replays": {
+          "markers": 1,
+          "amount": 7
+        }
+      }
+    ],
+    "split_transaction_counterexample": {
+      "markers": 1,
+      "amount": 0
+    },
+    "limits": "One local SQLite DB; process exit, not power loss; no broker or external effects; sequential replay."
+  }
+}
