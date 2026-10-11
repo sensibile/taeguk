@@ -27,3 +27,5 @@ CLI 오류는 JSON stderr와 exit 2, 계산된 FAIL은 정상 JSON stdout과 exi
 ## 로컬 저장 경계
 
 SQLite 상태 API는 고정된 작업/검증 계획과 현재 artifact/environment, 관측·run·명령 이벤트를 transaction으로 저장한다. 저장 파일은 단일 API가 소유하며 agent는 Rust CLI로 접근한다. [상태 API 계약](workflow-state-plan.md)과 [사용법](workflow-state-usage.md)을 따른다. 문서나 모델의 ‘완료’는 외부 효과의 확정을 대신하지 않는다.
+
+개선 작업은 선택적 고정 계약과 baseline/verified/applied/evaluated 단계를 사용한다. 실제 수정과 측정은 에이전트, 순서·현재 근거·완료 gate는 API가 맡는다. [첫 완주 결과](self-improvement-result.md)에 구현 범위와 근거를 보존한다.

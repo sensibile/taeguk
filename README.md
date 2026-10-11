@@ -8,7 +8,7 @@ Mission 가설에서 작은 변경, 교차 검증, 실제 효과와 회고까지
 - [리서치 인덱스](docs/research/index.md)
 - [Codex 설치](docs/codex-installation.md)
 - [검증 기록](docs/validation.md)
-- [태극 개선 루프](docs/self-improvement-plan.md)
+- [태극 개선 루프·실행 결과](docs/self-improvement-result.md)
 
 ```sh
 cargo build --release --manifest-path tools/taeguk-cli/Cargo.toml --locked
