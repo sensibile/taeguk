@@ -10,3 +10,5 @@ Apply the repository worktree instructions. Preserve unrelated changes. Compare 
 For work using a verifier plan, record its exact version alongside the design and starting artifact. Implement against the plan's approved oracle and expected results; do not derive or relax criteria to fit the patch. If a planned check misstates the real boundary, return evidence, affected requirement/check IDs and impact for verifier correction. Record implementation checks and repairs by those IDs, then hand the exact final artifact version to tool and LLM reviewers. Your own checks do not replace their conclusions.
 
 Read [evidence packet](references/evidence-packet.md) when exchanging results or resuming work. Apply within the user's existing scope and authority; this skill does not authorize external effects or criteria changes.
+
+For a repair, hand off the diff and affected check IDs with new evidence instead of repeating the full design or plan. Record running command handles; coordinate shared test resources using the re-verification reference in $taeguk-plan-cross-verification.

@@ -11,6 +11,8 @@ When planning a software change, read the original request and design before imp
 
 Read [evidence packet](references/evidence-packet.md) when exchanging results or resuming work. Apply within the user's existing scope and authority; this skill does not authorize external effects or criteria changes.
 
+For repairs or shared-resource execution, use [re-verification and handoff](references/reverification.md). Keep fixed criteria while selecting affected checks, documenting evidence reuse and returning resources promptly.
+
 Use [check selection](references/check-selection.md) to choose applicable observation pairs and return an executable plan.
 
 분석·제품 과업에서는 원래 질문에 대한 답, 처리·계산 정확성, 전달과 실제 사용 효과 중 어떤 부분을 각 검사가 확인하는지 나눈다. 목적에 대한 완료 검토는 $taeguk-work-contract의 참고를 사용한다. 같은 원본의 합계 일치로 해석의 타당성이나 사용자 부담 감소까지 확인했다고 보고하지 않는다.
