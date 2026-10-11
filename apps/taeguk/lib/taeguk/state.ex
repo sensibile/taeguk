@@ -388,10 +388,24 @@ defmodule Taeguk.State do
       try do
         fun.()
       rescue
-        ArgumentError -> {:error, {:invalid, "invalid_state_input"}}
-        KeyError -> {:error, {:invalid, "invalid_state_input"}}
-        DBConnection.ConnectionError -> {:error, {:unavailable, "database_unavailable"}}
-        Exqlite.Error -> {:error, {:unavailable, "database_operation_failed"}}
+        ArgumentError ->
+          {:error, {:invalid, "invalid_state_input"}}
+
+        KeyError ->
+          {:error, {:invalid, "invalid_state_input"}}
+
+        DBConnection.ConnectionError ->
+          {:error, {:unavailable, "database_unavailable"}}
+
+        error in Exqlite.Error ->
+          reason =
+            if error.message in [
+                 "Database is busy",
+                 "database is locked",
+                 "database table is locked"
+               ], do: "database_busy", else: "database_operation_failed"
+
+          {:error, {:unavailable, reason}}
       end
     else
       {:error, {:unavailable, "state_not_configured"}}

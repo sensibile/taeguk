@@ -326,4 +326,19 @@ defmodule Taeguk.StateTest do
     assert {:ok, page2} = State.history(p["id"], 25)
     assert Enum.map(page2, & &1["revision"]) == [26, 27, 28]
   end
+
+  test "known SQLite contention is distinct from general SQL failure" do
+    p = fixture("tool")
+    path = Application.fetch_env!(:taeguk, Repo)[:database]
+    {:ok, connection} = Exqlite.Sqlite3.open(path)
+
+    try do
+      :ok = Exqlite.Sqlite3.execute(connection, "BEGIN IMMEDIATE")
+      assert {:error, {:unavailable, "database_busy"}} = State.command(p["id"], observation(1))
+      :ok = Exqlite.Sqlite3.execute(connection, "ROLLBACK")
+      assert {:ok, _} = State.command(p["id"], observation(1))
+    after
+      Exqlite.Sqlite3.close(connection)
+    end
+  end
 end
