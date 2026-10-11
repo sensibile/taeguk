@@ -1,0 +1,24 @@
+test_collision_preflight_preserves_all_files (test_install.InstallerTest.test_collision_preflight_preserves_all_files) ... ok
+test_dry_run_does_not_write (test_install.InstallerTest.test_dry_run_does_not_write) ... ok
+test_install_check_idempotence_and_uninstall (test_install.InstallerTest.test_install_check_idempotence_and_uninstall) ... ok
+test_modified_managed_file_blocks_update_and_removal (test_install.InstallerTest.test_modified_managed_file_blocks_update_and_removal) ... ok
+test_non_object_receipt_is_rejected (test_install.InstallerTest.test_non_object_receipt_is_rejected) ... ok
+test_symlink_parent_is_rejected (test_install.InstallerTest.test_symlink_parent_is_rejected) ... ok
+test_unsafe_receipt_is_rejected (test_install.InstallerTest.test_unsafe_receipt_is_rejected) ... ok
+test_write_failure_rolls_back (test_install.InstallerTest.test_write_failure_rolls_back) ... ok
+test_broken_link_and_unclosed_fence_fail (test_rules.RuleCheckTest.test_broken_link_and_unclosed_fence_fail) ... ok
+test_cli_failure_has_nonzero_exit (test_rules.RuleCheckTest.test_cli_failure_has_nonzero_exit) ... ok
+test_current_registry_passes (test_rules.RuleCheckTest.test_current_registry_passes) ... ok
+test_duplicate_id_fails (test_rules.RuleCheckTest.test_duplicate_id_fails) ... ok
+test_escaping_reference_fails (test_rules.RuleCheckTest.test_escaping_reference_fails) ... ok
+test_invalid_status_fails (test_rules.RuleCheckTest.test_invalid_status_fails) ... ok
+test_missing_approval_blocks_approved_rule (test_rules.RuleCheckTest.test_missing_approval_blocks_approved_rule) ... ok
+test_proposed_with_approval_fails (test_rules.RuleCheckTest.test_proposed_with_approval_fails) ... ok
+test_semantic_enforcement_claim_fails (test_rules.RuleCheckTest.test_semantic_enforcement_claim_fails) ... ok
+test_wrong_existing_rule_heading_fails (test_rules.RuleCheckTest.test_wrong_existing_rule_heading_fails) ... ok
+test_wrong_heading_fails (test_rules.RuleCheckTest.test_wrong_heading_fails) ... ok
+
+----------------------------------------------------------------------
+Ran 19 tests in 0.261s
+
+OK

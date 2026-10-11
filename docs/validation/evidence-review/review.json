@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "target_version": "02c4d9e plus listed working-tree artifacts, observed 2026-10-11",
+  "criteria_source": "BOSS requested Taeguk improvements; existing REQ-001, REQ-006, VER-003, VER-004 remain unchanged",
+  "artifacts": [
+    {
+      "path": "tools/taeguk-cli/src/main.rs",
+      "sha256": "652df51073bd9db7ee04d4f4174f4cc36abfb88d60aea5b3de5acc3964c2856e"
+    },
+    {
+      "path": "tools/taeguk-cli/src/audit.rs",
+      "sha256": "825653cb4ffebd056f4c59acc9c4a4f6bb310990486108388d4a07e0927b7cf8"
+    },
+    {
+      "path": "docs/evidence-review.md",
+      "sha256": "251e3cd8563a982d15ea871149ffa68b556c943b95b9db83d7be3ae81caf15ea"
+    },
+    {
+      "path": "docs/architecture.md",
+      "sha256": "dfdf2440f3e6ad9064c54f026c3eaa906836ee41f089febc2d89f37a891d7998"
+    },
+    {
+      "path": "codex/skills/taeguk-work-contract/references/completion-review.md",
+      "sha256": "759099de8c199e423a43c7a0e3badddee411b01831c6b28eba57b0fb2a97d4a2"
+    },
+    {
+      "path": "codex/skills/taeguk-work-contract/SKILL.md",
+      "sha256": "dc1c71d945b2a61737772a23cc786f76d59da8e17555c19773d72724d36e4240"
+    },
+    {
+      "path": "codex/skills/taeguk-plan-cross-verification/SKILL.md",
+      "sha256": "aa6262be818401e4a2b3eec7a5b8dabef586b0e0ebdca4ea825d285ff21e7653"
+    },
+    {
+      "path": "codex/skills/taeguk-learn-from-outcome/SKILL.md",
+      "sha256": "bfa1078ac6bc820da9e372d35e839d920fd77363fe0cfb69e777c8cfd19fe262"
+    },
+    {
+      "path": "codex/agents/taeguk_coordinator.toml",
+      "sha256": "a040d60811174d4a353360675673d385740f7b8cca39456f1683438561f2c8af"
+    },
+    {
+      "path": "codex/agents/taeguk_verifier.toml",
+      "sha256": "173f4dbb0063299049a0caa4e476c9da4ec3157d476b4620e2ad8b2933a3704b"
+    },
+    {
+      "path": "codex/agents/taeguk_outcome_observer.toml",
+      "sha256": "f8f9bea20bae6127c0aebf5caf0388944567c1c7a37e1ae0789fc126050e311e"
+    }
+  ],
+  "checks": [
+    {
+      "id": "C1",
+      "status": "PASS",
+      "reason": "15 Rust tests passed, including drift and missing support cases",
+      "oracle": "observed file drift and state preservation cases",
+      "command": "cargo test --locked --manifest-path tools/taeguk-cli/Cargo.toml",
+      "evidence": [
+        {
+          "path": "docs/validation/evidence-review/rust-tests.txt",
+          "sha256": "599cefa8f94f33cdc0cac132e545e0c2425a18b304101015c33e7280f904e492"
+        }
+      ]
+    },
+    {
+      "id": "C2",
+      "status": "PASS",
+      "reason": "19 installer and rule checker regression tests passed",
+      "oracle": "existing preservation and rule registry checks",
+      "command": "python3 -m unittest discover -s tests -v",
+      "evidence": [
+        {
+          "path": "docs/validation/evidence-review/python-tests.txt",
+          "sha256": "09417bceff7ae947f358c5e347b5a21711cb0150076cc9996939b9b10a444eaf"
+        }
+      ]
+    },
+    {
+      "id": "C3",
+      "status": "PASS",
+      "reason": "3 changed skills passed format validator",
+      "oracle": "skill creator structural validator",
+      "command": "quick_validate.py changed skills",
+      "evidence": [
+        {
+          "path": "docs/validation/evidence-review/skill-validation.txt",
+          "sha256": "ea2e38cff45d4c7173a1e872e4b0847400818c57407941bc6cd2bba3a62265d9"
+        }
+      ]
+    },
+    {
+      "id": "C4",
+      "status": "PASS",
+      "reason": "40 installed payload files matched source hashes",
+      "oracle": "installer checks actual local managed files",
+      "command": "python3 scripts/install_codex.py --check",
+      "evidence": [
+        {
+          "path": "docs/validation/evidence-review/install-check.json",
+          "sha256": "958fadf52d8b74afd2c57df65c2df2f55a47fdaf1ed661b68febd96fc9de1ca5"
+        }
+      ]
+    },
+    {
+      "id": "C5",
+      "status": "NOT_RUN",
+      "reason": "no new product task has been performed with revised guidance",
+      "oracle": "original user question and repeat-use burden",
+      "command": null,
+      "evidence": []
+    }
+  ],
+  "requirements": [
+    {
+      "id": "R1",
+      "expectation": "trace requirement claims to matching evidence and preserve statuses",
+      "status": "PASS",
+      "check_ids": [
+        "C1"
+      ]
+    },
+    {
+      "id": "R2",
+      "expectation": "install updated skills, roles and CLI while preserving unrelated configuration",
+      "status": "PASS",
+      "check_ids": [
+        "C2",
+        "C3",
+        "C4"
+      ]
+    },
+    {
+      "id": "R3",
+      "expectation": "improve depth of analysis and reduce user review burden in actual work",
+      "status": "UNKNOWN",
+      "check_ids": [
+        "C5"
+      ]
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "Q1",
+      "impact": "guidance may still fail to produce a useful user answer",
+      "investigation": "reviewed prior Midas report and handoff; identified unresolved interpretation and repeated review burden; no fresh product execution yet",
+      "next_action": "apply revised guidance to one bounded product analysis and inspect remaining user decisions"
+    }
+  ],
+  "effect_status": "UNKNOWN",
+  "effect_reason": "installation observed; actual analysis quality and user burden reduction not measured"
+}

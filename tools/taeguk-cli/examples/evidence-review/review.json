@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "target_version": "synthetic-v1",
+  "criteria_source": "documentation example, not approved product criteria",
+  "artifacts": [
+    {
+      "path": "artifact.txt",
+      "sha256": "fafc6c74f6e00af6fe1d2ca9e508f0921783c5348bfc997a47011759136c9f75"
+    }
+  ],
+  "checks": [
+    {
+      "id": "C1",
+      "status": "PASS",
+      "reason": "synthetic declaration only",
+      "oracle": "synthetic example",
+      "command": null,
+      "evidence": [
+        {
+          "path": "observation.txt",
+          "sha256": "2cba8959769160da7f464a24a22ed40ec1a63b62c0e52a94b712bbc5f7e8809a"
+        }
+      ]
+    },
+    {
+      "id": "C2",
+      "status": "NOT_RUN",
+      "reason": "repeat use not observed",
+      "oracle": "original user workflow",
+      "command": null,
+      "evidence": []
+    }
+  ],
+  "requirements": [
+    {
+      "id": "R1",
+      "expectation": "example processing",
+      "status": "PASS",
+      "check_ids": [
+        "C1"
+      ]
+    },
+    {
+      "id": "R2",
+      "expectation": "repeat use with less manual work",
+      "status": "UNKNOWN",
+      "check_ids": [
+        "C2"
+      ]
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "Q1",
+      "impact": "repeat use burden is unresolved",
+      "investigation": "no user repeat-use observation in this synthetic example",
+      "next_action": "observe the authorized repeat-use flow"
+    }
+  ],
+  "effect_status": "UNKNOWN",
+  "effect_reason": "synthetic example only"
+}

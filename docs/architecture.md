@@ -18,6 +18,8 @@
 
 CLI 오류는 JSON stderr와 exit 2, 계산된 FAIL은 정상 JSON stdout과 exit 0이다. 실행 오류와 검사 판정은 서로 다르다. 빈 검사 목록이나 효과 미확인에는 PASS를 주지 않는다.
 
+`taeguk audit review.json root`는 요구·검사 ID와 실제 파일 참조를 연결하는 선택적 점검이다. 전체 완료 판정을 출력하지 않는다. [입력과 한계](evidence-review.md)를 확인한다.
+
 ## 다음 저장 경계
 
 웹/API 초기 기반은 상태를 저장하지 않는다. 실제 제품의 업무·시도·실행·아티팩트·검사·효과·승인 참조가 정해진 뒤 PostgreSQL schema를 설계한다. 문서나 모델의 ‘완료’는 외부 효과의 확정을 대신하지 않는다.

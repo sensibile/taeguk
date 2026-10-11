@@ -1,0 +1,10 @@
+{
+  "status": "PASS",
+  "scope": "rule_registry_structure_only",
+  "errors": [],
+  "limits": [
+    "no semantic rule validation",
+    "no approval authentication",
+    "no product verification"
+  ]
+}

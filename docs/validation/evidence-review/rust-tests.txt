@@ -1,0 +1,22 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running unittests src/main.rs (tools/taeguk-cli/target/debug/deps/taeguk-6dd1112364ccfb8b)
+
+running 15 tests
+test tests::excessive_count_precision_is_rejected ... ok
+test tests::invalid_and_overflow_rejected ... ok
+test tests::confirmed_lower_bound_passes ... ok
+test tests::missing_target_is_unknown ... ok
+test tests::no_data_is_unknown ... ok
+test tests::unknown_blocks_ambiguous_pass ... ok
+test tests::unknown_bounds_can_fail ... ok
+test tests::symlink_is_rejected ... ok
+test tests::verifier_requires_real_file_and_effect ... ok
+test audit::tests::linked_checks_do_not_claim_completion_or_effect ... ok
+test audit::tests::ambiguous_ids_and_uninvestigated_questions_are_rejected ... ok
+test audit::tests::declarations_without_files_or_support_stay_unlinked ... ok
+test audit::tests::unsafe_or_missing_evidence_is_an_input_error ... ok
+test audit::tests::evidence_and_artifact_drift_break_claim_links ... ok
+test audit::tests::statuses_are_preserved_without_false_pass_support ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
