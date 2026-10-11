@@ -2,6 +2,8 @@
 
 Start with the approved user outcome, exact artifact and failure modes. Choose only applicable rows. Tools below are candidates, not installed capabilities or mandatory dependencies. Record command, environment, oracle, raw evidence and limitations for each chosen check. Never invent a passing threshold.
 
+For a software change, prepare this plan from the original request and design before implementation. Identify the plan by a commit/blob or another stable version. For each chosen check, connect the requirement and claim to the oracle source, expected result, tool/LLM/mixed method, responsible role, exact artifact and environment, scope/exclusions, raw evidence location, gaps and current status. Mixed claims require actual observation for the inferred part. Keep unexecuted work NOT_RUN. The implementer and later reviewers share this plan version; repairs point back to affected check IDs and trigger verifier-selected re-checks. The plan records approved criteria and must not reverse-engineer them from the implementation.
+
 | Changed property | Primary evidence | Cross-observation | Candidate tool surface |
 | --- | --- | --- | --- |
 | User flow or UI | Execute acceptance examples through the real browser | Observe API result and durable effect; keyboard/accessibility where relevant | Browser automation, accessibility checks, HTTP client |

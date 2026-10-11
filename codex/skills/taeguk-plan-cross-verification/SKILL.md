@@ -7,6 +7,8 @@ description: "Select checks and cross-observations by change attributes; use whe
 
 Identify behavior, state, concurrency, contract, resource, security and delivery attributes actually changed. Select a primary check and a different observation where needed. Explain independence and exclusions. Contract plus stored effect, model plus real parallel execution, or load plus resource evidence are examples. Do not require every tool for every task.
 
+When planning a software change, read the original request and design before implementation. Give the plan an exact version and connect each check to its requirement, approved oracle, expected result source, method (tool, LLM or mixed), owner, artifact/environment, scope, evidence location, gaps and status. Mixed claims that arise from inference need a separate observation or reproduction. Keep checks NOT_RUN until executed. The implementer and reviewers use the same plan version; after a repair, name the affected checks for re-verification. Do not infer acceptance criteria from implementation output or create new global thresholds.
+
 Read [evidence packet](references/evidence-packet.md) when exchanging results or resuming work. Apply within the user's existing scope and authority; this skill does not authorize external effects or criteria changes.
 
 Use [check selection](references/check-selection.md) to choose applicable observation pairs and return an executable plan.

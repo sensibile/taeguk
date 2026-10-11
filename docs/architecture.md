@@ -4,7 +4,11 @@
 
 에이전트는 맥락·대안·다음 행동, 스킬은 반복 절차, 도구는 계산·실행 결과·상태 조회를 맡는다. 현재 CLI는 읽기 기반 계산과 증거 대조만 수행한다. 실행 잠금·권한·영속 workflow engine을 구현했다고 주장하지 않는다.
 
-기본 역할은 `taeguk_coordinator`, `taeguk_implementer`, `taeguk_verifier`다. `taeguk_structure_reviewer`, `taeguk_outcome_observer`, `taeguk_rule_reviewer`는 해당 작업에서 선택해 사용한다. 구성이 역할 생성을 자동 예약하거나 위임하는 것은 아니다.
+흐름 역할은 `taeguk_coordinator` → `taeguk_designer` → `taeguk_verifier`(구현 전 계획) → `taeguk_implementer` → `taeguk_tool_verifier`와 `taeguk_llm_reviewer` → 수정 및 verifier가 정한 재검증이다. 구현자와 검토자는 같은 버전의 계획과 정확한 산출물 버전을 사용한다. `taeguk_structure_reviewer`, `taeguk_outcome_observer`, `taeguk_rule_reviewer`는 해당 작업에서 계속 선택해 사용한다. 구성이 역할 생성을 자동 예약하거나 위임하는 것은 아니다.
+
+Designer는 `gpt-6-astra` medium, verifier는 `gpt-6-sol` medium, implementer와 tool verifier는 `gpt-6-luna`(effort 미지정), LLM reviewer는 `gpt-6-astra` low를 사용한다. 나머지 역할과 전역 Codex 설정은 기존 설정을 상속한다. 역할 설정은 모델 지정이며 실제 호출이나 권한 강제를 증명하지 않는다.
+
+검증 계획은 원 요구와 승인된 oracle을 각 검사, 방법(도구·LLM·혼합), 근거, 범위, 누락, 상태에 연결한다. 도구 관측, 의미 판단, 재현이 필요한 추론을 구분한다. 계획 참조와 CLI 증거 연결 검사는 기준의 진실성이나 전체 완료를 판정하지 않는다.
 
 ## 교환할 정보
 
