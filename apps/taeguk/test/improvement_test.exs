@@ -223,4 +223,19 @@ defmodule Taeguk.ImprovementTest do
     assert {:ok, _} = State.create(normal)
     assert {{:error, {:invalid, "not_improvement_work"}}, _} = phase(normal, "baseline")
   end
+
+  test "non-applicable effect remains distinct and latest failure reopens completion gate" do
+    p = fixture()
+    phase(p, "baseline")
+    observe(p, "verify")
+    phase(p, "verified")
+    phase(p, "applied")
+    observe(p, "effect", "NOT_APPLICABLE")
+    assert {{:ok, _}, _} = phase(p, "evaluated", "NOT_APPLICABLE")
+    assert {{:error, {:conflict, _}}, _} = send_command(p, "complete", %{})
+    observe(p, "effect")
+    phase(p, "evaluated")
+    observe(p, "verify", "FAIL")
+    assert {{:error, {:conflict, _}}, _} = send_command(p, "complete", %{})
+  end
 end

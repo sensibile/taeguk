@@ -138,7 +138,8 @@ defmodule Taeguk.Improvement do
       Enum.all?(statuses, &(&1 == "PASS")) -> "PASS"
       "FAIL" in statuses -> "FAIL"
       "UNKNOWN" in statuses -> "UNKNOWN"
-      true -> "NOT_RUN"
+      "NOT_RUN" in statuses -> "NOT_RUN"
+      true -> "NOT_APPLICABLE"
     end
   end
 
