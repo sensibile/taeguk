@@ -11,5 +11,13 @@ defmodule Taeguk.MixProject do
     ]
 
   def application, do: [extra_applications: [:logger], mod: {Taeguk.Application, []}]
-  defp deps, do: [{:phoenix, "~> 1.8.15"}, {:bandit, "~> 1.0"}, {:jason, "~> 1.4"}]
+
+  defp deps,
+    do: [
+      {:phoenix, "~> 1.8.15"},
+      {:bandit, "~> 1.0"},
+      {:jason, "~> 1.4"},
+      {:ecto_sql, "~> 3.13"},
+      {:ecto_sqlite3, "~> 0.25"}
+    ]
 end

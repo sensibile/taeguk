@@ -9,3 +9,14 @@ config :taeguk, TaegukWeb.Endpoint,
   pubsub_server: Taeguk.PubSub
 
 config :phoenix, :json_library, Jason
+
+config :taeguk, ecto_repos: [Taeguk.Repo], state_enabled: false
+
+config :taeguk, Taeguk.Repo,
+  pool_size: 5,
+  log: false,
+  journal_mode: :wal,
+  foreign_keys: :on,
+  busy_timeout: 5000,
+  synchronous: :full,
+  default_transaction_mode: :immediate

@@ -12,7 +12,7 @@ defmodule TaegukWeb.StatusTest do
   test "capabilities do not claim unimplemented authority" do
     payload = request("/api/capabilities").resp_body |> Jason.decode!()
     assert payload["deployment"] == false
-    assert payload["persistence"] == false
+    assert payload["persistence"] == Application.get_env(:taeguk, :state_enabled, false)
     assert payload["mcp"] == false
   end
 

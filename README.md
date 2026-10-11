@@ -19,4 +19,4 @@ mix deps.get
 mix phx.server
 ```
 
-웹은 기본 `http://127.0.0.1:4000`, API는 `/api/health`와 `/api/capabilities`다. 작업 데이터 저장·예약 실행·자동 배포·MCP는 아직 구현하지 않았다. DB가 필요한 실제 흐름을 정하면 PostgreSQL을 연결한다.
+웹은 기본 `http://127.0.0.1:4000`, API는 `/api/health`와 `/api/capabilities`다. 작업·검증 근거·실행 소유권은 선택적 SQLite 상태 API로 저장한다. [상태 API 사용](docs/workflow-state-usage.md)을 참고한다. 모델 실행·예약 실행·자동 배포·MCP는 아직 구현하지 않았다.

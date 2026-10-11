@@ -2,7 +2,7 @@
 
 ## 책임
 
-에이전트는 맥락·대안·다음 행동, 스킬은 반복 절차, 도구는 계산·실행 결과·상태 조회를 맡는다. 현재 CLI는 읽기 기반 계산과 증거 대조만 수행한다. 실행 잠금·권한·영속 workflow engine을 구현했다고 주장하지 않는다.
+에이전트는 맥락·대안·다음 행동, 스킬은 반복 절차, 도구는 계산·실행 결과·상태 조회를 맡는다. CLI는 계산·증거 대조와 로컬 상태 API 요청을 수행한다. SQLite API는 작업 revision과 근거·실행 소유권을 저장한다. 프로세스의 실제 실행·종료나 모델 호출을 관리하는 workflow engine은 구현하지 않았다.
 
 흐름 역할은 `taeguk_coordinator` → `taeguk_designer` → `taeguk_verifier`(구현 전 계획) → `taeguk_implementer` → `taeguk_tool_verifier`와 `taeguk_llm_reviewer` → 수정 및 verifier가 정한 재검증이다. 구현자와 검토자는 같은 버전의 계획과 정확한 산출물 버전을 사용한다. `taeguk_structure_reviewer`, `taeguk_outcome_observer`, `taeguk_rule_reviewer`는 해당 작업에서 계속 선택해 사용한다. 구성이 역할 생성을 자동 예약하거나 위임하는 것은 아니다.
 
@@ -24,6 +24,6 @@ CLI 오류는 JSON stderr와 exit 2, 계산된 FAIL은 정상 JSON stdout과 exi
 
 `taeguk audit review.json root`는 요구·검사 ID와 실제 파일 참조를 연결하는 선택적 점검이다. 전체 완료 판정을 출력하지 않는다. [입력과 한계](evidence-review.md)를 확인한다.
 
-## 다음 저장 경계
+## 로컬 저장 경계
 
-웹/API 초기 기반은 상태를 저장하지 않는다. 실제 제품의 업무·시도·실행·아티팩트·검사·효과·승인 참조가 정해진 뒤 PostgreSQL schema를 설계한다. 문서나 모델의 ‘완료’는 외부 효과의 확정을 대신하지 않는다.
+SQLite 상태 API는 고정된 작업/검증 계획과 현재 artifact/environment, 관측·run·명령 이벤트를 transaction으로 저장한다. 저장 파일은 단일 API가 소유하며 agent는 Rust CLI로 접근한다. [상태 API 계약](workflow-state-plan.md)과 [사용법](workflow-state-usage.md)을 따른다. 문서나 모델의 ‘완료’는 외부 효과의 확정을 대신하지 않는다.

@@ -2,7 +2,7 @@
 
 Address the user as BOSS. Write explanations and documentation in Korean; keep code, commands, identifiers, and configuration in English.
 
-Use Elixir for the web app and API. Use PostgreSQL when persistence is required. Use Python for installation and automation scripts; Rust for CLI logic and complex option handling. Do not add a second backend stack.
+Use Elixir for the web app and API. Use SQLite for Taeguk local workflow state. Use Python for installation and automation scripts; Rust for CLI logic and complex option handling. Do not add a second backend stack.
 
 Before repository implementation or tracked documentation edits, apply `/Users/tonton/.codex/skills/worktree-first-dev/SKILL.md`. Reuse the worktree assigned to the same task. Preserve unrelated changes.
 

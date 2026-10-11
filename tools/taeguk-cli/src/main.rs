@@ -1,4 +1,5 @@
 mod audit;
+mod state;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -136,6 +137,7 @@ fn read_json<T: for<'a> Deserialize<'a>>(path: &str) -> Result<T, String> {
 fn run() -> Result<serde_json::Value, String> {
     let a: Vec<String> = env::args().skip(1).collect();
     match a.as_slice() {
+        [cmd, rest @ ..] if cmd == "state" => state::run(rest),
         [cmd, path] if cmd == "measure" => measurement(&read_json::<Counts>(path)?),
         [cmd, path, root] if cmd == "verify" => {
             verify(&read_json::<Packet>(path)?, Path::new(root))
@@ -143,7 +145,7 @@ fn run() -> Result<serde_json::Value, String> {
         [cmd, path, root] if cmd == "audit" => {
             audit::audit(&read_json::<audit::AuditPacket>(path)?, Path::new(root))
         }
-        _ => Err("usage: taeguk measure COUNTS.json | taeguk verify PACKET.json ROOT | taeguk audit REVIEW.json ROOT".into()),
+        _ => Err("usage: taeguk measure COUNTS.json | taeguk verify PACKET.json ROOT | taeguk audit REVIEW.json ROOT | taeguk state ...".into()),
     }
 }
 fn main() {

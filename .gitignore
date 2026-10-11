@@ -6,3 +6,7 @@ __pycache__/
 .env
 .taeguk/
 .DS_Store
+
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
