@@ -2,6 +2,7 @@
 
 Mission 가설에서 작은 변경, 교차 검증, 실제 효과와 회고까지 연결하는 로컬 개발 구성이다. 현재는 에이전트·스킬·보조 CLI와 Elixir 웹/API의 초기 기반이다.
 
+- [현행 규칙과 기계 검사](docs/rules/index.md)
 - [진행 방향](docs/direction.md)
 - [구성과 실행 계약](docs/architecture.md)
 - [리서치 인덱스](docs/research/index.md)
