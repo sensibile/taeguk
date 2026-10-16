@@ -34,4 +34,4 @@ SQLite 상태 API는 고정된 작업/검증 계획과 현재 artifact/environme
 
 설계 인계는 검사별 기대값 출처·관측 방법과 기존 도구의 부족분을 포함한다. `taeguk_verification_builder`는 필요한 도구만 제작하고 정상·알려진 실패·경계 사례로 도구를 점검한다. 실행은 `taeguk_tool_verifier`, 증거 충분성 판단은 `taeguk_verifier`의 책임이다. 도구 자체 검증은 제품 검증을 대신하지 않는다.
 
-`taeguk_structure_reviewer`는 새 요구 때문에 검증된 실행 영역까지 반복 수정하는 지점을 찾는다. Policy·Workflow·Executor·Adapter 분리는 실제 변화의 근거가 있을 때만 검토한다. 계약을 유지하는 영역의 재사용과 새 조합의 검증을 함께 계획하며, 영구 불변이나 자동 안전을 주장하지 않는다.
+`taeguk_structure_reviewer`는 새 요구 때문에 검증된 실행 영역까지 반복 수정하는 지점을 찾는다. 변하는 책임과 유지되는 계약에서 적합한 경계를 탐색한다. Policy·Workflow·Executor·Adapter는 예시이며 상태 전이, 입력 검증, 데이터 변환, 저장, 알고리즘, UI 등 다른 경계도 실제 변경 근거에 따라 검토한다. 특정 패턴 목록에 맞추거나 같은 모양의 기능을 무리하게 통합하지 않는다. 계약을 유지하는 영역의 재사용과 새 조합의 검증을 함께 계획하며, 영구 불변이나 자동 안전을 주장하지 않는다.
