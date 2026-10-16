@@ -4,7 +4,7 @@
 
 에이전트는 맥락·대안·다음 행동, 스킬은 반복 절차, 도구는 계산·실행 결과·상태 조회를 맡는다. CLI는 계산·증거 대조와 로컬 상태 API 요청을 수행한다. SQLite API는 작업 revision과 근거·실행 소유권을 저장한다. 프로세스의 실제 실행·종료나 모델 호출을 관리하는 workflow engine은 구현하지 않았다.
 
-흐름 역할은 `taeguk_coordinator` → `taeguk_designer` → `taeguk_verifier`(구현 전 계획) → `taeguk_implementer` → `taeguk_tool_verifier`와 `taeguk_llm_reviewer` → 수정 및 verifier가 정한 재검증이다. 구현자와 검토자는 같은 버전의 계획과 정확한 산출물 버전을 사용한다. `taeguk_structure_reviewer`, `taeguk_outcome_observer`, `taeguk_rule_reviewer`는 해당 작업에서 계속 선택해 사용한다. 구성이 역할 생성을 자동 예약하거나 위임하는 것은 아니다.
+흐름 역할은 `taeguk_coordinator` → `taeguk_designer` + `taeguk_verification_builder`(설계 중 검증 계획·도구 범위) → `taeguk_verifier`(계획 검토·확정) → `taeguk_implementer`와 필요한 검증 도구 제작 → `taeguk_tool_verifier`와 `taeguk_llm_reviewer` → 수정 및 verifier가 정한 재검증이다. 구현자와 검토자는 같은 버전의 계획과 정확한 산출물 버전을 사용한다. `taeguk_structure_reviewer`, `taeguk_outcome_observer`, `taeguk_rule_reviewer`는 해당 작업에서 계속 선택해 사용한다. 구성이 역할 생성을 자동 예약하거나 위임하는 것은 아니다.
 
 Designer는 `gpt-6-astra` medium, verifier는 `gpt-6-sol` medium, implementer와 tool verifier는 `gpt-6-luna`(effort 미지정), LLM reviewer는 `gpt-6-astra` low를 사용한다. 나머지 역할과 전역 Codex 설정은 기존 설정을 상속한다. 역할 설정은 모델 지정이며 실제 호출이나 권한 강제를 증명하지 않는다.
 
@@ -29,3 +29,9 @@ CLI 오류는 JSON stderr와 exit 2, 계산된 FAIL은 정상 JSON stdout과 exi
 SQLite 상태 API는 고정된 작업/검증 계획과 현재 artifact/environment, 관측·run·명령 이벤트를 transaction으로 저장한다. 저장 파일은 단일 API가 소유하며 agent는 Rust CLI로 접근한다. [상태 API 계약](workflow-state-plan.md)과 [사용법](workflow-state-usage.md)을 따른다. 문서나 모델의 ‘완료’는 외부 효과의 확정을 대신하지 않는다.
 
 개선 작업은 선택적 고정 계약과 baseline/verified/applied/evaluated 단계를 사용한다. 실제 수정과 측정은 에이전트, 순서·현재 근거·완료 gate는 API가 맡는다. [첫 완주 결과](self-improvement-result.md)에 구현 범위와 근거를 보존한다.
+
+## 검증 수단과 재사용 경계
+
+설계 인계는 검사별 기대값 출처·관측 방법과 기존 도구의 부족분을 포함한다. `taeguk_verification_builder`는 필요한 도구만 제작하고 정상·알려진 실패·경계 사례로 도구를 점검한다. 실행은 `taeguk_tool_verifier`, 증거 충분성 판단은 `taeguk_verifier`의 책임이다. 도구 자체 검증은 제품 검증을 대신하지 않는다.
+
+`taeguk_structure_reviewer`는 새 요구 때문에 검증된 실행 영역까지 반복 수정하는 지점을 찾는다. 변하는 책임과 유지되는 계약에서 적합한 경계를 탐색한다. Policy·Workflow·Executor·Adapter는 예시이며 상태 전이, 입력 검증, 데이터 변환, 저장, 알고리즘, UI 등 다른 경계도 실제 변경 근거에 따라 검토한다. 특정 패턴 목록에 맞추거나 같은 모양의 기능을 무리하게 통합하지 않는다. 계약을 유지하는 영역의 재사용과 새 조합의 검증을 함께 계획하며, 영구 불변이나 자동 안전을 주장하지 않는다.
