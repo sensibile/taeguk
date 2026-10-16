@@ -47,12 +47,12 @@ approval = "approvals.md#approval-2026-10-11"
 
 [[rules]]
 id = "VER-004"
-version = "1.0"
+version = "1.1"
 status = "approved"
 scope = "Taeguk and explicitly assigned workflows"
 document = "verification.md#ver-004"
 enforcement = "guidance"
-approval = "approvals.md#approval-2026-10-11"
+approval = "approvals.md#approval-2026-10-16"
 
 [[rules]]
 id = "MET-001"
@@ -74,12 +74,12 @@ approval = "approvals.md#approval-2026-10-11"
 
 [[rules]]
 id = "DEV-002"
-version = "1.0"
+version = "1.1"
 status = "approved"
 scope = "Taeguk and explicitly assigned workflows"
 document = "verification.md#dev-002"
 enforcement = "guidance"
-approval = "approvals.md#approval-2026-10-11"
+approval = "approvals.md#approval-2026-10-16"
 
 [[rules]]
 id = "REL-005"
