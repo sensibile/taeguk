@@ -1,0 +1,37 @@
+name: Codex review gate
+# Publishes the `codex-review` commit status from Codex's PR summary comment and
+# enables squash auto-merge once that review covers the head commit.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, labeled, unlabeled]
+  issue_comment:
+    types: [created, edited, deleted]
+  pull_request_review:
+    types: [submitted, dismissed]
+permissions: {}
+jobs:
+  gate:
+    # Only same-repository PRs, and only comments or reviews written by the Codex app.
+    if: >-
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.user.login == 'chatgpt-codex-connector[bot]') ||
+      (github.event_name == 'pull_request_review' && github.event.pull_request.head.repo.full_name == github.repository && github.event.review.user.login == 'chatgpt-codex-connector[bot]')
+    # Job-level so filtered-out events never join, and never cancel, a running gate.
+    concurrency:
+      group: codex-review-gate-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+        # Every event re-checks the review request: a queued run can be replaced by a later event.
+        run: python3 scripts/codex_review_gate.py --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" --request-review --auto-merge
