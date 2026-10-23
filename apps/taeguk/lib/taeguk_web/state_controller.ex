@@ -7,8 +7,10 @@ defmodule TaegukWeb.StateController do
   def command(conn, %{"id" => id}), do: respond(conn, State.command(id, conn.body_params))
 
   def history(conn, %{"id" => id} = params) do
-    case Integer.parse(params["after_revision"] || "0") do
-      {n, ""} when n >= 0 -> respond(conn, State.history(id, n))
+    with cursor when is_binary(cursor) <- params["after_revision"] || "0",
+         {n, ""} when n >= 0 <- Integer.parse(cursor) do
+      respond(conn, State.history(id, n))
+    else
       _ -> respond(conn, {:error, {:invalid, "invalid_cursor"}})
     end
   end

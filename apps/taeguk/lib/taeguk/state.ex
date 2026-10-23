@@ -12,9 +12,11 @@ defmodule Taeguk.State do
             [uuid(p["id"]), Map.drop(p, ~w(id actor command_id))]
           )
 
-        if rows == [],
-          do: replay!(p["id"], p),
-          else: event!(p["id"], 1, p, %{operation: "create"})
+        cond do
+          rows != [] -> event!(p["id"], 1, p, %{operation: "create"})
+          prior(p["id"], p["command_id"]) -> replay!(p["id"], p)
+          true -> Repo.rollback({:conflict, "work_exists"})
+        end
       end)
     end)
   end
