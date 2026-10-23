@@ -11,9 +11,7 @@ import tomllib
 import install_codex as engine
 
 AGENTS = ('codex', 'claude')
-MODELS = {'gpt-6-astra': 'opus', 'gpt-6-luna': 'sonnet'}
-# Mapping awaits BOSS confirmation; these roles inherit the session model until then.
-PENDING_MODELS = {'gpt-6-sol'}
+MODELS = {'gpt-6-astra': 'opus', 'gpt-6-sol': 'opus', 'gpt-6-luna': 'sonnet'}
 EFFORTS = {'low', 'medium', 'high'}
 SKILL_REF = re.compile(r'\$(taeguk-[a-z0-9-]+)')
 CLI = '.local/bin/taeguk'
@@ -69,7 +67,7 @@ def skill_files(source):
 def claude_agent(role):
     name = role['name'].replace('_', '-')
     lines = ['---', f'name: {name}', f'description: {json.dumps(role["description"])}']
-    if 'model' in role and role['model'] not in PENDING_MODELS:
+    if 'model' in role:
         if role['model'] not in MODELS:
             raise ValueError(f'unmapped agent model: {role["model"]}')
         lines.append(f'model: {MODELS[role["model"]]}')
@@ -182,10 +180,6 @@ def project(source, root, home, agents, mode):
               'components': run(components, source, root, mode, {'source_version': version})}
     if kept:
         result['kept'] = {'rules': kept}
-    if 'claude' in agents:
-        pending = sorted(f'{role["name"]}={role["model"]}' for _, role in roles(source) if role.get('model') in PENDING_MODELS)
-        if pending:
-            result['unmapped_models'] = pending
     names = sorted({skill for skill, _, _ in skill_files(source)})
     user_skills = {'claude': '.claude/skills', 'codex': '.agents/skills'}
     shadowed = {agent: found for agent in agents

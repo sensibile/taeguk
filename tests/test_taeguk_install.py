@@ -37,7 +37,7 @@ class BundleTest(unittest.TestCase):
         self.assertIn('model: sonnet\n', bundle['.claude/agents/taeguk-implementer.md'][0].decode())
         self.assertNotIn('model:', bundle['.claude/agents/taeguk-coordinator.md'][0].decode().split('---')[1])
         verifier = bundle['.claude/agents/taeguk-verifier.md'][0].decode().split('---')[1]
-        self.assertNotIn('model:', verifier)
+        self.assertIn('model: opus\n', verifier)
         self.assertIn('effort: medium\n', verifier)
         with self.assertRaises(ValueError):
             install.claude_agent({'name': 'taeguk_x', 'description': 'd', 'developer_instructions': 'i', 'model': 'x'})
@@ -131,11 +131,6 @@ class ScopeTest(unittest.TestCase):
         install.project(SOURCE, self.root, self.home, ['claude'], 'uninstall')
         self.assertTrue((self.root/new_path).is_file())
         self.assertFalse((self.root/install.receipt('claude')).exists())
-
-    def test_pending_model_mapping_is_reported(self):
-        result = install.project(SOURCE, self.root, self.home, ['claude'], 'dry-run')
-        self.assertEqual(result['unmapped_models'], ['taeguk_verifier=gpt-6-sol'])
-        self.assertNotIn('unmapped_models', install.project(SOURCE, self.root, self.home, ['codex'], 'dry-run'))
 
     def test_collision_in_later_component_blocks_every_component(self):
         target = self.root/'.agents/skills/taeguk-work-contract/SKILL.md'
