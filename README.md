@@ -28,7 +28,7 @@ python3 scripts/install_codex.py --apply
 python3 scripts/install_codex.py --check
 ```
 
-첫 설치 명령은 dry-run이다. 기존 비관리 파일이나 사용자가 수정한 설치본은 덮어쓰지 않는다. 설치 경로·제거·발견 확인은 [Codex 설치](docs/codex-installation.md)를 참고한다. CLI는 `~/.local/bin/taeguk`에 설치되며 PATH는 자동 수정하지 않는다.
+첫 설치 명령은 dry-run이다. 기존 비관리 파일이나 사용자가 수정한 설치본은 덮어쓰지 않는다. 설치 경로·제거·발견 확인은 [Codex 설치](docs/codex-installation.md)를 참고한다. Claude Code에서는 같은 원본을 변환해 `python3 scripts/install_claude.py --apply`로 설치한다. 형식 변환·모델 매핑·한계는 [Claude Code 설치](docs/claude-installation.md)에 있다. CLI는 `~/.local/bin/taeguk`에 설치되며 PATH는 자동 수정하지 않는다.
 
 SQLite 상태 API는 저장 경로와 token을 설정한 뒤 시작한다.
 

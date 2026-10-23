@@ -75,13 +75,13 @@ def atomic_write(path, data, mode):
             os.unlink(name)
 
 
-def execute(source, home, mode='dry-run'):
+def execute(source, home, mode='dry-run', build=None, receipt_path=RECEIPT):
     if mode not in ('dry-run', 'apply', 'check', 'uninstall'):
         raise ValueError('unsupported mode')
     source, home = source.resolve(), home.resolve()
-    bundle = payload(source)
+    bundle = (build or payload)(source)
     hashes = {key:digest(data) for key,(data,_) in bundle.items()}
-    receipt = safe_target(home, RECEIPT)
+    receipt = safe_target(home, receipt_path)
     previous = {}
     if receipt.exists():
         doc = json.loads(receipt.read_text())
@@ -112,7 +112,7 @@ def execute(source, home, mode='dry-run'):
         raise ValueError('no managed installation')
     targets = list(bundle) if mode == 'apply' else list(previous)
     snapshot, touched = {}, []
-    for key in targets+[RECEIPT]:
+    for key in targets+[receipt_path]:
         target = safe_target(home,key)
         snapshot[key] = (target.read_bytes(),stat.S_IMODE(target.stat().st_mode)) if target.exists() else None
     try:
@@ -122,7 +122,7 @@ def execute(source, home, mode='dry-run'):
                 atomic_write(home/key,*bundle[key])
             else:
                 (home/key).unlink()
-        touched.append(RECEIPT)
+        touched.append(receipt_path)
         if mode == 'apply':
             data=json.dumps({'schema_version':1,'source_root':str(source),'files':hashes},indent=2).encode()+b'\n'
             atomic_write(receipt,data,0o600)
