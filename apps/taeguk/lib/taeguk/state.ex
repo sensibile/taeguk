@@ -188,7 +188,8 @@ defmodule Taeguk.State do
       if q(
            "INSERT INTO resource_claims(resource,run_id) VALUES(?1,?2) ON CONFLICT DO NOTHING RETURNING resource",
            [resource, uuid(id)]
-         ) == [], do: Repo.rollback({:conflict, "resource_busy"})
+         ) == [],
+         do: Repo.rollback({:conflict, "resource_busy"})
     end)
 
     %{operation: "start_run", run_id: id}
@@ -405,7 +406,9 @@ defmodule Taeguk.State do
                  "Database is busy",
                  "database is locked",
                  "database table is locked"
-               ], do: "database_busy", else: "database_operation_failed"
+               ],
+               do: "database_busy",
+               else: "database_operation_failed"
 
           {:error, {:unavailable, reason}}
       end
