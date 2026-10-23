@@ -148,6 +148,7 @@ class BundleTest(unittest.TestCase):
         self.assertIn('.agents/skills/taeguk-work-contract/references/completion-review.md', bundle)
         self.assertFalse([key for key in bundle if '/alias' in key])
 
+    @unittest.skipIf(hasattr(os, 'geteuid') and os.geteuid() == 0, 'root can read a mode-000 directory')
     def test_unreadable_source_directory_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp).resolve()
@@ -222,6 +223,23 @@ class BundleTest(unittest.TestCase):
             binary.write_bytes(b'cli')
             with patch.dict(os.environ, {'CARGO_TARGET_DIR': str(target)}):
                 self.assertEqual(install.cli_bundle(Path(tmp)/'source'), {install.CLI: (b'cli', 0o755)})
+
+    def test_cli_found_under_build_target_triple(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)/'target'
+            binary = target/'aarch64-apple-darwin/release'/('taeguk' + install.EXE)
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b'cli')
+            with patch.object(install, 'cargo_target_dir', return_value=target), patch.dict(os.environ, {}, clear=False):
+                os.environ.pop('CARGO_BUILD_TARGET', None)
+                self.assertEqual(install.cli_bundle(Path(tmp)/'source'), {install.CLI: (b'cli', 0o755)})
+                other = target/'x86_64-unknown-linux-gnu/release'/('taeguk' + install.EXE)
+                other.parent.mkdir(parents=True)
+                other.write_bytes(b'other')
+                with self.assertRaises(ValueError):
+                    install.cli_bundle(Path(tmp)/'source')
+                os.environ['CARGO_BUILD_TARGET'] = 'x86_64-unknown-linux-gnu'
+                self.assertEqual(install.cli_bundle(Path(tmp)/'source'), {install.CLI: (b'other', 0o755)})
 
     def test_cli_uses_platform_executable_suffix(self):
         suffix = sysconfig.get_config_var('EXE') or ''

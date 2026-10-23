@@ -231,13 +231,28 @@ def cargo_target_dir(source):
         return Path(os.environ['CARGO_TARGET_DIR']) if os.environ.get('CARGO_TARGET_DIR') else crate/'target'
 
 
+def release_binary(target):
+    """The release CLI under Cargo's target dir, including a build.target triple subdirectory."""
+    name = 'taeguk' + EXE
+    triple = os.environ.get('CARGO_BUILD_TARGET')
+    if triple:
+        return target/triple/'release'/name
+    found = [path for path in [target/'release'/name, *sorted(target.glob(f'*/release/{name}'))]
+             if path.is_file() and not path.is_symlink()]
+    if len(found) > 1:
+        raise ValueError('several release CLIs found; set CARGO_BUILD_TARGET to choose one: '
+                         + ', '.join(str(path) for path in found))
+    return found[0] if found else target/'release'/name
+
+
 def cli_bundle(source):
-    binary = cargo_target_dir(source)/'release'/('taeguk' + EXE)
+    target = cargo_target_dir(source)
+    binary = release_binary(target)
     if not binary.is_file() or binary.is_symlink():
         raise ValueError('build the release CLI before installation')
     # A checkout that changed CLI sources after the last build refreshes their mtimes past the binary.
     crate = source/'tools/taeguk-cli'
-    inputs = tracked_files(source, crate, skip=(crate/'target', binary.parent.parent))
+    inputs = tracked_files(source, crate, skip=(crate/'target', target))
     if inputs and binary.stat().st_mtime < max(src.stat().st_mtime for src in inputs):
         raise ValueError('the release CLI is older than its sources; rebuild it before installation')
     return {CLI: (binary.read_bytes(), 0o755)}
