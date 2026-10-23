@@ -23,7 +23,8 @@
 1. 작업 worktree와 브랜치에서 변경하고 AGENTS.md의 검증 명령 중 해당하는 것을 실행한다.
 2. push 전에 로컬에서 `codex review --base main`과 Claude Code `/security-review`를 실행하고 지적 사항을 반영하거나 반영하지 않은 이유를 남긴다.
 3. PR을 만든 뒤 `@codex review` 댓글로 Codex 리뷰를 요청한다.
-4. 리뷰 스레드가 모두 해소되고 필수 체크가 통과하면 squash 머지한다.
+4. PR head 커밋에 대한 Codex 리뷰가 완료된 것을 확인한다. 근거는 `chatgpt-codex-connector[bot]` 요약 댓글의 상태(`completed`와 리뷰 커밋 SHA)다. 리뷰 후 새 커밋을 push하면 3단계부터 다시 요청한다.
+5. Codex 리뷰가 완료되고 리뷰 스레드가 모두 해소되고 필수 체크가 통과하면 squash 머지한다. Codex 리뷰는 GitHub 필수 체크로 강제되지 않으므로 4단계 확인을 생략하지 않는다.
 
 CodeQL은 Elixir를 지원하지 않는다. `apps/taeguk` 변경은 2단계의 로컬 보안 리뷰로 보완한다. 리뷰 도구의 결과는 검토 보조 증거이며 요구사항 충족 판정을 대신하지 않는다.
 
