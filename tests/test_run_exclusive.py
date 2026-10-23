@@ -191,6 +191,22 @@ module.signal.signal = install
             with self.subTest(str(directory.relative_to(self.tmp.name))):
                 self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o700)
 
+    def test_restrictive_umask_still_creates_a_reusable_private_lock(self):
+        # umask 0777 strips owner bits too: creation must not depend on a later chmod.
+        lock = Path(self.tmp.name) / 'state' / 'locks' / 'database.lock'
+        umask_run = lambda: subprocess.run(['sh', '-c', 'umask 0777 && exec "$@"', 'sh', *self.command('pass', lock)], capture_output=True, text=True, timeout=5)
+        for attempt in ('first', 'second'):
+            with self.subTest(attempt):
+                result = umask_run()
+                self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(stat.S_IMODE(lock.parent.stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(lock.stat().st_mode), 0o600)
+
+    def test_command_keeps_the_callers_umask(self):
+        code = 'import os; current = os.umask(0); print(oct(current))'
+        result = subprocess.run(['sh', '-c', 'umask 027 && exec "$@"', 'sh', *self.command(code)], capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.stdout.strip(), '0o27', result.stderr)
+
     def test_existing_shared_lock_keeps_its_mode(self):
         # The shared-group setup relies on a pre-created group-writable lock staying that way.
         self.lock.touch()

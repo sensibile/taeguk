@@ -13,7 +13,7 @@ FORWARDED_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGQUIT, signal.SIGTER
 
 
 def make_private_dirs(directory):
-    """Create missing lock directories as owner-only, whatever the umask.
+    """Create missing lock directories as owner-only; call under umask 077.
 
     A directory other accounts can write would let them pre-create the lock.
     Existing directories are left alone: a shared group directory is the
@@ -28,8 +28,7 @@ def make_private_dirs(directory):
         try:
             os.mkdir(path, 0o700)
         except FileExistsError:
-            continue
-        os.chmod(path, 0o700)
+            pass
 
 
 def main():
@@ -42,13 +41,18 @@ def main():
         command = command[1:]
     if not command:
         parser.error('a foreground command is required after --')
-    make_private_dirs(args.lock.parent)
-    # Keep the inode: deleting a lock file can permit a second independent lock.
+    # A fixed umask makes the 0700 directories and 0600 lock exact at creation,
+    # with no chmod window and no owner bits lost. The command keeps the caller's umask.
+    umask = os.umask(0o077)
     try:
+        make_private_dirs(args.lock.parent)
+        # Keep the inode: deleting a lock file can permit a second independent lock.
         fd = os.open(args.lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
     except OSError as error:
         print(f'lock could not open: {error.strerror}', file=sys.stderr)
         return 2
+    finally:
+        os.umask(umask)
     with os.fdopen(fd, 'a') as lock:
         if not stat.S_ISREG(os.fstat(lock.fileno()).st_mode):
             print('lock must be a regular file', file=sys.stderr)
