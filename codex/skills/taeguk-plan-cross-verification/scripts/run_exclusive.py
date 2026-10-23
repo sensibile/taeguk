@@ -51,7 +51,13 @@ def main():
             except ProcessLookupError:
                 pass
 
-        previous = {sig: signal.signal(sig, forward) for sig in FORWARDED_SIGNALS}
+        # Block while installing so a signal cannot hit a not-yet-installed
+        # default handler; it is delivered to `forward` once the mask is restored.
+        mask = signal.pthread_sigmask(signal.SIG_BLOCK, FORWARDED_SIGNALS)
+        try:
+            previous = {sig: signal.signal(sig, forward) for sig in FORWARDED_SIGNALS}
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, mask)
         try:
             if state['pending']:
                 print('interrupted; command was not started', file=sys.stderr)
@@ -61,6 +67,10 @@ def main():
                 state['child'] = child = subprocess.Popen(command, pass_fds=(lock.fileno(),), start_new_session=True)
             except OSError as error:
                 print(f'command could not start: {error.strerror}', file=sys.stderr)
+                if state['pending']:
+                    # A stop request that already arrived outranks the start failure.
+                    print('interrupted; command was not started', file=sys.stderr)
+                    return 128 + state['pending'][0]
                 return 127
             for signum in state['pending']:
                 forward(signum, None)

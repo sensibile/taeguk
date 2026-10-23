@@ -122,6 +122,51 @@ sys.exit(module.main())
         self.assertEqual(result.returncode, 143)
         self.assertEqual(self.run_once('pass').returncode, 0)
 
+    def run_patched(self, patch, code):
+        """Run the wrapper in-process after `patch` replaces part of its environment."""
+        harness = f'''
+import importlib.util, os, signal, subprocess, sys
+spec = importlib.util.spec_from_file_location('run_exclusive', {str(RUNNER)!r})
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+{patch}
+sys.argv = ['run_exclusive.py', '--lock', {str(self.lock)!r}, '--', sys.executable, '-c', {code!r}]
+sys.exit(module.main())
+'''
+        return subprocess.run([sys.executable, '-c', harness], capture_output=True, text=True, timeout=10)
+
+    def test_signal_queued_before_failed_spawn_is_reported(self):
+        # A start failure must not swallow a stop request that already arrived.
+        patch = f'''
+def popen(*args, **kwargs):
+    os.kill(os.getpid(), {int(signal.SIGTERM)})
+    raise FileNotFoundError(2, 'No such file or directory')
+module.subprocess.Popen = popen
+'''
+        result = self.run_patched(patch, 'pass')
+        self.assertEqual(result.returncode, 143, result.stderr)
+        self.assertIn('interrupted', result.stderr)
+        self.assertEqual(self.run_once('pass').returncode, 0)
+
+    def test_signal_during_handler_installation_is_not_lost(self):
+        # SIGTERM arrives after the first handler is installed but before its own.
+        marker = Path(self.tmp.name) / 'should-not-exist'
+        patch = f'''
+real_signal = signal.signal
+installed = []
+def install(sig, handler):
+    previous = real_signal(sig, handler)
+    if not installed:
+        os.kill(os.getpid(), {int(signal.SIGTERM)})
+    installed.append(sig)
+    return previous
+module.signal.signal = install
+'''
+        result = self.run_patched(patch, f'from pathlib import Path; Path({str(marker)!r}).touch()')
+        self.assertEqual(result.returncode, 143, result.stderr)
+        self.assertFalse(marker.exists())
+        self.assertEqual(self.run_once('pass').returncode, 0)
+
     def assert_signal_forwarded_before_lease_release(self, signum):
         process, _ = self.hold()
         process.send_signal(signum)
@@ -135,6 +180,18 @@ sys.exit(module.main())
 
     def test_quit_is_forwarded_before_lease_release(self):
         self.assert_signal_forwarded_before_lease_release(signal.SIGQUIT)
+
+    @unittest.skipIf(os.geteuid() == 0, 'root ignores file permissions')
+    def test_lock_another_account_created_first_blocks_the_command(self):
+        # Why the guide keeps locks out of shared /tmp: a pre-created lock the
+        # runner cannot open stops every run (exit 2) without starting it.
+        self.lock.touch(mode=0o000)
+        self.addCleanup(self.lock.chmod, 0o600)
+        marker = Path(self.tmp.name) / 'should-not-exist'
+        result = self.run_once(f'from pathlib import Path; Path({str(marker)!r}).touch()')
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('lock could not open', result.stderr)
+        self.assertFalse(marker.exists())
 
     def test_direct_child_keeps_lease_after_wrapper_is_killed(self):
         process, child_pid = self.hold()
