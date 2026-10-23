@@ -275,6 +275,18 @@ class ScopeTest(unittest.TestCase):
             install.project(SOURCE, self.root, self.home, ['codex'], 'uninstall')
         self.assertEqual(notes.read_text(), 'notes')
 
+    def test_output_separates_installer_and_installed_versions(self):
+        result = install.project(SOURCE, self.root, self.home, ['claude'], 'apply')
+        self.assertEqual(result['installed_versions'], {})
+        path = self.root/install.receipt('claude')
+        doc = json.loads(path.read_text())
+        doc['source_version'] = 'older'
+        path.write_text(json.dumps(doc))
+        result = install.project(SOURCE, self.root, self.home, ['claude'], 'check')
+        self.assertEqual(result['installed_versions']['claude'], 'older')
+        self.assertEqual(result['installer_version'], install.source_version(SOURCE))
+        self.assertNotIn('source_version', result)
+
     def test_partial_uninstall_keeps_shared_components(self):
         install.project(SOURCE, self.root, self.home, ['claude', 'codex'], 'apply')
         result = install.project(SOURCE, self.root, self.home, ['claude'], 'uninstall')

@@ -185,6 +185,17 @@ def verify_receipt(root, name):
             raise ValueError(f'managed file is missing or locally modified: {key}')
 
 
+def installed_versions(root, names):
+    """Source version each component's receipt recorded, read before this command changes anything."""
+    versions = {}
+    for name in names:
+        path = root/receipt(name)
+        if path.is_file():
+            doc = json.loads(path.read_text())
+            versions[name] = doc.get('source_version', 'unknown') if isinstance(doc, dict) else 'unknown'
+    return versions
+
+
 def run(components, source, root, mode, meta):
     """Preflight every component before changing any, then run them in order."""
     for name, build in components:
@@ -210,8 +221,10 @@ def user(source, home, agents, mode, with_cli=True):
     cli_managed = (home/receipt('cli')).exists()
     if with_cli and not kept and (mode in ('dry-run', 'apply') or cli_managed):
         components.append(('cli', cli_bundle))
-    result = {'scope': 'user', 'root': str(home), 'components': run(components, source, home, mode,
-              {'source_root': str(source), 'source_version': source_version(source)})}
+    version = source_version(source)
+    before = installed_versions(home, [name for name, _ in components])
+    result = {'scope': 'user', 'root': str(home), 'installer_version': version, 'installed_versions': before,
+              'components': run(components, source, home, mode, {'source_root': str(source), 'source_version': version})}
     if with_cli and kept:
         result['kept'] = {'cli': kept}
     elif with_cli and mode in ('check', 'uninstall') and not cli_managed:
@@ -252,7 +265,8 @@ def project(source, root, home, agents, mode):
     components = [] if kept else [('rules', rules_bundle)]
     components += [(agent, lambda s, a=agent: project_bundle(a, s)) for agent in agents]
     version = source_version(source)
-    result = {'scope': 'project', 'root': str(root), 'source_version': version,
+    before = installed_versions(root, [name for name, _ in components])
+    result = {'scope': 'project', 'root': str(root), 'installer_version': version, 'installed_versions': before,
               'components': run(components, source, root, mode, {'source_version': version})}
     if kept:
         result['kept'] = {'rules': kept}
