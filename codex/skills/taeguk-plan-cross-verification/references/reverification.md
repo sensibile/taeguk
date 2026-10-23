@@ -20,7 +20,7 @@ python3 <skill-directory>/scripts/run_exclusive.py \
   env MIX_ENV=test mix test
 ```
 
-실행기는 명령의 종료 코드를 전달하고 INT/TERM을 자식 process group에 전달한다. 부모가 갑자기 종료돼도 직접 자식이 상속한 lock을 유지한다. macOS/Linux의 협조적 flock이므로 실행기를 우회한 명령, 다른 lock 이름, 자식이 상속 FD를 닫는 프로그램은 차단하지 못한다. background/daemon 명령은 지원 범위가 아니다. DB·프로세스 소유권 확인을 대체하거나 실행 권한을 부여하지 않는다.
+실행기는 명령의 종료 코드를 전달하고 HUP/INT/QUIT/TERM을 자식 process group에 전달한다. 시그널 처리기는 명령 시작 전에 설치하므로 시작 직전·직후에 받은 시그널도 자식에게 전달된다. 부모가 갑자기 종료돼도 직접 자식이 상속한 lock을 유지한다. macOS/Linux의 협조적 flock이므로 실행기를 우회한 명령, 다른 lock 이름, 자식이 상속 FD를 닫는 프로그램은 차단하지 못한다. background/daemon 명령은 지원 범위가 아니다. DB·프로세스 소유권 확인을 대체하거나 실행 권한을 부여하지 않는다.
 
 ## 결과 먼저, 설명은 변경분만
 
