@@ -2,15 +2,15 @@
 
 ## 현재 검사
 
-`python3 scripts/check_rules.py`는 표준 라이브러리만 사용하고 성공은 exit 0, 오류는 exit 1과 JSON FAIL을 반환한다. registry 스키마·ID 중복·허용 상태·버전·적용 범위·본문·승인 참조·기계 검사 표시, 규칙 문서의 UTF-8/LF·제목·마지막 줄바꿈·닫힌 코드 블록·로컬 링크를 검사한다. 승인 상태의 기록이 빠지거나 문서가 연결되지 않으면 실패한다.
+Taeguk 저장소의 `python3 scripts/check_rules.py`는 표준 라이브러리만 사용하고 성공은 exit 0, 오류는 exit 1과 JSON FAIL을 반환한다. registry 스키마·ID 중복·허용 상태·버전·적용 범위·본문·승인 참조·기계 검사 표시, 규칙 문서의 UTF-8/LF·제목·마지막 줄바꿈·닫힌 코드 블록·로컬 링크를 검사한다. 승인 상태의 기록이 빠지거나 문서가 연결되지 않으면 실패한다.
 
 이 검사는 문서 구조 검사다. 승인된 문구의 의미, 승인 진실성, 필수 제품 검사 목록, 실제 효과는 검증하지 않는다. 에이전트가 파일을 바꿀 수 있으므로 독립적인 권한 통제 장치가 아니다.
 
 ## 실행 연결
 
-AGENTS.md의 로컬 검증 명령과 `.githooks/pre-push`에서 실행한다. hook은 `.githooks`에 보관하고 저장소 `core.hooksPath` 설정을 통해 활성화한다. 기존 hooksPath나 실행 hook이 있으면 교체하지 않고 연결 방법을 별도로 정한다. 현재 Taeguk 저장소에서 기존 실행 hook과 hooksPath가 없는 것을 확인한 뒤 `.githooks`를 활성화했다. hook은 로컬에서 우회될 수 있다. 새 clone에는 Git 설정이 복사되지 않으므로 기존 hook을 먼저 확인하고 `git config --local core.hooksPath .githooks`로 연결한다.
+Taeguk 저장소에서는 AGENTS.md의 로컬 검증 명령과 `.githooks/pre-push`에서 실행한다. hook은 `.githooks`에 보관하고 저장소 `core.hooksPath` 설정을 통해 활성화한다. 기존 hooksPath나 실행 hook이 있으면 교체하지 않고 연결 방법을 별도로 정한다. 현재 Taeguk 저장소에서 기존 실행 hook과 hooksPath가 없는 것을 확인한 뒤 `.githooks`를 활성화했다. hook은 로컬에서 우회될 수 있다. 새 clone에는 Git 설정이 복사되지 않으므로 기존 hook을 먼저 확인하고 `git config --local core.hooksPath .githooks`로 연결한다. 원격 CI와 branch 보호 상태는 [저장소 운영 기록](https://github.com/sensibile/taeguk/blob/main/docs/repository-operations.md)을 따른다. 로컬 통과를 원격 강제 정책으로 보고하지 않는다.
 
-GitHub workflow는 규칙 검사와 Python 테스트를 실행하도록 준비한다. 현재 저장소는 remote가 없어 원격 CI 실행과 필수 branch protection은 미설정이다. 로컬 통과를 원격 강제 정책으로 보고하지 않는다.
+규칙을 설치한 프로젝트에는 이 검사기와 hook이 복사되지 않는다. 그 프로젝트의 검사 연결·CI·권한은 해당 프로젝트에서 정하며, 이 문서의 Taeguk 저장소 설정을 그 프로젝트의 상태로 보고하지 않는다.
 
 ## 실제 작업에서 추가할 순서
 

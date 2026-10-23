@@ -2,7 +2,7 @@
 
 ## Approval-2026-10-05
 
-근거: 이 대화에서 BOSS가 “규칙의 적용은 에이전트가 자유롭게 사용하고 규칙의 변경은 사용자 확인으로 하면 되겠다”라고 지시했다. GOV-001과 GOV-002의 기존 합의를 유지한다. 원래 기록은 [규칙 목록](../research/archive/규칙-목록.md)과 [규칙 관리](../research/archive/규칙-관리.md)에 보존한다.
+근거: 이 대화에서 BOSS가 “규칙의 적용은 에이전트가 자유롭게 사용하고 규칙의 변경은 사용자 확인으로 하면 되겠다”라고 지시했다. GOV-001과 GOV-002의 기존 합의를 유지한다. 원래 기록은 [규칙 목록](https://github.com/sensibile/taeguk/blob/main/docs/research/archive/규칙-목록.md)과 [규칙 관리](https://github.com/sensibile/taeguk/blob/main/docs/research/archive/규칙-관리.md)에 보존한다.
 
 ## Approval-2026-10-11
 
@@ -21,3 +21,9 @@
 새 작업부터 적용한다. 진행 중 작업은 기존 계획 버전을 보존하고 이 지침을 채택할 때 영향 범위와 새 계획 버전을 기록한다. 불필요한 도구 제작이나 근거 없는 분리가 반복되면 재검토하고 BOSS 승인 후 이전 지침으로 되돌린다. 런타임 강제 장치를 추가한 것은 아니다.
 
 같은 작업의 후속 확인: BOSS가 “Policy·Workflow·Executor <- 이것만 한정은 아니고 이런 식으로 구조화할 수 있는 것들을 다양하게 가져가는게 좋을 거 같은데”라고 명확히 했다. DEV-002 1.1의 예시는 비한정적이며 변하는 책임과 검증 가능한 계약에서 다른 경계도 탐색한다. 특정 패턴 목록 확장 자체를 목표로 삼지 않는다.
+
+## Approval-2026-10-23
+
+근거: 변경 전 diff를 제시한 뒤 BOSS가 “이 diff대로 규칙 문서 변경을 승인해. approvals.md에 승인 기록 남기고 PR #3에 커밋·push해줘”라고 지시했다.
+
+범위: 프로젝트 단위 설치로 `.taeguk/rules`에 복사되는 문서가 설치된 프로젝트에서도 사실이 되도록 index.md, mechanical-checks.md, approvals.md, proposals/index.md의 Taeguk 저장소 전용 경로·검사·원격 설정 설명에 적용 위치를 명시하고, 사본에서 끊기는 research archive 상대 링크를 원격 주소로 바꿨다. 오래된 "remote 없음" 설명은 저장소 운영 기록 참조로 대체했다. 규칙 ID 본문, registry, 규칙 버전·의미·임계값·권한은 바꾸지 않았다. 원격 주소로 바꾼 링크는 로컬 링크 검사 대상에서 빠진다.
