@@ -54,4 +54,4 @@
 
 자동 rollback·운영 장애 복구·백업 restore·장기 관측·프로젝트별 설치 격리·공통화는 NOT_RUN/미구현이다. 공유 token/actor 라벨은 개별 에이전트 인증이 아니다. 근거 SHA 일치는 진실성이나 승인 증명이 아니다. 로컬 설치와 실험 API 재시작만 수행했고 테스트 서버4121은 종료했다. 새 스킬은 명시적으로 요청한 태극 개선에서 사용할 수 있다.
 
-사용 계약: [개선 스킬](../codex/skills/taeguk-self-improve/SKILL.md), [단계 요청](../codex/skills/taeguk-self-improve/references/cycle.md), [검증 계획](self-improvement-plan.md). 실험 근거와 재현 코드: `/Users/tonton/Documents/study/experiments/taeguk-self-improvement-20261011/`의 baseline.json, candidate.json, effect.json, cycle-events.json, readback.json, cycle.sqlite3, probe.py, cycle.py 및 검사 로그.
+사용 계약: [개선 스킬](../codex/skills/taeguk-self-improve/SKILL.md), [단계 요청](../codex/skills/taeguk-self-improve/references/cycle.md), [검증 계획](self-improvement-plan.md). 실험 근거와 재현 코드: `/Users/tonton/Documents/study/experiments/taeguk-self-improvement-20261011/`의 baseline.json, candidate.json, effect.json, cycle-events.json, readback.json, cycle.sqlite3, probe.py, cycle.py 및 검사 로그. 이 경로는 작성자 로컬 보관 위치이며 저장소에 포함하지 않았다. clone한 환경에서는 이 근거를 확인할 수 없다.

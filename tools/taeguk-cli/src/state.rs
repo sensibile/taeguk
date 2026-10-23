@@ -73,6 +73,55 @@ fn request(base: &str, token: &str, path: &str, body: Option<&Value>) -> Result<
     serde_json::from_slice(&bytes).map_err(|_| "state API returned invalid JSON".into())
 }
 
+fn evidence_item(source: Value, item: &Value, root: &std::path::Path) -> Value {
+    let location = item["location"].as_str().unwrap_or_default();
+    let packet = crate::Packet {
+        artifact: location.into(),
+        sha256: item["sha256"].as_str().unwrap_or_default().into(),
+        checks: vec![],
+        effect_confirmed: false,
+    };
+    let (status, reason) = match crate::verify(&packet, root) {
+        Ok(v) if v["artifact_matches"] == true => ("PASS", "sha256_matches".to_string()),
+        Ok(_) => ("FAIL", "sha256_mismatch".to_string()),
+        Err(e) => ("UNKNOWN", e),
+    };
+    json!({"source":source,"location":location,"status":status,"reason":reason})
+}
+
+// Compares registered evidence of the current state with local files.
+fn evidence_report(state: &Value, root: &std::path::Path) -> Value {
+    let data = &state["data"];
+    let mut items = Vec::new();
+    for o in data["observations"].as_array().into_iter().flatten() {
+        for e in o["document"]["evidence"].as_array().into_iter().flatten() {
+            items.push(evidence_item(json!({"observation_id":o["id"]}), e, root));
+        }
+    }
+    if let Some(progress) = data["work"]["document"]["improvement_progress"].as_object() {
+        for (phase, entry) in progress {
+            for e in entry["evidence"].as_array().into_iter().flatten() {
+                items.push(evidence_item(json!({"improvement_phase":phase}), e, root));
+            }
+        }
+    }
+    let has = |s: &str| items.iter().any(|i| i["status"] == s);
+    let (verdict, reason) = if items.is_empty() {
+        ("UNKNOWN", "no_registered_evidence")
+    } else if has("FAIL") {
+        ("FAIL", "evidence_mismatch")
+    } else if has("UNKNOWN") {
+        ("UNKNOWN", "evidence_not_checkable")
+    } else {
+        ("PASS", "registered_evidence_matches")
+    };
+    json!({"verdict":verdict,"reason":reason,"work_id":data["work"]["id"],
+        "revision":data["work"]["revision"],"items":items,
+        "limits":["local file identity only, not evidence truth, independence or approval",
+            "current observations and improvement entries only; use history for older evidence",
+            "locations must be relative paths under ROOT"]})
+}
+
 pub fn run(args: &[String]) -> Result<Value, String> {
     let base = env::var("TAEGUK_API_URL").unwrap_or_else(|_| "http://127.0.0.1:4000".into());
     let token = env::var("TAEGUK_API_TOKEN").map_err(|_| "TAEGUK_API_TOKEN is required")?;
@@ -91,7 +140,12 @@ pub fn run(args: &[String]) -> Result<Value, String> {
             work_id(id)?;
             request(&base, &token, &format!("/api/work-items/{id}/commands"), Some(&crate::read_json::<Value>(file)?))
         },
-        _ => Err("usage: taeguk state list | get WORK_ID | history WORK_ID AFTER_REVISION | create FILE.json | command WORK_ID FILE.json".into())
+        [cmd, id, root] if cmd == "verify-evidence" => {
+            work_id(id)?;
+            let state = request(&base, &token, &format!("/api/work-items/{id}"), None)?;
+            Ok(evidence_report(&state, std::path::Path::new(root)))
+        },
+        _ => Err("usage: taeguk state list | get WORK_ID | history WORK_ID AFTER_REVISION | create FILE.json | command WORK_ID FILE.json | verify-evidence WORK_ID ROOT".into())
     }
 }
 
@@ -172,6 +226,47 @@ mod tests {
                 .contains("302")
         );
         h.join().unwrap();
+    }
+    #[test]
+    fn evidence_report_compares_registered_files() {
+        use sha2::{Digest, Sha256};
+        let dir = env::temp_dir().join(format!("taeguk-evidence-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("result.log"), b"ok").unwrap();
+        let good = format!("{:x}", Sha256::digest(b"ok"));
+        let state = |evidence: Value| {
+            json!({"data":{"work":{"id":"w","revision":3,"document":{
+                "improvement_progress":{"phase":"baseline","baseline":{"evidence":[
+                    {"location":"result.log","sha256":good}]}}}},
+                "observations":[{"id":"o1","document":{"evidence":evidence}}]}})
+        };
+        let report = evidence_report(
+            &state(json!([{"location":"result.log","sha256":good}])),
+            &dir,
+        );
+        assert_eq!(report["verdict"], "PASS");
+        assert_eq!(report["items"].as_array().unwrap().len(), 2);
+        let report = evidence_report(
+            &state(json!([{"location":"result.log","sha256":"0".repeat(64)}])),
+            &dir,
+        );
+        assert_eq!(report["verdict"], "FAIL");
+        let report = evidence_report(
+            &state(json!([{"location":"missing.log","sha256":good}])),
+            &dir,
+        );
+        assert_eq!(report["verdict"], "UNKNOWN");
+        let report = evidence_report(
+            &state(json!([{"location":"/etc/hosts","sha256":good}])),
+            &dir,
+        );
+        assert_eq!(report["verdict"], "UNKNOWN");
+        let empty = json!({"data":{"work":{"document":{}},"observations":[]}});
+        assert_eq!(
+            evidence_report(&empty, &dir)["reason"],
+            "no_registered_evidence"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn malformed_response_and_invalid_token_are_errors() {

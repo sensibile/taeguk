@@ -22,6 +22,8 @@ Designer는 `gpt-6-astra` medium, verifier는 `gpt-6-sol` medium, implementer와
 
 CLI 오류는 JSON stderr와 exit 2, 계산된 FAIL은 정상 JSON stdout과 exit 0이다. 실행 오류와 검사 판정은 서로 다르다. 빈 검사 목록이나 효과 미확인에는 PASS를 주지 않는다.
 
+`taeguk state verify-evidence WORK_ID root`는 상태 API에 등록된 현재 evidence의 SHA-256을 로컬 파일과 대조한다. 파일 동일성 검사이며 근거의 진실성이나 완료를 판정하지 않는다.
+
 `taeguk audit review.json root`는 요구·검사 ID와 실제 파일 참조를 연결하는 선택적 점검이다. 전체 완료 판정을 출력하지 않는다. [입력과 한계](evidence-review.md)를 확인한다.
 
 ## 로컬 저장 경계

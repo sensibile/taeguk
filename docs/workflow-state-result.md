@@ -31,4 +31,4 @@ SQLite 설정으로 Elixir14개가 통과했다(통합11+기존3). history25개 
 
 PostgreSQL 시도는 owner guard 컴파일 오류로 migration 실행 전 실패했다. SQLite로 전환하며 guard, 비조회 SQL의 nil rows 처리, SQLite 번호 지정 파라미터(`?1`) 바인딩을 수정했다. 최종 테스트/HTTP 재시작 검사에는 수정본을 사용했다. 최초 loopback probe는 sandbox 연결 제약으로 실패했고 승인된 로컬 접근으로 다시 수행했다. 초기 mix test 한 번은 잘못된 저장소 루트에서 실행되어 앱 디렉터리로 수정했다. 이 실패들을 성공 검사와 섞지 않는다.
 
-로그: `/Users/tonton/Documents/study/experiments/taeguk-workflow-state-20261011/`. `sqlite-tests-final.log`, `http-probe.log`, `restart-probe.log`, `installed-http.log`, `offline-cli.log`, `python-tests.log`, `rust-tests.log`, `config-preservation.json`, installer 결과에 최종 근거가 있다.
+로그: `/Users/tonton/Documents/study/experiments/taeguk-workflow-state-20261011/`. `sqlite-tests-final.log`, `http-probe.log`, `restart-probe.log`, `installed-http.log`, `offline-cli.log`, `python-tests.log`, `rust-tests.log`, `config-preservation.json`, installer 결과에 최종 근거가 있다. 이 경로는 작성자 로컬 보관 위치이며 저장소에 포함하지 않았다. clone한 환경에서는 이 근거를 확인할 수 없다.

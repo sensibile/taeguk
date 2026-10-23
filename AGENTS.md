@@ -4,7 +4,7 @@ Address the user as BOSS. Write explanations and documentation in Korean; keep c
 
 Use Elixir for the web app and API. Use SQLite for Taeguk local workflow state. Use Python for installation and automation scripts; Rust for CLI logic and complex option handling. Do not add a second backend stack.
 
-Before repository implementation or tracked documentation edits, apply `/Users/tonton/.codex/skills/worktree-first-dev/SKILL.md`. Reuse the worktree assigned to the same task. Preserve unrelated changes.
+Before repository implementation or tracked documentation edits, apply the `worktree-first-dev` skill (`~/.codex/skills/worktree-first-dev/SKILL.md` when installed; it is not bundled here). Without it, create a dedicated `git worktree` and `<type>/<slug>` branch from the verified base before editing. Reuse the worktree assigned to the same task. Preserve unrelated changes.
 
 Read `docs/rules/index.md` and applicable rules before planning. Rule bodies in `docs/rules/` are canonical; `registry.toml` records identity, version, status and approval references. Research archive proposals are not active rules.
 
@@ -16,4 +16,4 @@ Use external execution and state observations for completion decisions. Distingu
 
 Initial development is local-only. Installation authorization does not grant production deployment, database migration, external messaging, or operational fault-injection authority. Preserve existing Codex settings and unowned installation files.
 
-Validation: `python3 scripts/check_rules.py`; `python3 -m unittest discover -s tests -v`; `cargo test --manifest-path tools/taeguk-cli/Cargo.toml --locked`; `mix test` and `mix format --check-formatted` in `apps/taeguk`. Validate changed skills with the system skill-creator validator. Inspect installer dry-run before applying.
+Validation: `python3 scripts/check_rules.py`; `python3 -m unittest discover -s tests -v`; `cargo test --manifest-path tools/taeguk-cli/Cargo.toml --locked`; `mix format --check-formatted` and a DB-backed `mix test` with `TAEGUK_REQUIRE_STATE_TESTS=1` in `apps/taeguk` (see `docs/workflow-state-usage.md`); a plain `mix test` skips state tests and is not a pass. Validate changed skills with the system skill-creator validator. Inspect installer dry-run before applying.
