@@ -9,6 +9,8 @@ import stat
 import subprocess
 import sys
 
+FORWARDED_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGQUIT, signal.SIGTERM)
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -36,22 +38,33 @@ def main():
         except BlockingIOError:
             print('resource busy; command was not started', file=sys.stderr)
             return 75
-        try:
-            # The child retains the lease if this wrapper is abruptly killed.
-            child = subprocess.Popen(command, pass_fds=(lock.fileno(),), start_new_session=True)
-        except OSError as error:
-            print(f'command could not start: {error.strerror}', file=sys.stderr)
-            return 127
+        # Install handlers before spawning so no signal can kill the wrapper
+        # between Popen and forwarding, leaving a detached child on the lease.
+        state = {'child': None, 'pending': []}
 
         def forward(signum, _frame):
+            if state['child'] is None:
+                state['pending'].append(signum)
+                return
             try:
-                os.killpg(child.pid, signum)
+                os.killpg(state['child'].pid, signum)
             except ProcessLookupError:
                 pass
 
-        previous = {sig: signal.signal(sig, forward) for sig in (signal.SIGINT, signal.SIGTERM)}
-        print(f'exclusive command started: pid={child.pid}', file=sys.stderr, flush=True)
+        previous = {sig: signal.signal(sig, forward) for sig in FORWARDED_SIGNALS}
         try:
+            if state['pending']:
+                print('interrupted; command was not started', file=sys.stderr)
+                return 128 + state['pending'][0]
+            try:
+                # The child retains the lease if this wrapper is abruptly killed.
+                state['child'] = child = subprocess.Popen(command, pass_fds=(lock.fileno(),), start_new_session=True)
+            except OSError as error:
+                print(f'command could not start: {error.strerror}', file=sys.stderr)
+                return 127
+            for signum in state['pending']:
+                forward(signum, None)
+            print(f'exclusive command started: pid={child.pid}', file=sys.stderr, flush=True)
             code = child.wait()
         finally:
             for sig, handler in previous.items():

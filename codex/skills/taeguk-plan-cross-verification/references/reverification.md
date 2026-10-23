@@ -12,15 +12,15 @@
 
 fixture를 바꾸는 테스트와 서버·HTTP·SQL probe가 같은 DB나 포트를 쓰면 실행 소유자를 정하고 직렬화한다. 실제 명령을 시작한 즉시 PID/session handle, 자원, 로그 경로를 기록한다. 실행 도구가 session을 반환하면 그 handle로 완료 또는 실패를 확인한 뒤 다음 의존 실행을 시작한다. 짧은 poll에서 출력이 없다는 이유로 같은 명령을 다시 시작하지 않는다. 자원을 반환할 때 남은 프로세스와 cleanup 결과를 알린다. 한 소유자가 수행하는 정상 HTTP 시나리오의 서버와 probe는 함께 동작해야 한다. 이 종속 동작마다 같은 lock을 중복 획득하지 않고, 다른 fixture 변경 검사와 시나리오 전체를 분리한다.
 
-같은 Unix 자원에서 서로 충돌할 수 있는 최상위 foreground 검사는 [실행기](../scripts/run_exclusive.py)로 실행한다. 기존 실행 환경이 동일 자원의 직렬화를 이미 보장하면 그 방식을 사용하고 근거를 기록한다. 같은 실제 자원은 모든 참여 worktree에서 **동일한 절대 lock 경로**를 선택한다. 경합이면 명령을 시작하지 않고 exit 75를 반환한다. 자동 재시도하지 말고 기존 소유자와 handle을 확인한다. lock 파일은 지우지 않는다.
+같은 Unix 자원에서 서로 충돌할 수 있는 최상위 foreground 검사는 [실행기](../scripts/run_exclusive.py)로 실행한다. 기존 실행 환경이 동일 자원의 직렬화를 이미 보장하면 그 방식을 사용하고 근거를 기록한다. 같은 실제 자원은 모든 참여 worktree에서 **동일한 절대 lock 경로**를 선택한다. 경합이면 명령을 시작하지 않고 exit 75를 반환한다. 자동 재시도하지 말고 기존 소유자와 handle을 확인한다. lock 파일은 지우지 않는다. lock 디렉터리는 실행 사용자가 쓸 수 있는 기존 위치를 쓴다. 실행기는 없는 상위 디렉터리를 만들려 하므로 권한 없는 경로를 고르면 명령 시작 전에 실패한다. 예제의 `/tmp`는 macOS에서 `/private/tmp`를 가리키므로 같은 파일이 된다.
 
 ```sh
 python3 <skill-directory>/scripts/run_exclusive.py \
-  --lock /private/tmp/taeguk-<project>-<database-port>.lock -- \
+  --lock /tmp/taeguk-<project>-<database-port>.lock -- \
   env MIX_ENV=test mix test
 ```
 
-실행기는 명령의 종료 코드를 전달하고 INT/TERM을 자식 process group에 전달한다. 부모가 갑자기 종료돼도 직접 자식이 상속한 lock을 유지한다. macOS/Linux의 협조적 flock이므로 실행기를 우회한 명령, 다른 lock 이름, 자식이 상속 FD를 닫는 프로그램은 차단하지 못한다. background/daemon 명령은 지원 범위가 아니다. DB·프로세스 소유권 확인을 대체하거나 실행 권한을 부여하지 않는다.
+실행기는 명령의 종료 코드를 전달하고 HUP/INT/QUIT/TERM을 자식 process group에 전달한다. 시그널 처리기는 명령 시작 전에 설치하므로 시작 직전·직후에 받은 시그널도 자식에게 전달된다. 부모가 갑자기 종료돼도 직접 자식이 상속한 lock을 유지한다. macOS/Linux의 협조적 flock이므로 실행기를 우회한 명령, 다른 lock 이름, 자식이 상속 FD를 닫는 프로그램은 차단하지 못한다. background/daemon 명령은 지원 범위가 아니다. DB·프로세스 소유권 확인을 대체하거나 실행 권한을 부여하지 않는다.
 
 ## 결과 먼저, 설명은 변경분만
 
