@@ -135,6 +135,32 @@ class BundleTest(unittest.TestCase):
             self.assertEqual(install.source_version(vendored), 'unknown')
             self.assertIsNone(install.published_commit(vendored))
 
+    def test_ignored_link_does_not_hide_its_tracked_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp).resolve()
+            for name in ('codex', 'docs/rules', 'installer'):
+                shutil.copytree(SOURCE/name, source/name, ignore=shutil.ignore_patterns('__pycache__'))
+            (source/'.gitignore').write_text('alias\n')
+            subprocess.run(['git', 'init', '-q', str(source)], check=True, env=install.git_env())
+            skill = source/'codex/skills/taeguk-work-contract'
+            (skill/'alias').symlink_to(skill/'references', target_is_directory=True)
+            bundle = install.project_bundle('codex', source)
+        self.assertIn('.agents/skills/taeguk-work-contract/references/completion-review.md', bundle)
+        self.assertFalse([key for key in bundle if '/alias' in key])
+
+    def test_unreadable_source_directory_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp).resolve()
+            for name in ('codex', 'docs/rules', 'installer'):
+                shutil.copytree(SOURCE/name, source/name, ignore=shutil.ignore_patterns('__pycache__'))
+            references = source/'codex/skills/taeguk-work-contract/references'
+            references.chmod(0)
+            try:
+                with self.assertRaises(ValueError):
+                    install.project_bundle('codex', source)
+            finally:
+                references.chmod(0o755)
+
     def test_git_ignored_roles_are_not_bundled(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp).resolve()
@@ -444,6 +470,9 @@ class ScopeTest(unittest.TestCase):
         self.assertEqual(set(preview['components']), {'rules', 'claude', 'codex'})
         result = install.project(SOURCE, self.root, self.home, ['claude'], 'apply')
         self.assertEqual(result['synced_agents'], ['codex'])
+        (self.root/'.codex/agents/taeguk_designer.toml').write_text('tampered')
+        with self.assertRaises(ValueError):
+            install.project(SOURCE, self.root, self.home, ['claude'], 'check')
         self.assertEqual(set(result['components']), {'rules', 'claude', 'codex'})
         self.assertNotEqual(json.loads(path.read_text())['source_version'], 'older')
 

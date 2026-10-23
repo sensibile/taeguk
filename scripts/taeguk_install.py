@@ -68,7 +68,11 @@ def git_ignored(source, paths):
 
 def tracked_files(source, directory, skip=()):
     """Regular files under directory, without Git-ignored ones; directories in skip are never entered."""
-    skip = {path.resolve() for path in skip}
+    # Compare lexical paths: resolving would let an ignored link stand in for the tracked path it points to.
+    lexical = lambda path: Path(os.path.abspath(path))
+    if not directory.is_dir():
+        return []
+    skip = {lexical(path) for path in skip}
     # One Git call lists ignored untracked entries (directories collapsed) under this directory.
     try:
         out = subprocess.run(['git', '-C', str(source), 'ls-files', '-z', '--others', '--ignored', '--exclude-standard',
@@ -77,14 +81,17 @@ def tracked_files(source, directory, skip=()):
         listed = out.stdout.decode().split('\0') if out.returncode == 0 else []
     except (OSError, ValueError):
         listed = []
-    ignored_entries = {(source/name.rstrip('/')).resolve() for name in listed if name}
+    ignored_entries = {lexical(source/name.rstrip('/')) for name in listed if name}
+    def unreadable(error):
+        raise ValueError(f'cannot read source directory: {error.filename}')
     files = []
-    for current, dirs, names in os.walk(directory):
-        here = Path(current)
-        dirs[:] = [name for name in dirs if (here/name).resolve() not in skip or (here/name).is_symlink()]
+    # onerror: an unreadable directory must fail the walk, not silently drop its files from the bundle.
+    for current, dirs, names in os.walk(directory, onerror=unreadable):
+        here = lexical(current)
+        dirs[:] = [name for name in dirs if here/name not in skip or (here/name).is_symlink()]
         # Ignored local artifacts (caches, links) are neither entered nor validated.
-        dirs[:] = [name for name in dirs if (here/name).resolve() not in ignored_entries]
-        names = [name for name in names if (here/name).resolve() not in ignored_entries]
+        dirs[:] = [name for name in dirs if here/name not in ignored_entries]
+        names = [name for name in names if here/name not in ignored_entries]
         for name in dirs + names:
             if (here/name).is_symlink():
                 raise ValueError('symlink source is not supported')
@@ -337,7 +344,7 @@ def project(source, root, home, agents, mode):
         raise ValueError(f'project root is not an existing directory: {root}')
     kept = remaining(root, agents) if mode == 'uninstall' else []
     # Updating the shared rules alone would leave other installed agents on an older version.
-    synced = remaining(root, agents) if mode in ('dry-run', 'apply') else []
+    synced = remaining(root, agents) if mode in ('dry-run', 'apply', 'check') else []
     agents = list(agents) + synced
     # The link pin depends on the checkout's remote refs, so --check reuses the pin the install recorded
     # and the same source commit always rebuilds the same rule bytes.
