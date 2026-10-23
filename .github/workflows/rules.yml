@@ -1,4 +1,4 @@
-name: Rules and Python checks
+name: Checks
 on: [push, pull_request]
 permissions:
   contents: read
@@ -12,3 +12,30 @@ jobs:
           python-version: '3.13'
       - run: python3 scripts/check_rules.py
       - run: python3 -m unittest discover -s tests -v
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal --no-self-update && rustup default stable
+      - run: cargo test --manifest-path tools/taeguk-cli/Cargo.toml --locked
+
+  elixir:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/taeguk
+    env:
+      TAEGUK_API_TOKEN: ci-only-state-test-token-not-a-secret
+      TAEGUK_REQUIRE_STATE_TESTS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: '27'
+          elixir-version: '1.18'
+      - run: echo "TAEGUK_DATABASE_PATH=$RUNNER_TEMP/taeguk-state-test.sqlite3" >> "$GITHUB_ENV"
+      - run: mix deps.get
+      - run: mix format --check-formatted
+      - run: mix ecto.migrate
+      - run: mix test
