@@ -185,6 +185,32 @@ class BundleTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 install.project_bundle('codex', source)
 
+    def test_relative_cargo_target_dir_uses_caller_cwd(self):
+        calls = []
+        def fake_run(args, **kwargs):
+            calls.append(kwargs)
+            raise OSError('no cargo')
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                with patch.object(install.subprocess, 'run', side_effect=fake_run), \
+                        patch.dict(os.environ, {'CARGO_TARGET_DIR': 'relative-target'}):
+                    target = install.cargo_target_dir(SOURCE)
+            finally:
+                os.chdir(cwd)
+            expected = Path(os.path.realpath(tmp))/'relative-target'
+        self.assertEqual(Path(os.path.realpath(target)), expected)
+        self.assertEqual(Path(os.path.realpath(calls[0]['env']['CARGO_TARGET_DIR'])), expected)
+
+    def test_claude_role_name_collision_is_rejected(self):
+        roles = install.roles(SOURCE)
+        clash = (roles[0][0].with_name('taeguk_a-b.toml'), {**roles[0][1], 'name': 'taeguk_a-b'})
+        twin = (roles[0][0].with_name('taeguk_a_b.toml'), {**roles[0][1], 'name': 'taeguk_a_b'})
+        with patch.object(install, 'roles', return_value=[clash, twin]):
+            with self.assertRaises(ValueError):
+                install.project_bundle('claude', SOURCE)
+
     def test_cargo_metadata_runs_from_the_crate(self):
         calls = []
         def fake_run(args, **kwargs):

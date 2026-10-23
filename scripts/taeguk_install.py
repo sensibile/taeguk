@@ -173,6 +173,8 @@ def project_bundle(agent, source):
             files[f'.codex/agents/{src.name}'] = (lf(src.name, src.read_bytes()), 0o644)
         else:
             name, data = claude_agent(role)
+            if f'.claude/agents/{name}.md' in files:
+                raise ValueError(f'roles collide after converting _ to - for Claude: {name}')
             files[f'.claude/agents/{name}.md'] = (data, 0o644)
     for skill, rel, data in skill_files(source):
         if agent == 'claude':
@@ -243,12 +245,17 @@ def init_bundle(agent, source):
 def cargo_target_dir(source):
     """Cargo's own target directory, which CARGO_TARGET_DIR or build.target-dir may move."""
     crate = source/'tools/taeguk-cli'
+    env = dict(os.environ)
+    if env.get('CARGO_TARGET_DIR'):
+        # Cargo resolves a relative CARGO_TARGET_DIR against the build's working directory; the caller's cwd
+        # stands in for it, since metadata itself runs from the crate.
+        env['CARGO_TARGET_DIR'] = os.path.abspath(env['CARGO_TARGET_DIR'])
     try:
         out = subprocess.run(['cargo', 'metadata', '--format-version', '1', '--no-deps', '--manifest-path',
-                              str(crate/'Cargo.toml')], capture_output=True, text=True, check=True, cwd=crate)
+                              str(crate/'Cargo.toml')], capture_output=True, text=True, check=True, cwd=crate, env=env)
         return Path(json.loads(out.stdout)['target_directory'])
     except (OSError, subprocess.CalledProcessError, ValueError, KeyError):
-        return Path(os.environ['CARGO_TARGET_DIR']) if os.environ.get('CARGO_TARGET_DIR') else crate/'target'
+        return Path(env['CARGO_TARGET_DIR']) if env.get('CARGO_TARGET_DIR') else crate/'target'
 
 
 def release_binary(target):
