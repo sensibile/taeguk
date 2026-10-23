@@ -52,6 +52,7 @@ mix phx.server
 3. [상태 API](docs/workflow-state-usage.md), [개선 루프 스킬](codex/skills/taeguk-self-improve/SKILL.md)
 4. [자체 개선 첫 완주 결과](docs/self-improvement-result.md), [SQLite 검증 결과](docs/workflow-state-result.md)
 5. [리서치 인덱스](docs/research/index.md), [이전 검증 기록](docs/validation.md)
+6. [리모트 저장소 운영](docs/repository-operations.md) — 개발 플로우 위임 범위와 PR 절차
 
 리서치는 검토 범위를 명시한 요약과 독립 적용 자료다. 역사적 문서의 로컬 경로와 외부 프로젝트 참조는 이 저장소에 포함된 아티팩트를 뜻하지 않는다. 금융 원자료, 실험 DB, dependency 캐시와 로컬 원시 로그는 게시 대상에 포함하지 않는다.
 
