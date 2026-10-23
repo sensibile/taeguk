@@ -138,7 +138,7 @@ def verify_receipt(root, name):
         raise ValueError('invalid installation receipt')
     for key, expected in doc['files'].items():
         target = engine.safe_target(root, key)
-        if not target.exists() or engine.digest(target.read_bytes()) != expected:
+        if not target.exists() or not engine.unchanged(target.read_bytes(), expected):
             raise ValueError(f'managed file is missing or locally modified: {key}')
 
 
@@ -173,7 +173,16 @@ def user(source, home, agents, mode, with_cli=True):
     return result
 
 
+def parse_agents(text):
+    agents = [agent for agent in text.split(',') if agent]
+    if not agents or set(agents) - set(AGENTS) or len(set(agents)) != len(agents):
+        raise ValueError('agents must be distinct values from: '+', '.join(AGENTS))
+    return agents
+
+
 def project(source, root, home, agents, mode):
+    if not root.is_dir():
+        raise ValueError(f'project root is not an existing directory: {root}')
     kept = remaining(root, agents) if mode == 'uninstall' else []
     components = [] if kept else [('rules', rules_bundle)]
     components += [(agent, lambda s, a=agent: project_bundle(a, s)) for agent in agents]
@@ -182,12 +191,13 @@ def project(source, root, home, agents, mode):
               'components': run(components, source, root, mode, {'source_version': version})}
     if kept:
         result['kept'] = {'rules': kept}
-    names = sorted({skill for skill, _, _ in skill_files(source)})
-    user_skills = {'claude': '.claude/skills', 'codex': '.agents/skills'}
-    shadowed = {agent: found for agent in agents
-                if (found := [name for name in names if (home/user_skills[agent]/name).exists()])}
-    if shadowed:
-        result['shadowed_by_user_skills'] = shadowed
+    if mode != 'uninstall':
+        names = sorted({skill for skill, _, _ in skill_files(source)})
+        user_skills = {'claude': '.claude/skills', 'codex': '.agents/skills'}
+        shadowed = {agent: found for agent in agents
+                    if (found := [name for name in names if (home/user_skills[agent]/name).exists()])}
+        if shadowed:
+            result['shadowed_by_user_skills'] = shadowed
     return result
 
 
@@ -244,9 +254,7 @@ def main():
         if args.command == 'migrate':
             result = migrate(home, mode)
         else:
-            agents = [agent for agent in args.agent.split(',') if agent]
-            if not agents or set(agents) - set(AGENTS):
-                raise ValueError('unsupported agent: '+args.agent)
+            agents = parse_agents(args.agent)
             if args.command == 'user':
                 result = user(source, home, agents, mode, not args.no_cli)
             else:

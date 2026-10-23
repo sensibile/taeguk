@@ -16,6 +16,11 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def unchanged(data, expected):
+    """Match the recorded hash, also after a Git checkout converted LF to CRLF."""
+    return expected in (digest(data), digest(data.replace(b'\r\n', b'\n')))
+
+
 def payload(source):
     files = {}
     for src in sorted((source/'codex/agents').glob('taeguk_*.toml')):
@@ -107,7 +112,7 @@ def execute(source, home, mode='dry-run', build=None, receipt_path=RECEIPT, meta
         if key in previous:
             if not isinstance(previous[key],str) or len(previous[key]) != 64:
                 raise ValueError('invalid receipt hash')
-            if not target.exists() or digest(target.read_bytes()) != previous[key]:
+            if not target.exists() or not unchanged(target.read_bytes(), previous[key]):
                 raise ValueError(f'managed file is missing or locally modified: {key}')
         elif target.exists():
             raise ValueError(f'unmanaged installation collision: {key}')

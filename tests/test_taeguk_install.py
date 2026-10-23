@@ -123,6 +123,34 @@ class ScopeTest(unittest.TestCase):
         self.assertFalse((self.root/'.taeguk').exists())
         self.assertFalse((self.root/'.codex').exists())
 
+    def test_agent_list_must_be_distinct_and_supported(self):
+        self.assertEqual(install.parse_agents('claude,codex'), ['claude', 'codex'])
+        for text in ('claude,claude', 'claude,gemini', ''):
+            with self.assertRaises(ValueError):
+                install.parse_agents(text)
+
+    def test_missing_project_root_is_rejected(self):
+        missing = self.root/'typo'
+        with self.assertRaises(ValueError):
+            install.project(SOURCE, missing, self.home, ['claude'], 'apply')
+        self.assertFalse(missing.exists())
+
+    def test_uninstall_does_not_need_current_skills(self):
+        install.project(SOURCE, self.root, self.home, ['claude'], 'apply')
+        with patch.object(install, 'skill_files', side_effect=ValueError('bundle has no skills')):
+            result = install.project(SOURCE, self.root, self.home, ['claude'], 'uninstall')
+        self.assertEqual(result['components']['claude']['status'], 'removed')
+
+    def test_crlf_checkout_still_verifies(self):
+        install.project(SOURCE, self.root, self.home, ['claude'], 'apply')
+        for path in (self.root/'.claude/agents').glob('*.md'):
+            path.write_bytes(path.read_bytes().replace(b'\n', b'\r\n'))
+        self.assertEqual(install.project(SOURCE, self.root, self.home, ['claude'], 'check')['components']['claude']['status'], 'verified')
+        install.project(SOURCE, self.root, self.home, ['claude'], 'apply')
+        (self.root/'.claude/agents/taeguk-designer.md').write_text('edited')
+        with self.assertRaises(ValueError):
+            install.project(SOURCE, self.root, self.home, ['claude'], 'uninstall')
+
     def test_partial_uninstall_keeps_shared_components(self):
         install.project(SOURCE, self.root, self.home, ['claude', 'codex'], 'apply')
         result = install.project(SOURCE, self.root, self.home, ['claude'], 'uninstall')

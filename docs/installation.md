@@ -13,7 +13,7 @@
 | project | `claude` | `.claude/skills/taeguk-*/`, `.claude/agents/taeguk-*.md` |
 | project | `codex` | `.agents/skills/taeguk-*/`, `.codex/agents/taeguk_*.toml` |
 
-한 에이전트만 제거할 때 다른 에이전트 설치가 남아 있으면 공유 구성요소(프로젝트의 `rules`, 사용자 레벨의 `cli`)는 남기고 결과의 `kept`로 표시한다. 제거 사전 검사는 receipt에 기록된 파일의 hash만 확인한다. 구성요소마다 receipt를 `<root>/.taeguk/receipts/<구성요소>.json`에 둔다. 프로젝트 receipt에는 절대경로 없이 원본 commit(`source_version`, 원본에 미커밋 변경이 있으면 `+dirty`)만 기록하므로 clone 위치가 달라도 `--check`가 동작한다. 적용·제거 전에 모든 구성요소의 충돌을 먼저 확인한다. 충돌 확인, 사용자 수정 보호, 쓰기 실패 복구, hash 대조 제거는 [Codex 설치](codex-installation.md)의 구현을 재사용한다. 제거 시 비게 된 `taeguk*` 디렉터리만 정리하고 공유 디렉터리는 남긴다.
+한 에이전트만 제거할 때 다른 에이전트 설치가 남아 있으면 공유 구성요소(프로젝트의 `rules`, 사용자 레벨의 `cli`)는 남기고 결과의 `kept`로 표시한다. 제거 사전 검사는 receipt에 기록된 파일의 hash만 확인한다. hash 확인은 Git이 LF를 CRLF로 바꿔 checkout한 파일도 수정되지 않은 것으로 본다. `--root`는 이미 존재하는 디렉터리여야 하고 `--agent`에는 중복을 허용하지 않는다. 구성요소마다 receipt를 `<root>/.taeguk/receipts/<구성요소>.json`에 둔다. 프로젝트 receipt에는 절대경로 없이 원본 commit(`source_version`, 원본에 미커밋 변경이 있으면 `+dirty`)만 기록하므로 clone 위치가 달라도 `--check`가 동작한다. 적용·제거 전에 모든 구성요소의 충돌을 먼저 확인한다. 충돌 확인, 사용자 수정 보호, 쓰기 실패 복구, hash 대조 제거는 [Codex 설치](codex-installation.md)의 구현을 재사용한다. 제거 시 비게 된 `taeguk*` 디렉터리만 정리하고 공유 디렉터리는 남긴다.
 
 발견 경로는 2026-10-23 공식 문서에서 확인했다. Claude Code는 프로젝트 `.claude/skills`, `.claude/agents`를 읽는다. 같은 이름이면 스킬은 개인 레벨이, 에이전트는 프로젝트 레벨이 우선한다. Codex는 CWD에서 저장소 루트까지의 `.agents/skills`와 프로젝트 `.codex/agents`를 읽고, 같은 이름의 스킬은 병합하지 않고 모두 노출한다.
 
