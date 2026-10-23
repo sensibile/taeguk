@@ -77,8 +77,9 @@ WAL, foreign keys, FULL synchronous, 5초 busy timeout을 사용한다. 쓰기 t
 검사는 전용 테스트 파일로 실행한다. 일반 `mix test`는 상태 DB 미설정 시 DB 통합 검사를 skip한다. DB 통합 검사에는 `*-test.sqlite3`로 끝나는 별도 파일과 token이 필요하다. `TAEGUK_REQUIRE_STATE_TESTS=1`을 주면 DB 미설정 시 skip 대신 실패한다.
 
 ```sh
-TAEGUK_DATABASE_PATH=/private/tmp/taeguk-state-test.sqlite3 mix ecto.migrate
-TAEGUK_DATABASE_PATH=/private/tmp/taeguk-state-test.sqlite3 TAEGUK_API_TOKEN=local-test-token-at-least-24-bytes TAEGUK_REQUIRE_STATE_TESTS=1 mix test
+export TAEGUK_DATABASE_PATH="${TMPDIR:-/tmp}/taeguk-state-test.sqlite3"
+mix ecto.migrate
+TAEGUK_API_TOKEN=local-test-token-at-least-24-bytes TAEGUK_REQUIRE_STATE_TESTS=1 mix test
 ```
 
 설계/검증 계획: [workflow-state-plan.md](workflow-state-plan.md). SQLite transaction 설정 근거: [Ecto SQLite3](https://ecto-sqlite3.hexdocs.pm/Ecto.Adapters.SQLite3.html), [SQLite WAL](https://sqlite.org/wal.html).

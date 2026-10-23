@@ -63,7 +63,7 @@ python3 -m unittest discover -s tests -v
 cargo test --manifest-path tools/taeguk-cli/Cargo.toml --locked
 cd apps/taeguk
 mix format --check-formatted
-export TAEGUK_DATABASE_PATH=/private/tmp/taeguk-state-test.sqlite3
+export TAEGUK_DATABASE_PATH="${TMPDIR:-/tmp}/taeguk-state-test.sqlite3"
 export TAEGUK_API_TOKEN=local-test-token-at-least-24-bytes
 mix ecto.migrate
 TAEGUK_REQUIRE_STATE_TESTS=1 mix test
