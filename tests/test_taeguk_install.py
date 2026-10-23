@@ -203,6 +203,31 @@ class BundleTest(unittest.TestCase):
                 self.assertEqual(install.cli_bundle(source), {install.CLI: (b'cli', 0o755)})
 
 
+    def test_template_tokens_in_source_path_are_not_expanded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp)/'repo-{{AGENT}}'
+            (source/'installer').mkdir(parents=True)
+            (source/'installer/taeguk-init.md').write_bytes((SOURCE/'installer/taeguk-init.md').read_bytes())
+            text = install.init_bundle('claude', source)[install.INIT['claude']][0].decode()
+        self.assertIn('repo-{{AGENT}}/scripts/taeguk_install.py', text)
+        self.assertNotIn('repo-claude', text)
+
+    def test_custom_cargo_target_inside_crate_is_not_walked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp)
+            crate = source/'tools/taeguk-cli'
+            release = crate/'build-out/release'
+            release.mkdir(parents=True)
+            (release/('taeguk' + install.EXE)).write_bytes(b'cli')
+            (release/'build-link').symlink_to(source)
+            (crate/'src').mkdir()
+            main = crate/'src/main.rs'
+            main.write_text('fn main() {}')
+            os.utime(main, (1_000_000, 1_000_000))
+            with patch.object(install, 'cargo_target_dir', return_value=crate/'build-out'):
+                self.assertEqual(install.cli_bundle(source), {install.CLI: (b'cli', 0o755)})
+
+
 class ScopeTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -372,6 +397,17 @@ class ScopeTest(unittest.TestCase):
             install.project(SOURCE, self.root, self.home, ['claude'], 'apply')
         self.assertEqual(list(outside.iterdir()), [])
 
+    def test_single_agent_apply_keeps_other_installed_agents_in_sync(self):
+        install.project(SOURCE, self.root, self.home, ['claude', 'codex'], 'apply')
+        path = self.root/install.receipt('codex')
+        doc = json.loads(path.read_text())
+        doc['source_version'] = 'older'
+        path.write_text(json.dumps(doc))
+        result = install.project(SOURCE, self.root, self.home, ['claude'], 'apply')
+        self.assertEqual(result['synced_agents'], ['codex'])
+        self.assertEqual(set(result['components']), {'rules', 'claude', 'codex'})
+        self.assertNotEqual(json.loads(path.read_text())['source_version'], 'older')
+
     def test_partial_uninstall_keeps_shared_components(self):
         install.project(SOURCE, self.root, self.home, ['claude', 'codex'], 'apply')
         result = install.project(SOURCE, self.root, self.home, ['claude'], 'uninstall')
@@ -485,9 +521,14 @@ class MigrateTest(unittest.TestCase):
         self.assertEqual(secret.read_text(), 'Host *')
 
     def test_no_cli_check_still_verifies_managed_cli(self):
+        (self.home/install.CLI).chmod(0o755)
         install.migrate(self.home, 'apply')
         result = install.user(SOURCE, self.home, [], 'check', with_cli=False)
         self.assertIn('matches its receipt', result['cli'])
+        (self.home/install.CLI).chmod(0o644)
+        with self.assertRaises(ValueError):
+            install.user(SOURCE, self.home, [], 'check', with_cli=False)
+        (self.home/install.CLI).chmod(0o755)
         (self.home/install.CLI).write_bytes(b'tampered')
         with self.assertRaises(ValueError):
             install.user(SOURCE, self.home, [], 'check', with_cli=False)

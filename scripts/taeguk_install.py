@@ -64,11 +64,12 @@ def git_ignored(source, paths):
 
 
 def tracked_files(source, directory, skip=()):
-    """Regular files under directory, without Git-ignored ones; top-level names in skip are never entered."""
+    """Regular files under directory, without Git-ignored ones; directories in skip are never entered."""
+    skip = {path.resolve() for path in skip}
     files = []
     for current, dirs, names in os.walk(directory):
         here = Path(current)
-        dirs[:] = [name for name in dirs if not (here == directory and name in skip)]
+        dirs[:] = [name for name in dirs if (here/name).resolve() not in skip or (here/name).is_symlink()]
         for name in dirs + names:
             if (here/name).is_symlink():
                 raise ValueError('symlink source is not supported')
@@ -190,8 +191,9 @@ def init_bundle(agent, source):
         installer, quoting = "'" + installer.replace("'", "''") + "'", "a PowerShell single-quoted argument (double any `'` in it)"
     else:
         installer, quoting = shlex.quote(installer), "a POSIX single-quoted argument (write any `'` in it as `'\\''`)"
-    body = (template.replace('{{INSTALLER}}', installer).replace('{{QUOTING}}', quoting)
-            .replace('{{SOURCE}}', str(source)).replace('{{AGENT}}', agent))
+    values = {'INSTALLER': installer, 'QUOTING': quoting, 'SOURCE': str(source), 'AGENT': agent}
+    # One pass, so a value containing a token (e.g. a path with "{{AGENT}}") is never substituted again.
+    body = re.sub(r'\{\{(INSTALLER|QUOTING|SOURCE|AGENT)\}\}', lambda match: values[match.group(1)], template)
     return {INIT[agent]: (('\n'.join(front + ['---', '']) + body).encode(), 0o644)}
 
 
@@ -212,7 +214,7 @@ def cli_bundle(source):
         raise ValueError('build the release CLI before installation')
     # A checkout that changed CLI sources after the last build refreshes their mtimes past the binary.
     crate = source/'tools/taeguk-cli'
-    inputs = tracked_files(source, crate, skip=('target',))
+    inputs = tracked_files(source, crate, skip=(crate/'target', binary.parent.parent))
     if inputs and binary.stat().st_mtime < max(src.stat().st_mtime for src in inputs):
         raise ValueError('the release CLI is older than its sources; rebuild it before installation')
     return {CLI: (binary.read_bytes(), 0o755)}
@@ -280,6 +282,8 @@ def user(source, home, agents, mode, with_cli=True):
     elif not with_cli and mode == 'check':
         if cli_managed:
             verify_receipt(home, 'cli')
+            if os.name != 'nt' and not (home/CLI).stat().st_mode & 0o111:
+                raise ValueError('installed CLI is not executable')
             result['cli'] = 'matches its receipt (not compared with a fresh build)'
         else:
             result['cli'] = 'not installed'
@@ -316,6 +320,9 @@ def project(source, root, home, agents, mode):
     if not root.is_dir():
         raise ValueError(f'project root is not an existing directory: {root}')
     kept = remaining(root, agents) if mode == 'uninstall' else []
+    # Updating the shared rules alone would leave other installed agents on an older version.
+    synced = remaining(root, agents) if mode == 'apply' else []
+    agents = list(agents) + synced
     components = [] if kept else [('rules', rules_bundle)]
     components += [(agent, lambda s, a=agent: project_bundle(a, s)) for agent in agents]
     version = source_version(source)
@@ -324,6 +331,8 @@ def project(source, root, home, agents, mode):
               'components': run(components, source, root, mode, {'source_version': version})}
     if kept:
         result['kept'] = {'rules': kept}
+    if synced:
+        result['synced_agents'] = synced
     if mode != 'uninstall':
         managed = [receipt(name) for name, _ in components] + [key for _, build in components for key in build(source)]
         ignored = sorted(path.relative_to(root).as_posix() for path in git_ignored(root, [root/key for key in managed]))
