@@ -12,6 +12,26 @@ import sys
 FORWARDED_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGQUIT, signal.SIGTERM)
 
 
+def make_private_dirs(directory):
+    """Create missing lock directories as owner-only, whatever the umask.
+
+    A directory other accounts can write would let them pre-create the lock.
+    Existing directories are left alone: a shared group directory is the
+    administrator's choice.
+    """
+    missing = []
+    for path in (directory, *directory.parents):
+        if path.exists():
+            break
+        missing.append(path)
+    for path in reversed(missing):
+        try:
+            os.mkdir(path, 0o700)
+        except FileExistsError:
+            continue
+        os.chmod(path, 0o700)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--lock', required=True, type=Path)
@@ -22,7 +42,7 @@ def main():
         command = command[1:]
     if not command:
         parser.error('a foreground command is required after --')
-    args.lock.parent.mkdir(parents=True, exist_ok=True)
+    make_private_dirs(args.lock.parent)
     # Keep the inode: deleting a lock file can permit a second independent lock.
     try:
         fd = os.open(args.lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)

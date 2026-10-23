@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -180,6 +181,22 @@ module.signal.signal = install
 
     def test_quit_is_forwarded_before_lease_release(self):
         self.assert_signal_forwarded_before_lease_release(signal.SIGQUIT)
+
+    def test_missing_lock_directories_are_private_even_with_permissive_umask(self):
+        # Another account must not be able to pre-create the lock in a directory the runner made.
+        lock = Path(self.tmp.name) / 'state' / 'taeguk' / 'locks' / 'database.lock'
+        result = subprocess.run(['sh', '-c', 'umask 000 && exec "$@"', 'sh', *self.command('pass', lock)], capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for directory in (lock.parent, lock.parent.parent, lock.parent.parent.parent):
+            with self.subTest(str(directory.relative_to(self.tmp.name))):
+                self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o700)
+
+    def test_existing_shared_lock_keeps_its_mode(self):
+        # The shared-group setup relies on a pre-created group-writable lock staying that way.
+        self.lock.touch()
+        self.lock.chmod(0o660)
+        self.assertEqual(self.run_once('pass').returncode, 0)
+        self.assertEqual(stat.S_IMODE(self.lock.stat().st_mode), 0o660)
 
     @unittest.skipIf(os.geteuid() == 0, 'root ignores file permissions')
     def test_lock_another_account_created_first_blocks_the_command(self):
