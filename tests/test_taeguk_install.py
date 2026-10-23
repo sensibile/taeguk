@@ -211,6 +211,31 @@ class BundleTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 install.project_bundle('claude', SOURCE)
 
+    def test_symlinked_cargo_target_is_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp)/'source'
+            crate = source/'tools/taeguk-cli'
+            cache = Path(tmp)/'cache'
+            (cache/'release').mkdir(parents=True)
+            (cache/'release'/('taeguk' + install.EXE)).write_bytes(b'cli')
+            (crate/'src').mkdir(parents=True)
+            main = crate/'src/main.rs'
+            main.write_text('fn main() {}')
+            os.utime(main, (1_000_000, 1_000_000))
+            (crate/'target').symlink_to(cache, target_is_directory=True)
+            with patch.object(install, 'cargo_target_dir', return_value=crate/'target'):
+                self.assertEqual(install.cli_bundle(source), {install.CLI: (b'cli', 0o755)})
+
+    def test_failed_ignore_listing_stops_bundle(self):
+        real = subprocess.run
+        def failing(args, **kwargs):
+            if 'ls-files' in args:
+                return subprocess.CompletedProcess(args, 128, b'', b'fatal: index file corrupt')
+            return real(args, **kwargs)
+        with patch.object(install.subprocess, 'run', side_effect=failing):
+            with self.assertRaises(ValueError):
+                install.project_bundle('codex', SOURCE)
+
     def test_cargo_metadata_runs_from_the_crate(self):
         calls = []
         def fake_run(args, **kwargs):

@@ -92,15 +92,19 @@ def tracked_files(source, directory, skip=()):
             raise ValueError('symlink source is not supported')
     # One Git call lists ignored untracked entries (directories collapsed) under this directory. Only the
     # source's own repository decides what is ignored; a surrounding repository's rules do not apply.
-    try:
-        if not own_repository(source):
-            raise ValueError('not a repository root')
-        out = subprocess.run(['git', '-C', str(source), 'ls-files', '-z', '--others', '--ignored', '--exclude-standard',
-                              '--directory', '--', str(directory.relative_to(source))],
-                             capture_output=True, env=git_env())
-        listed = out.stdout.decode().split('\0') if out.returncode == 0 else []
-    except (OSError, ValueError):
-        listed = []
+    listed = []
+    if own_repository(source):
+        # In a real repository a failed listing must stop the install; treating it as "nothing ignored"
+        # would bundle ignored caches or secrets.
+        try:
+            out = subprocess.run(['git', '-C', str(source), 'ls-files', '-z', '--others', '--ignored', '--exclude-standard',
+                                  '--directory', '--', str(directory.relative_to(source))],
+                                 capture_output=True, env=git_env())
+        except OSError as error:
+            raise ValueError(f'cannot list Git-ignored source files: {error}')
+        if out.returncode != 0:
+            raise ValueError('cannot list Git-ignored source files: ' + out.stderr.decode().strip())
+        listed = out.stdout.decode().split('\0')
     ignored_entries = {lexical(source/name.rstrip('/')) for name in listed if name}
     def unreadable(error):
         raise ValueError(f'cannot read source directory: {error.filename}')
@@ -108,7 +112,8 @@ def tracked_files(source, directory, skip=()):
     # onerror: an unreadable directory must fail the walk, not silently drop its files from the bundle.
     for current, dirs, names in os.walk(directory, onerror=unreadable):
         here = lexical(current)
-        dirs[:] = [name for name in dirs if here/name not in skip or (here/name).is_symlink()]
+        # Build output (e.g. Cargo's target, even when it links to an external cache) is never entered.
+        dirs[:] = [name for name in dirs if here/name not in skip]
         # Ignored local artifacts (caches, links) are neither entered nor validated.
         dirs[:] = [name for name in dirs if here/name not in ignored_entries]
         names = [name for name in names if here/name not in ignored_entries]

@@ -70,6 +70,17 @@ def payload(source):
     return files
 
 
+def is_link(path):
+    """Symlink, or any Windows reparse point (junctions included, also on Python 3.11 without is_junction)."""
+    if path.is_symlink() or getattr(path, 'is_junction', lambda: False)():
+        return True
+    try:
+        attributes = getattr(os.lstat(path), 'st_file_attributes', 0)
+    except OSError:
+        return False
+    return bool(attributes & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400))
+
+
 def safe_target(home, relative):
     rel = Path(relative)
     if rel.is_absolute() or any(p in ('..', '.') for p in rel.parts):
@@ -77,7 +88,7 @@ def safe_target(home, relative):
     path = home
     for index, part in enumerate(rel.parts):
         path = path/part
-        if path.is_symlink() or getattr(path, 'is_junction', lambda: False)():
+        if is_link(path):
             raise ValueError(f'symlink target is not supported: {relative}')
         # Catches any other link type (e.g. a Windows junction on older Python) that leaves the root.
         if path.exists() and not path.resolve().is_relative_to(home.resolve()):

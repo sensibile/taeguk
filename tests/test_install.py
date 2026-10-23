@@ -111,6 +111,15 @@ class InstallerTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             install.execute(SOURCE, self.home, 'check')
 
+    def test_reparse_point_counts_as_link_without_is_junction(self):
+        import types
+        path = self.home/'dir'
+        path.mkdir()
+        fake = types.SimpleNamespace(st_file_attributes=0x400)
+        with patch.object(install.os, 'lstat', return_value=fake):
+            self.assertTrue(install.is_link(path))
+        self.assertFalse(install.is_link(path))
+
     def test_owned_patterns_match_whole_segments(self):
         self.assertTrue(install.owns(install.LEGACY_OWNED, '.codex/agents/taeguk_x.toml'))
         self.assertTrue(install.owns(install.LEGACY_OWNED, '.agents/skills/taeguk-x/references/a.md'))
@@ -124,7 +133,7 @@ class InstallerTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             install.execute(SOURCE, self.home, 'check')
         import types
-        with patch.object(install, 'os', types.SimpleNamespace(name='nt')):
+        with patch.object(install, 'os', types.SimpleNamespace(name='nt', lstat=__import__('os').lstat)):
             self.assertEqual(install.execute(SOURCE, self.home, 'check')['status'], 'verified')
 
     def test_non_object_receipt_is_rejected(self):
