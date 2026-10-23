@@ -29,6 +29,11 @@ OWNED = {'rules': ('.taeguk/rules/',), 'claude': ('.claude/skills/taeguk-*/', '.
          'init-claude': (INIT['claude'],), 'init-codex': (INIT['codex'],), 'cli': (CLI,)}
 
 
+GENERATED_DIRS = {'__pycache__'}
+GENERATED_FILES = {'.DS_Store'}
+GENERATED_SUFFIXES = {'.pyc', '.pyo'}
+
+
 def git_env():
     """Environment for Git calls on the source checkout, free of a caller's GIT_DIR (e.g. inside hooks)."""
     return {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
@@ -88,7 +93,7 @@ def tracked_files(source, directory, skip=()):
     # Symlinks are refused below the walk root too, so the root and its ancestors up to source must be real.
     relative = directory.relative_to(source)
     for depth in range(len(relative.parts) + 1):
-        if (source/Path(*relative.parts[:depth])).is_symlink():
+        if engine.is_link(source/Path(*relative.parts[:depth])):
             raise ValueError('symlink source is not supported')
     # One Git call lists ignored untracked entries (directories collapsed) under this directory. Only the
     # source's own repository decides what is ignored; a surrounding repository's rules do not apply.
@@ -114,11 +119,13 @@ def tracked_files(source, directory, skip=()):
         here = lexical(current)
         # Build output (e.g. Cargo's target, even when it links to an external cache) is never entered.
         dirs[:] = [name for name in dirs if here/name not in skip]
-        # Ignored local artifacts (caches, links) are neither entered nor validated.
-        dirs[:] = [name for name in dirs if here/name not in ignored_entries]
-        names = [name for name in names if here/name not in ignored_entries]
+        # Ignored local artifacts (caches, links) are neither entered nor validated. Generated files are
+        # dropped even without Git (e.g. an unpacked archive after the test suite ran).
+        dirs[:] = [name for name in dirs if here/name not in ignored_entries and name not in GENERATED_DIRS]
+        names = [name for name in names if here/name not in ignored_entries
+                 and name not in GENERATED_FILES and Path(name).suffix not in GENERATED_SUFFIXES]
         for name in dirs + names:
-            if (here/name).is_symlink():
+            if engine.is_link(here/name):
                 raise ValueError('symlink source is not supported')
         files += [here/name for name in names if (here/name).is_file()]
     return sorted(files)
@@ -150,7 +157,7 @@ def skill_files(source):
     if not skills:
         raise ValueError('bundle has no skills')
     for skill in skills:
-        if skill.is_symlink() or not (skill/'SKILL.md').is_file():
+        if engine.is_link(skill) or not (skill/'SKILL.md').is_file():
             raise ValueError('invalid skill directory')
         for src in tracked_files(source, skill):
             yield skill.name, src.relative_to(skill), src.read_bytes()

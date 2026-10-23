@@ -245,6 +245,26 @@ class BundleTest(unittest.TestCase):
             install.cargo_target_dir(SOURCE)
         self.assertEqual(calls[0][1].get('cwd'), SOURCE/'tools/taeguk-cli')
 
+    def test_generated_artifacts_are_dropped_without_git(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp).resolve()
+            for name in ('codex', 'docs/rules', 'installer'):
+                shutil.copytree(SOURCE/name, source/name, ignore=shutil.ignore_patterns('__pycache__'))
+            cache = source/'codex/skills/taeguk-plan-cross-verification/scripts/__pycache__'
+            cache.mkdir()
+            (cache/'run_exclusive.cpython-313.pyc').write_bytes(b'bytecode')
+            (source/'docs/rules/.DS_Store').write_bytes(b'finder')
+            self.assertFalse(install.own_repository(source))
+            bundle = {**install.project_bundle('codex', source), **install.rules_bundle(source)}
+        self.assertFalse([k for k in bundle if '__pycache__' in k or k.endswith(('.pyc', '.DS_Store'))])
+
+    def test_junction_walk_root_is_rejected(self):
+        real = install.engine.is_link
+        target = SOURCE/'codex/agents'
+        with patch.object(install.engine, 'is_link', side_effect=lambda path: path == target or real(path)):
+            with self.assertRaises(ValueError):
+                install.project_bundle('codex', SOURCE)
+
     def test_git_ignored_roles_are_not_bundled(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp).resolve()

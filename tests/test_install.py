@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import stat
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -115,7 +116,7 @@ class InstallerTest(unittest.TestCase):
         import types
         path = self.home/'dir'
         path.mkdir()
-        fake = types.SimpleNamespace(st_file_attributes=0x400)
+        fake = types.SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_file_attributes=0x400)
         with patch.object(install.os, 'lstat', return_value=fake):
             self.assertTrue(install.is_link(path))
         self.assertFalse(install.is_link(path))
