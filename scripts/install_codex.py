@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """Install the local Taeguk bundle without modifying unrelated Codex settings."""
 import argparse
+from fnmatch import fnmatchcase
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import stat
 import tempfile
 import tomllib
 
 RECEIPT = '.codex/taeguk-install.json'
-# Paths the legacy bundle may own; prefixes end in '/', '-' or '_', anything else must match exactly.
-LEGACY_OWNED = ('.codex/agents/taeguk_', '.agents/skills/taeguk-', '.local/bin/taeguk')
+# Paths the legacy bundle may own: each segment is a glob; a trailing '/' owns that directory's subtree,
+# otherwise the pattern names one file.
+LEGACY_OWNED = ('.codex/agents/taeguk_*.toml', '.agents/skills/taeguk-*/', '.local/bin/taeguk')
 
 
 def digest(data):
@@ -21,8 +23,14 @@ def digest(data):
 TEXT_SUFFIXES = {'.md', '.toml', '.py', '.yaml', '.yml', '.json', '.txt'}
 
 
-def owns(prefixes, key):
-    return any(key == owned or (owned.endswith(('/', '-', '_')) and key.startswith(owned)) for owned in prefixes)
+def owns(patterns, key):
+    parts = PurePosixPath(key).parts
+    for pattern in patterns:
+        head = PurePosixPath(pattern.rstrip('/')).parts
+        size_ok = len(parts) > len(head) if pattern.endswith('/') else len(parts) == len(head)
+        if size_ok and all(fnmatchcase(part, glob) for part, glob in zip(parts, head)):
+            return True
+    return False
 
 
 def unchanged(data, expected, key=''):
@@ -134,7 +142,8 @@ def execute(source, home, mode='dry-run', build=None, receipt_path=RECEIPT, meta
         if previous != hashes:
             raise ValueError('installed bundle does not match current source')
         for key,(_,expected_mode) in bundle.items():
-            if expected_mode & 0o111 and not stat.S_IMODE((home/key).stat().st_mode)&0o111:
+            # Windows keeps no POSIX execute bit; the executable suffix marks the CLI there.
+            if os.name != 'nt' and expected_mode & 0o111 and not stat.S_IMODE((home/key).stat().st_mode)&0o111:
                 raise ValueError('installed CLI is not executable')
         return {'status':'verified','files':len(hashes)}
     if mode == 'dry-run':

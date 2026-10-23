@@ -111,6 +111,22 @@ class InstallerTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             install.execute(SOURCE, self.home, 'check')
 
+    def test_owned_patterns_match_whole_segments(self):
+        self.assertTrue(install.owns(install.LEGACY_OWNED, '.codex/agents/taeguk_x.toml'))
+        self.assertTrue(install.owns(install.LEGACY_OWNED, '.agents/skills/taeguk-x/references/a.md'))
+        for key in ('.codex/agents/taeguk_notes.txt', '.codex/agents/sub/taeguk_x.toml',
+                    '.agents/skills/taeguk-notes.txt', '.local/bin/taeguk-old', 'README.md'):
+            self.assertFalse(install.owns(install.LEGACY_OWNED, key), key)
+
+    def test_windows_check_skips_posix_execute_bit(self):
+        install.execute(SOURCE, self.home, 'apply')
+        (self.home/'.local/bin/taeguk').chmod(0o644)
+        with self.assertRaises(ValueError):
+            install.execute(SOURCE, self.home, 'check')
+        import types
+        with patch.object(install, 'os', types.SimpleNamespace(name='nt')):
+            self.assertEqual(install.execute(SOURCE, self.home, 'check')['status'], 'verified')
+
     def test_non_object_receipt_is_rejected(self):
         path = self.home/install.RECEIPT
         path.parent.mkdir(parents=True)

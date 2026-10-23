@@ -1,6 +1,7 @@
 import hashlib
 import importlib.util
 import json
+import os
 import shlex
 import shutil
 import subprocess
@@ -108,6 +109,22 @@ class BundleTest(unittest.TestCase):
             bundle = install.project_bundle('codex', source)
         self.assertNotIn('.codex/agents/taeguk_local.toml', bundle)
         self.assertIn('.codex/agents/taeguk_designer.toml', bundle)
+
+    def test_stale_release_cli_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp)
+            binary = source/'tools/taeguk-cli/target/release'/('taeguk' + install.EXE)
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b'cli')
+            main = source/'tools/taeguk-cli/src/main.rs'
+            main.parent.mkdir(parents=True)
+            main.write_text('fn main() {}')
+            os.utime(binary, (1_000_000, 1_000_000))
+            with self.assertRaises(ValueError):
+                install.cli_bundle(source)
+            os.utime(binary, None)
+            os.utime(main, (1_000_000, 1_000_000))
+            self.assertEqual(install.cli_bundle(source), {install.CLI: (b'cli', 0o755)})
 
     def test_cli_uses_platform_executable_suffix(self):
         suffix = sysconfig.get_config_var('EXE') or ''
@@ -245,6 +262,18 @@ class ScopeTest(unittest.TestCase):
         self.assertIn('.taeguk/receipts/rules.json', result['ignored_by_git']['examples'])
         (self.root/'.gitignore').write_text('.taeguk/*\n!.taeguk/rules/\n!.taeguk/receipts/\n')
         self.assertNotIn('ignored_by_git', install.project(SOURCE, self.root, self.home, ['claude'], 'dry-run'))
+
+    def test_receipt_cannot_claim_non_role_file_in_agents_dir(self):
+        install.project(SOURCE, self.root, self.home, ['codex'], 'apply')
+        notes = self.root/'.codex/agents/taeguk_notes.txt'
+        notes.write_text('notes')
+        path = self.root/install.receipt('codex')
+        doc = json.loads(path.read_text())
+        doc['files']['.codex/agents/taeguk_notes.txt'] = hashlib.sha256(b'notes').hexdigest()
+        path.write_text(json.dumps(doc))
+        with self.assertRaises(ValueError):
+            install.project(SOURCE, self.root, self.home, ['codex'], 'uninstall')
+        self.assertEqual(notes.read_text(), 'notes')
 
     def test_partial_uninstall_keeps_shared_components(self):
         install.project(SOURCE, self.root, self.home, ['claude', 'codex'], 'apply')

@@ -23,8 +23,8 @@ INIT = {'codex': '.agents/skills/taeguk-init/SKILL.md', 'claude': '.claude/skill
 PROJECT_SKILLS = {'codex': '.agents/skills', 'claude': '.claude/skills'}
 LEGACY_RECEIPTS = ('.codex/taeguk-install.json',)
 # Paths each component may own; a receipt naming anything else is rejected before removal.
-OWNED = {'rules': ('.taeguk/rules/',), 'claude': ('.claude/skills/taeguk-', '.claude/agents/taeguk-'),
-         'codex': ('.agents/skills/taeguk-', '.codex/agents/taeguk_'),
+OWNED = {'rules': ('.taeguk/rules/',), 'claude': ('.claude/skills/taeguk-*/', '.claude/agents/taeguk-*.md'),
+         'codex': ('.agents/skills/taeguk-*/', '.codex/agents/taeguk_*.toml'),
          'init-claude': (INIT['claude'],), 'init-codex': (INIT['codex'],), 'cli': (CLI,)}
 
 
@@ -162,6 +162,11 @@ def cli_bundle(source):
     binary = source/'tools/taeguk-cli/target/release'/('taeguk' + EXE)
     if not binary.is_file() or binary.is_symlink():
         raise ValueError('build the release CLI before installation')
+    # A checkout that changed CLI sources after the last build refreshes their mtimes past the binary.
+    crate = source/'tools/taeguk-cli'
+    inputs = [src for src in tracked_files(source, crate) if 'target' not in src.relative_to(crate).parts]
+    if inputs and binary.stat().st_mtime < max(src.stat().st_mtime for src in inputs):
+        raise ValueError('the release CLI is older than its sources; rebuild it before installation')
     return {CLI: (binary.read_bytes(), 0o755)}
 
 
