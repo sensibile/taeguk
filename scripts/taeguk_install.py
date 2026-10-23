@@ -50,6 +50,10 @@ def own_repository(source):
         top = subprocess.run(['git', '-C', str(source), 'rev-parse', '--show-toplevel'], capture_output=True, text=True,
                              check=True, env=git_env()).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
+        # A checkout with its own .git that Git cannot read is not an archive: its ignore rules would be
+        # skipped and ignored local files bundled.
+        if (Path(source)/'.git').exists():
+            raise ValueError(f'cannot identify the Git repository of the Taeguk source: {source}')
         return False
     return Path(top).resolve() == Path(source).resolve()
 
@@ -154,13 +158,18 @@ def skill_files(source):
     skills = sorted((source/'codex/skills').glob('taeguk-*'))
     ignored = git_ignored(source, skills) if own_repository(source) else set()
     skills = [skill for skill in skills if skill not in ignored]
-    if not skills:
-        raise ValueError('bundle has no skills')
+    found = []
     for skill in skills:
         if engine.is_link(skill) or not (skill/'SKILL.md').is_file():
             raise ValueError('invalid skill directory')
-        for src in tracked_files(source, skill):
-            yield skill.name, src.relative_to(skill), src.read_bytes()
+        files = tracked_files(source, skill)
+        # A local skill whose SKILL.md is ignored would install as an undiscoverable directory; leave it out.
+        if skill/'SKILL.md' not in files:
+            continue
+        found += [(skill.name, src.relative_to(skill), src.read_bytes()) for src in files]
+    if not found:
+        raise ValueError('bundle has no skills')
+    return found
 
 
 def claude_agent(role):
@@ -259,9 +268,9 @@ def cargo_target_dir(source):
     crate = source/'tools/taeguk-cli'
     env = dict(os.environ)
     if env.get('CARGO_TARGET_DIR'):
-        # Cargo resolves a relative CARGO_TARGET_DIR against the build's working directory; the caller's cwd
-        # stands in for it, since metadata itself runs from the crate.
-        env['CARGO_TARGET_DIR'] = os.path.abspath(env['CARGO_TARGET_DIR'])
+        # Cargo resolves a relative CARGO_TARGET_DIR against the build's working directory, which the README
+        # sets to the Taeguk checkout root; the installer itself may run from any project (taeguk-init).
+        env['CARGO_TARGET_DIR'] = os.path.abspath(Path(source)/env['CARGO_TARGET_DIR'])
     try:
         out = subprocess.run(['cargo', 'metadata', '--format-version', '1', '--no-deps', '--manifest-path',
                               str(crate/'Cargo.toml')], capture_output=True, text=True, check=True, cwd=crate, env=env)
@@ -359,7 +368,7 @@ def user(source, home, agents, mode, with_cli=True):
     elif not with_cli and mode == 'check':
         if cli_managed:
             verify_receipt(home, 'cli')
-            if os.name != 'nt' and not (home/CLI).stat().st_mode & 0o111:
+            if os.name != 'nt' and not os.access(home/CLI, os.X_OK):
                 raise ValueError('installed CLI is not executable')
             result['cli'] = 'matches its receipt (not compared with a fresh build)'
         else:

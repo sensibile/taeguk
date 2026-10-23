@@ -185,7 +185,7 @@ class BundleTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 install.project_bundle('codex', source)
 
-    def test_relative_cargo_target_dir_uses_caller_cwd(self):
+    def test_relative_cargo_target_dir_follows_source_root(self):
         calls = []
         def fake_run(args, **kwargs):
             calls.append(kwargs)
@@ -199,9 +199,29 @@ class BundleTest(unittest.TestCase):
                     target = install.cargo_target_dir(SOURCE)
             finally:
                 os.chdir(cwd)
-            expected = Path(os.path.realpath(tmp))/'relative-target'
-        self.assertEqual(Path(os.path.realpath(target)), expected)
-        self.assertEqual(Path(os.path.realpath(calls[0]['env']['CARGO_TARGET_DIR'])), expected)
+        self.assertEqual(target, SOURCE/'relative-target')
+        self.assertEqual(Path(calls[0]['env']['CARGO_TARGET_DIR']), SOURCE/'relative-target')
+
+    def test_local_skill_with_ignored_marker_is_left_out(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp).resolve()
+            for name in ('codex', 'docs/rules', 'installer'):
+                shutil.copytree(SOURCE/name, source/name, ignore=shutil.ignore_patterns('__pycache__'))
+            (source/'.gitignore').write_text('codex/skills/taeguk-local/SKILL.md\n')
+            subprocess.run(['git', 'init', '-q', str(source)], check=True, env=install.git_env())
+            local = source/'codex/skills/taeguk-local'
+            local.mkdir()
+            (local/'SKILL.md').write_text('---\nname: taeguk-local\ndescription: x\n---\n')
+            (local/'notes.txt').write_text('notes')
+            bundle = install.project_bundle('codex', source)
+        self.assertFalse([key for key in bundle if 'taeguk-local' in key])
+
+    def test_unreadable_git_checkout_is_not_treated_as_archive(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp).resolve()
+            (source/'.git').write_text('gitdir: /nonexistent\n')
+            with self.assertRaises(ValueError):
+                install.own_repository(source)
 
     def test_claude_role_name_collision_is_rejected(self):
         roles = install.roles(SOURCE)

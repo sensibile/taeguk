@@ -121,6 +121,12 @@ class InstallerTest(unittest.TestCase):
             self.assertTrue(install.is_link(path))
         self.assertFalse(install.is_link(path))
 
+    def test_execute_bit_must_apply_to_the_current_user(self):
+        install.execute(SOURCE, self.home, 'apply')
+        (self.home/'.local/bin/taeguk').chmod(0o611)
+        with self.assertRaises(ValueError):
+            install.execute(SOURCE, self.home, 'check')
+
     def test_owned_patterns_match_whole_segments(self):
         self.assertTrue(install.owns(install.LEGACY_OWNED, '.codex/agents/taeguk_x.toml'))
         self.assertTrue(install.owns(install.LEGACY_OWNED, '.agents/skills/taeguk-x/references/a.md'))

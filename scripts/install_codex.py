@@ -157,7 +157,8 @@ def execute(source, home, mode='dry-run', build=None, receipt_path=RECEIPT, meta
             raise ValueError('installed bundle does not match current source')
         for key,(_,expected_mode) in bundle.items():
             # Windows keeps no POSIX execute bit; the executable suffix marks the CLI there.
-            if os.name != 'nt' and expected_mode & 0o111 and not stat.S_IMODE((home/key).stat().st_mode)&0o111:
+            # os.access asks whether this user may run it, not whether any class has an execute bit.
+            if os.name != 'nt' and expected_mode & 0o111 and not os.access(home/key, os.X_OK):
                 raise ValueError('installed CLI is not executable')
         return {'status':'verified','files':len(hashes)}
     if mode == 'dry-run':
