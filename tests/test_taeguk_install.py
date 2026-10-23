@@ -95,7 +95,8 @@ class BundleTest(unittest.TestCase):
             for path in list(source.rglob('*.md')) + list(source.rglob('*.toml')):
                 path.write_bytes(path.read_bytes().replace(b'\n', b'\r\n'))
             crlf = {**install.project_bundle('codex', source), **install.rules_bundle(source)}
-        lf = {**install.project_bundle('codex', SOURCE), **install.rules_bundle(SOURCE)}
+        with patch.object(install, 'source_version', return_value='unknown'):
+            lf = {**install.project_bundle('codex', SOURCE), **install.rules_bundle(SOURCE)}
         self.assertEqual(crlf, lf)
 
     def test_git_ignored_roles_are_not_bundled(self):
@@ -125,6 +126,25 @@ class BundleTest(unittest.TestCase):
             os.utime(binary, None)
             os.utime(main, (1_000_000, 1_000_000))
             self.assertEqual(install.cli_bundle(source), {install.CLI: (b'cli', 0o755)})
+
+    def test_rule_links_follow_installed_commit(self):
+        commit = 'a' * 40
+        with patch.object(install, 'source_version', return_value=commit):
+            pinned = install.rules_bundle(SOURCE)['.taeguk/rules/approvals.md'][0]
+        with patch.object(install, 'source_version', return_value=commit + '+dirty'):
+            unpinned = install.rules_bundle(SOURCE)['.taeguk/rules/approvals.md'][0]
+        self.assertIn(f'taeguk/blob/{commit}/docs/research'.encode(), pinned)
+        self.assertNotIn(b'taeguk/blob/main/', pinned)
+        self.assertIn(b'taeguk/blob/main/docs/research', unpinned)
+
+    def test_cli_found_in_cargo_target_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)/'elsewhere'
+            binary = target/'release'/('taeguk' + install.EXE)
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b'cli')
+            with patch.dict(os.environ, {'CARGO_TARGET_DIR': str(target)}):
+                self.assertEqual(install.cli_bundle(Path(tmp)/'source'), {install.CLI: (b'cli', 0o755)})
 
     def test_cli_uses_platform_executable_suffix(self):
         suffix = sysconfig.get_config_var('EXE') or ''
@@ -287,6 +307,24 @@ class ScopeTest(unittest.TestCase):
         self.assertEqual(result['installer_version'], install.source_version(SOURCE))
         self.assertNotIn('source_version', result)
 
+    def test_empty_receipt_blocks_removal_before_any_change(self):
+        install.project(SOURCE, self.root, self.home, ['claude'], 'apply')
+        path = self.root/install.receipt('claude')
+        doc = json.loads(path.read_text())
+        doc['files'] = {}
+        path.write_text(json.dumps(doc))
+        with self.assertRaises(ValueError):
+            install.project(SOURCE, self.root, self.home, ['claude'], 'uninstall')
+        self.assertTrue((self.root/'.taeguk/rules/registry.toml').is_file())
+
+    def test_link_escaping_root_is_rejected(self):
+        outside = Path(self.tmp.name)/'outside'
+        outside.mkdir()
+        (self.root/'.claude').symlink_to(outside, target_is_directory=True)
+        with self.assertRaises(ValueError):
+            install.project(SOURCE, self.root, self.home, ['claude'], 'apply')
+        self.assertEqual(list(outside.iterdir()), [])
+
     def test_partial_uninstall_keeps_shared_components(self):
         install.project(SOURCE, self.root, self.home, ['claude', 'codex'], 'apply')
         result = install.project(SOURCE, self.root, self.home, ['claude'], 'uninstall')
@@ -398,6 +436,14 @@ class MigrateTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             install.engine.execute(SOURCE, self.home, 'uninstall')
         self.assertEqual(secret.read_text(), 'Host *')
+
+    def test_no_cli_check_still_verifies_managed_cli(self):
+        install.migrate(self.home, 'apply')
+        result = install.user(SOURCE, self.home, [], 'check', with_cli=False)
+        self.assertIn('matches its receipt', result['cli'])
+        (self.home/install.CLI).write_bytes(b'tampered')
+        with self.assertRaises(ValueError):
+            install.user(SOURCE, self.home, [], 'check', with_cli=False)
 
     def test_migrated_cli_can_be_updated_by_user_scope(self):
         install.migrate(self.home, 'apply')

@@ -77,8 +77,11 @@ def safe_target(home, relative):
     path = home
     for index, part in enumerate(rel.parts):
         path = path/part
-        if path.is_symlink():
+        if path.is_symlink() or getattr(path, 'is_junction', lambda: False)():
             raise ValueError(f'symlink target is not supported: {relative}')
+        # Catches any other link type (e.g. a Windows junction on older Python) that leaves the root.
+        if path.exists() and not path.resolve().is_relative_to(home.resolve()):
+            raise ValueError(f'installation path leaves the root: {relative}')
         if index < len(rel.parts)-1 and path.exists() and not path.is_dir():
             raise ValueError(f'installation path component is not a directory: {relative}')
     if path.exists() and not path.is_file():

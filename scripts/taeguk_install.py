@@ -137,11 +137,20 @@ def project_bundle(agent, source):
     return files
 
 
+REPO_BLOB = b'https://github.com/sensibile/taeguk/blob/'
+
+
 def rules_bundle(source):
     rules = source/'docs/rules'
+    version = source_version(source)
+    # Links into this repository follow the installed commit, so a snapshot never cites a later main.
+    pin = version.encode() if re.fullmatch(r'[0-9a-f]{40}', version) else None
     files = {}
     for src in tracked_files(source, rules):
-        files[f'.taeguk/rules/{src.relative_to(rules).as_posix()}'] = (lf(src.name, src.read_bytes()), 0o644)
+        data = lf(src.name, src.read_bytes())
+        if pin and src.suffix == '.md':
+            data = data.replace(REPO_BLOB + b'main/', REPO_BLOB + pin + b'/')
+        files[f'.taeguk/rules/{src.relative_to(rules).as_posix()}'] = (data, 0o644)
     if '.taeguk/rules/registry.toml' not in files:
         raise ValueError('bundle has no rule registry')
     return files
@@ -158,8 +167,19 @@ def init_bundle(agent, source):
     return {INIT[agent]: (('\n'.join(front + ['---', '']) + body).encode(), 0o644)}
 
 
+def cargo_target_dir(source):
+    """Cargo's own target directory, which CARGO_TARGET_DIR or build.target-dir may move."""
+    crate = source/'tools/taeguk-cli'
+    try:
+        out = subprocess.run(['cargo', 'metadata', '--format-version', '1', '--no-deps', '--manifest-path',
+                              str(crate/'Cargo.toml')], capture_output=True, text=True, check=True)
+        return Path(json.loads(out.stdout)['target_directory'])
+    except (OSError, subprocess.CalledProcessError, ValueError, KeyError):
+        return Path(os.environ['CARGO_TARGET_DIR']) if os.environ.get('CARGO_TARGET_DIR') else crate/'target'
+
+
 def cli_bundle(source):
-    binary = source/'tools/taeguk-cli/target/release'/('taeguk' + EXE)
+    binary = cargo_target_dir(source)/'release'/('taeguk' + EXE)
     if not binary.is_file() or binary.is_symlink():
         raise ValueError('build the release CLI before installation')
     # A checkout that changed CLI sources after the last build refreshes their mtimes past the binary.
@@ -175,8 +195,8 @@ def verify_receipt(root, name):
     if not path.exists():
         raise ValueError(f'no managed installation: {name}')
     doc = json.loads(path.read_text())
-    if not isinstance(doc, dict) or doc.get('schema_version') != 1 or not isinstance(doc.get('files'), dict):
-        raise ValueError('invalid installation receipt')
+    if not isinstance(doc, dict) or doc.get('schema_version') != 1 or not isinstance(doc.get('files'), dict) or not doc['files']:
+        raise ValueError(f'invalid installation receipt: {name}')
     for key, expected in doc['files'].items():
         if not engine.owns(OWNED[name], key):
             raise ValueError(f'receipt {name} claims a path outside its component: {key}')
@@ -229,6 +249,12 @@ def user(source, home, agents, mode, with_cli=True):
         result['kept'] = {'cli': kept}
     elif with_cli and mode in ('check', 'uninstall') and not cli_managed:
         result['cli'] = 'not installed'
+    elif not with_cli and mode == 'check':
+        if cli_managed:
+            verify_receipt(home, 'cli')
+            result['cli'] = 'matches its receipt (not compared with a fresh build)'
+        else:
+            result['cli'] = 'not installed'
     legacy = [path for path in LEGACY_RECEIPTS if (home/path).exists()]
     if legacy:
         result['legacy'] = {'receipts': legacy,
