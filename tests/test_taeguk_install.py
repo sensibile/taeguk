@@ -86,6 +86,29 @@ class BundleTest(unittest.TestCase):
         self.assertFalse([k for k in bundle if '__pycache__' in k or k.endswith('.pyc')])
         self.assertIn('.agents/skills/taeguk-plan-cross-verification/scripts/run_exclusive.py', bundle)
 
+    def test_crlf_source_installs_lf_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp).resolve()
+            for name in ('codex', 'docs/rules', 'installer'):
+                shutil.copytree(SOURCE/name, source/name, ignore=shutil.ignore_patterns('__pycache__'))
+            for path in list(source.rglob('*.md')) + list(source.rglob('*.toml')):
+                path.write_bytes(path.read_bytes().replace(b'\n', b'\r\n'))
+            crlf = {**install.project_bundle('codex', source), **install.rules_bundle(source)}
+        lf = {**install.project_bundle('codex', SOURCE), **install.rules_bundle(SOURCE)}
+        self.assertEqual(crlf, lf)
+
+    def test_git_ignored_roles_are_not_bundled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp).resolve()
+            for name in ('codex', 'docs/rules', 'installer'):
+                shutil.copytree(SOURCE/name, source/name, ignore=shutil.ignore_patterns('__pycache__'))
+            (source/'.gitignore').write_text('taeguk_local.toml\n')
+            subprocess.run(['git', 'init', '-q', str(source)], check=True, env=install.git_env())
+            (source/'codex/agents/taeguk_local.toml').write_text('name = "taeguk_local"\ndescription = "d"\ndeveloper_instructions = "i"\n')
+            bundle = install.project_bundle('codex', source)
+        self.assertNotIn('.codex/agents/taeguk_local.toml', bundle)
+        self.assertIn('.codex/agents/taeguk_designer.toml', bundle)
+
     def test_cli_uses_platform_executable_suffix(self):
         suffix = sysconfig.get_config_var('EXE') or ''
         self.assertEqual(install.CLI, '.local/bin/taeguk' + suffix)
@@ -262,14 +285,14 @@ class MigrateTest(unittest.TestCase):
         cli.write_bytes(b'cli')
         self.legacy = self.home/install.LEGACY_RECEIPTS[0]
         self.legacy.parent.mkdir()
-        self.files = {install.CLI: hashlib.sha256(b'cli').hexdigest(), '.codex/agents/a.toml': '0'*64}
+        self.files = {install.CLI: hashlib.sha256(b'cli').hexdigest(), '.codex/agents/taeguk_a.toml': '0'*64}
         self.legacy.write_text(json.dumps({'schema_version': 1, 'source_root': '/src', 'files': self.files}))
 
     def test_dry_run_then_apply_splits_receipt(self):
         self.assertEqual(install.migrate(self.home, 'dry-run')['status'], 'planned')
         self.assertEqual(json.loads(self.legacy.read_text())['files'], self.files)
         install.migrate(self.home, 'apply')
-        self.assertEqual(json.loads(self.legacy.read_text())['files'], {'.codex/agents/a.toml': '0'*64})
+        self.assertEqual(json.loads(self.legacy.read_text())['files'], {'.codex/agents/taeguk_a.toml': '0'*64})
         new = json.loads((self.home/'.taeguk/receipts/cli.json').read_text())
         self.assertEqual(new['files'], {install.CLI: self.files[install.CLI]})
         self.assertEqual(install.migrate(self.home, 'apply')['status'], 'nothing to migrate')
@@ -282,13 +305,13 @@ class MigrateTest(unittest.TestCase):
         self.assertFalse((self.home/'.taeguk').exists())
 
     def test_legacy_uninstall_after_migration_keeps_cli(self):
-        agent = self.home/'.codex/agents/a.toml'
+        agent = self.home/'.codex/agents/taeguk_a.toml'
         agent.parent.mkdir()
         agent.write_bytes(b'role')
-        self.files['.codex/agents/a.toml'] = hashlib.sha256(b'role').hexdigest()
+        self.files['.codex/agents/taeguk_a.toml'] = hashlib.sha256(b'role').hexdigest()
         self.legacy.write_text(json.dumps({'schema_version': 1, 'source_root': '/src', 'files': self.files}))
         install.migrate(self.home, 'apply')
-        legacy_bundle = {install.CLI: (b'cli', 0o755), '.codex/agents/a.toml': (b'role', 0o644)}
+        legacy_bundle = {install.CLI: (b'cli', 0o755), '.codex/agents/taeguk_a.toml': (b'role', 0o644)}
         with patch.object(install.engine, 'payload', return_value=legacy_bundle):
             with self.assertRaises(ValueError):
                 install.engine.execute(SOURCE, self.home, 'apply')
@@ -296,6 +319,29 @@ class MigrateTest(unittest.TestCase):
         self.assertFalse(agent.exists())
         self.assertFalse(self.legacy.exists())
         self.assertEqual((self.home/install.CLI).read_bytes(), b'cli')
+
+    def test_cli_only_user_scope_can_be_checked_and_removed(self):
+        (self.home/install.CLI).chmod(0o755)
+        install.migrate(self.home, 'apply')
+        self.assertEqual(install.select_agents(None, 'check', self.home, 'init-'), [])
+        with patch.object(install, 'cli_bundle', return_value={install.CLI: (b'cli', 0o755)}):
+            self.assertEqual(install.user(SOURCE, self.home, [], 'check')['components']['cli']['status'], 'verified')
+            install.user(SOURCE, self.home, [], 'uninstall')
+        self.assertFalse((self.home/install.CLI).exists())
+
+    def test_legacy_receipt_cannot_claim_unowned_home_files(self):
+        secret = self.home/'.ssh/config'
+        secret.parent.mkdir()
+        secret.write_text('Host *')
+        role = self.home/'.codex/agents/taeguk_a.toml'
+        role.parent.mkdir(parents=True)
+        role.write_bytes(b'role')
+        self.files['.codex/agents/taeguk_a.toml'] = hashlib.sha256(b'role').hexdigest()
+        self.files['.ssh/config'] = hashlib.sha256(b'Host *').hexdigest()
+        self.legacy.write_text(json.dumps({'schema_version': 1, 'source_root': '/src', 'files': self.files}))
+        with self.assertRaises(ValueError):
+            install.engine.execute(SOURCE, self.home, 'uninstall')
+        self.assertEqual(secret.read_text(), 'Host *')
 
     def test_migrated_cli_can_be_updated_by_user_scope(self):
         install.migrate(self.home, 'apply')

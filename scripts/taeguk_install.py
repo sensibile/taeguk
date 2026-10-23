@@ -74,11 +74,16 @@ def tracked_files(source, directory):
     return [src for src in files if src not in ignored]
 
 
+def lf(rel, data):
+    """Install text with LF endings so receipts match on every platform's checkout."""
+    return data.replace(b'\r\n', b'\n') if Path(rel).suffix in engine.TEXT_SUFFIXES else data
+
+
 def roles(source):
     found = []
-    for src in sorted((source/'codex/agents').glob('taeguk_*.toml')):
-        if src.is_symlink():
-            raise ValueError('symlink source is not supported')
+    for src in tracked_files(source, source/'codex/agents'):
+        if src.parent != source/'codex/agents' or not src.match('taeguk_*.toml'):
+            continue
         role = tomllib.loads(src.read_text())
         if role['name'] != src.stem or not role.get('description') or not role.get('developer_instructions'):
             raise ValueError(f'invalid agent: {src.name}')
@@ -118,7 +123,7 @@ def project_bundle(agent, source):
     files = {}
     for src, role in roles(source):
         if agent == 'codex':
-            files[f'.codex/agents/{src.name}'] = (src.read_bytes(), 0o644)
+            files[f'.codex/agents/{src.name}'] = (lf(src.name, src.read_bytes()), 0o644)
         else:
             name, data = claude_agent(role)
             files[f'.claude/agents/{name}.md'] = (data, 0o644)
@@ -128,7 +133,7 @@ def project_bundle(agent, source):
                 continue
             if rel.suffix == '.md':
                 data = SKILL_REF.sub(r'/\1', data.decode()).encode()
-        files[f'{PROJECT_SKILLS[agent]}/{skill}/{rel.as_posix()}'] = (data, 0o644)
+        files[f'{PROJECT_SKILLS[agent]}/{skill}/{rel.as_posix()}'] = (lf(rel, data), 0o644)
     return files
 
 
@@ -136,7 +141,7 @@ def rules_bundle(source):
     rules = source/'docs/rules'
     files = {}
     for src in tracked_files(source, rules):
-        files[f'.taeguk/rules/{src.relative_to(rules).as_posix()}'] = (src.read_bytes(), 0o644)
+        files[f'.taeguk/rules/{src.relative_to(rules).as_posix()}'] = (lf(src.name, src.read_bytes()), 0o644)
     if '.taeguk/rules/registry.toml' not in files:
         raise ValueError('bundle has no rule registry')
     return files
@@ -168,7 +173,7 @@ def verify_receipt(root, name):
     if not isinstance(doc, dict) or doc.get('schema_version') != 1 or not isinstance(doc.get('files'), dict):
         raise ValueError('invalid installation receipt')
     for key, expected in doc['files'].items():
-        if not any(key == owned or (owned.endswith(('/', '-', '_')) and key.startswith(owned)) for owned in OWNED[name]):
+        if not engine.owns(OWNED[name], key):
             raise ValueError(f'receipt {name} claims a path outside its component: {key}')
         target = engine.safe_target(root, key)
         if not target.exists() or not engine.unchanged(target.read_bytes(), expected, key):
@@ -179,10 +184,10 @@ def run(components, source, root, mode, meta):
     """Preflight every component before changing any, then run them in order."""
     for name, build in components:
         if mode == 'apply':
-            engine.execute(source, root, 'dry-run', build, receipt(name), meta)
+            engine.execute(source, root, 'dry-run', build, receipt(name), meta, OWNED[name])
         elif mode == 'uninstall':
             verify_receipt(root, name)
-    return {name: engine.execute(source, root, mode, build, receipt(name), meta) for name, build in components}
+    return {name: engine.execute(source, root, mode, build, receipt(name), meta, OWNED[name]) for name, build in components}
 
 
 def installed(root, prefix=''):
@@ -226,7 +231,8 @@ def select_agents(text, mode, root, prefix=''):
         return parse_agents(text)
     if mode in ('check', 'uninstall'):
         agents = installed(root, prefix)
-        if not agents:
+        # A user scope holding only the CLI (e.g. right after migrate) is still a managed installation.
+        if not agents and not (prefix == 'init-' and (root/receipt('cli')).exists()):
             raise ValueError('no managed installation')
         return agents
     return list(AGENTS)

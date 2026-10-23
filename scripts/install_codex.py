@@ -10,6 +10,8 @@ import tempfile
 import tomllib
 
 RECEIPT = '.codex/taeguk-install.json'
+# Paths the legacy bundle may own; prefixes end in '/', '-' or '_', anything else must match exactly.
+LEGACY_OWNED = ('.codex/agents/taeguk_', '.agents/skills/taeguk-', '.local/bin/taeguk')
 
 
 def digest(data):
@@ -17,6 +19,10 @@ def digest(data):
 
 
 TEXT_SUFFIXES = {'.md', '.toml', '.py', '.yaml', '.yml', '.json', '.txt'}
+
+
+def owns(prefixes, key):
+    return any(key == owned or (owned.endswith(('/', '-', '_')) and key.startswith(owned)) for owned in prefixes)
 
 
 def unchanged(data, expected, key=''):
@@ -96,7 +102,7 @@ def prune(home, directory):
         directory = directory.parent
 
 
-def execute(source, home, mode='dry-run', build=None, receipt_path=RECEIPT, meta=None):
+def execute(source, home, mode='dry-run', build=None, receipt_path=RECEIPT, meta=None, owned=LEGACY_OWNED):
     if mode not in ('dry-run', 'apply', 'check', 'uninstall'):
         raise ValueError('unsupported mode')
     source, home = source.resolve(), home.resolve()
@@ -107,6 +113,9 @@ def execute(source, home, mode='dry-run', build=None, receipt_path=RECEIPT, meta
         if not isinstance(doc, dict) or doc.get('schema_version') != 1 or not isinstance(doc.get('files'),dict):
             raise ValueError('invalid installation receipt')
         previous = doc['files']
+        outside = [key for key in previous if not owns(owned, key)]
+        if outside:
+            raise ValueError(f'receipt claims paths outside its component: {outside[0]}')
     # Uninstall is decided by the receipt alone: no build output or current bundle is needed.
     bundle = {} if mode == 'uninstall' else (build or payload)(source)
     hashes = {key:digest(data) for key,(data,_) in bundle.items()}
