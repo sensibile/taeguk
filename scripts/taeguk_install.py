@@ -63,13 +63,17 @@ def git_ignored(source, paths):
     return {source/name for name in out.stdout.decode().split('\0') if name}
 
 
-def tracked_files(source, directory):
+def tracked_files(source, directory, skip=()):
+    """Regular files under directory, without Git-ignored ones; top-level names in skip are never entered."""
     files = []
-    for src in sorted(directory.rglob('*')):
-        if src.is_symlink():
-            raise ValueError('symlink source is not supported')
-        if src.is_file():
-            files.append(src)
+    for current, dirs, names in os.walk(directory):
+        here = Path(current)
+        dirs[:] = [name for name in dirs if not (here == directory and name in skip)]
+        for name in dirs + names:
+            if (here/name).is_symlink():
+                raise ValueError('symlink source is not supported')
+        files += [here/name for name in names if (here/name).is_file()]
+    files.sort()
     ignored = git_ignored(source, files)
     return [src for src in files if src not in ignored]
 
@@ -173,13 +177,21 @@ def rules_bundle(source):
 
 
 def init_bundle(agent, source):
+    if any(char in str(source) for char in '`\r\n'):
+        raise ValueError('the Taeguk source path must not contain backticks or line breaks')
     template = (source/'installer/taeguk-init.md').read_text()
     front = ['---', 'name: taeguk-init',
              'description: "Install or update the Taeguk project bundle in the current project; use only when the user explicitly asks to initialize Taeguk."']
     if agent == 'claude':
         front.append('disable-model-invocation: true')
-    installer = shlex.quote(str(source/'scripts/taeguk_install.py'))
-    body = template.replace('{{INSTALLER}}', installer).replace('{{SOURCE}}', str(source)).replace('{{AGENT}}', agent)
+    installer = str(source/'scripts/taeguk_install.py')
+    if os.name == 'nt':
+        # PowerShell single-quoted string: only ' needs escaping, by doubling it.
+        installer, quoting = "'" + installer.replace("'", "''") + "'", "a PowerShell single-quoted argument (double any `'` in it)"
+    else:
+        installer, quoting = shlex.quote(installer), "a POSIX single-quoted argument (write any `'` in it as `'\\''`)"
+    body = (template.replace('{{INSTALLER}}', installer).replace('{{QUOTING}}', quoting)
+            .replace('{{SOURCE}}', str(source)).replace('{{AGENT}}', agent))
     return {INIT[agent]: (('\n'.join(front + ['---', '']) + body).encode(), 0o644)}
 
 
@@ -200,7 +212,7 @@ def cli_bundle(source):
         raise ValueError('build the release CLI before installation')
     # A checkout that changed CLI sources after the last build refreshes their mtimes past the binary.
     crate = source/'tools/taeguk-cli'
-    inputs = [src for src in tracked_files(source, crate) if 'target' not in src.relative_to(crate).parts]
+    inputs = tracked_files(source, crate, skip=('target',))
     if inputs and binary.stat().st_mtime < max(src.stat().st_mtime for src in inputs):
         raise ValueError('the release CLI is older than its sources; rebuild it before installation')
     return {CLI: (binary.read_bytes(), 0o755)}

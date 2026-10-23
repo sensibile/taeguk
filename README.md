@@ -28,7 +28,7 @@ python3 scripts/taeguk_install.py user --apply
 python3 scripts/taeguk_install.py user --check
 ```
 
-첫 설치 명령은 dry-run이다. 사용자 레벨에는 Claude Code·Codex용 `taeguk-init` 스킬과 CLI만 설치하고, 각 프로젝트에서 `/taeguk-init`을 실행해 역할·스킬·규칙을 프로젝트에 설치한다. 기존 비관리 파일이나 사용자가 수정한 설치본은 덮어쓰지 않는다. 설치 경로·제거·발견 확인은 [에이전트별 설치](docs/installation.md)를 참고한다. 이전에 `install_codex.py`로 전역 설치했다면 같은 문서의 `migrate` 절차를 먼저 수행한다. CLI는 `~/.local/bin/taeguk`에 설치되며 PATH는 자동 수정하지 않는다.
+첫 설치 명령은 dry-run이다. 사용자 레벨에는 Claude Code·Codex용 `taeguk-init` 스킬과 CLI만 설치하고, 각 프로젝트에서 Claude Code는 `/taeguk-init`, Codex는 `$taeguk-init`으로 실행해 역할·스킬·규칙을 프로젝트에 설치한다. 기존 비관리 파일이나 사용자가 수정한 설치본은 덮어쓰지 않는다. 설치 경로·제거·발견 확인은 [에이전트별 설치](docs/installation.md)를 참고한다. 이전에 `install_codex.py`로 전역 설치했다면 같은 문서의 `migrate` 절차를 먼저 수행한다. CLI는 `~/.local/bin/taeguk`에 설치되며 PATH는 자동 수정하지 않는다.
 
 SQLite 상태 API는 저장 경로와 token을 설정한 뒤 시작한다.
 

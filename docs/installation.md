@@ -7,7 +7,7 @@
 | 범위 | 구성요소 | 설치 위치 |
 | --- | --- | --- |
 | user | `init-claude` | `~/.claude/skills/taeguk-init/SKILL.md` (`disable-model-invocation`, `/taeguk-init`으로만 실행) |
-| user | `init-codex` | `~/.agents/skills/taeguk-init/SKILL.md` |
+| user | `init-codex` | `~/.agents/skills/taeguk-init/SKILL.md` (Codex에서 `$taeguk-init`으로 실행) |
 | user | `cli` | `~/.local/bin/taeguk` |
 | project | `rules` | `.taeguk/rules/` (`docs/rules` 전체 스냅샷) |
 | project | `claude` | `.claude/skills/taeguk-*/`, `.claude/agents/taeguk-*.md` |
@@ -34,7 +34,7 @@ python3 scripts/taeguk_install.py project --root /path/to/project --agent claude
 python3 scripts/taeguk_install.py project --root /path/to/project --agent claude,codex --apply
 ```
 
-모든 명령의 기본 실행은 dry-run이며 `--check`, `--uninstall`을 지원한다. `--agent`를 생략하면 설치는 `codex,claude` 전체를, `--check`·`--uninstall`은 receipt가 있는 에이전트(user 범위는 설치된 init과 CLI)만 대상으로 한다. 제거 전에는 각 receipt가 자기 구성요소 경로(예: `.claude/skills/taeguk-*`, `.taeguk/rules/`)만 기록했는지 확인하고, 그 밖의 경로가 있으면 아무것도 지우지 않는다. 사용자 레벨 설치 뒤에는 각 프로젝트에서 `/taeguk-init`을 실행한다. 스킬이 dry-run 결과를 보여주고 BOSS 승인 뒤 `--apply`, `--check`를 실행한다. AGENTS.md·CLAUDE.md에 `.taeguk/rules/index.md`를 읽도록 하는 한 줄은 승인을 받아야만 추가한다.
+모든 명령의 기본 실행은 dry-run이며 `--check`, `--uninstall`을 지원한다. `--agent`를 생략하면 설치는 `codex,claude` 전체를, `--check`·`--uninstall`은 receipt가 있는 에이전트(user 범위는 설치된 init과 CLI)만 대상으로 한다. 제거 전에는 각 receipt가 자기 구성요소 경로(예: `.claude/skills/taeguk-*`, `.taeguk/rules/`)만 기록했는지 확인하고, 그 밖의 경로가 있으면 아무것도 지우지 않는다. 사용자 레벨 설치 뒤에는 각 프로젝트에서 Claude Code는 `/taeguk-init`, Codex는 `$taeguk-init`을 실행한다. 스킬이 dry-run 결과를 보여주고 BOSS 승인 뒤 `--apply`, `--check`를 실행한다. AGENTS.md·CLAUDE.md에 `.taeguk/rules/index.md`를 읽도록 하는 한 줄은 승인을 받아야만 추가한다.
 
 ## 기존 전역 설치 이전
 
@@ -51,4 +51,4 @@ python3 scripts/taeguk_install.py user --apply
 
 ## 한계
 
-설치 성공은 파일 배치와 hash 일치만 뜻한다. 2026-10-23 hoplites 작업 트리(trusted 프로젝트, codex-cli 0.163.0)에서 `.codex/config.toml`의 역할별 등록 없이 프로젝트 `.codex/agents/taeguk_*.toml` 10개가 Codex 역할 목록에 나타나고 `taeguk_designer` 호출이 성공하는 것을 관측했다. trusted가 아닌 프로젝트에서의 발견은 확인하지 않았다. 새 세션에서 발견, 모델·effort 적용, `/taeguk-init` 실행은 별도로 확인한다. 규칙 스냅샷의 `../research/archive` 링크는 프로젝트 안에서 끊기며 원본 commit의 태극 저장소를 가리킨다. `taeguk-init`은 설치 시점의 태극 저장소 절대경로를 담으므로 저장소를 옮기면 `user --apply`를 다시 실행한다. 원본에서 파일이 삭제되면 기존 receipt가 새 번들에 없는 파일을 가리켜 업데이트가 거부된다. 이 경우 먼저 제거 후 재설치한다. 제거는 receipt만으로 대상을 정하므로 원본 빌드나 현재 번들이 없어도 동작한다. 여러 구성요소 중 일부 적용 뒤 예외가 나면 앞선 구성요소는 적용된 상태로 남는다.
+설치 성공은 파일 배치와 hash 일치만 뜻한다. 2026-10-23 hoplites 작업 트리(trusted 프로젝트, codex-cli 0.163.0)에서 `.codex/config.toml`의 역할별 등록 없이 프로젝트 `.codex/agents/taeguk_*.toml` 10개가 Codex 역할 목록에 나타나고 `taeguk_designer` 호출이 성공하는 것을 관측했다. trusted가 아닌 프로젝트에서의 발견은 확인하지 않았다. 새 세션에서 발견, 모델·effort 적용, `/taeguk-init`·`$taeguk-init` 실행은 별도로 확인한다. init 스킬의 명령 인수는 POSIX 셸(Windows는 PowerShell) 기준으로 생성하며, 원본 경로에 백틱이나 줄바꿈이 있으면 설치를 거부한다. Windows 실행은 검증하지 않았다. 규칙 스냅샷의 `../research/archive` 링크는 프로젝트 안에서 끊기며 원본 commit의 태극 저장소를 가리킨다. `taeguk-init`은 설치 시점의 태극 저장소 절대경로를 담으므로 저장소를 옮기면 `user --apply`를 다시 실행한다. 원본에서 파일이 삭제되면 기존 receipt가 새 번들에 없는 파일을 가리켜 업데이트가 거부된다. 이 경우 먼저 제거 후 재설치한다. 제거는 receipt만으로 대상을 정하므로 원본 빌드나 현재 번들이 없어도 동작한다. 여러 구성요소 중 일부 적용 뒤 예외가 나면 앞선 구성요소는 적용된 상태로 남는다.
