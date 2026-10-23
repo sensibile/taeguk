@@ -100,6 +100,8 @@ def roles(source):
 
 def skill_files(source):
     skills = sorted((source/'codex/skills').glob('taeguk-*'))
+    ignored = git_ignored(source, skills)
+    skills = [skill for skill in skills if skill not in ignored]
     if not skills:
         raise ValueError('bundle has no skills')
     for skill in skills:
@@ -161,10 +163,11 @@ def published_commit(source):
     return out if re.fullmatch(r'[0-9a-f]{40}', out) else None
 
 
-def rules_bundle(source):
+def rules_bundle(source, link_pin=None):
+    """Rule snapshot; link_pin overrides the computed commit ('' leaves links on main)."""
     rules = source/'docs/rules'
     # Links into this repository follow a commit on main, so a snapshot never cites a later main.
-    commit = published_commit(source)
+    commit = published_commit(source) if link_pin is None else link_pin
     pin = commit.encode() if commit else None
     files = {}
     for src in tracked_files(source, rules):
@@ -323,12 +326,20 @@ def project(source, root, home, agents, mode):
     # Updating the shared rules alone would leave other installed agents on an older version.
     synced = remaining(root, agents) if mode == 'apply' else []
     agents = list(agents) + synced
-    components = [] if kept else [('rules', rules_bundle)]
+    # The link pin depends on the checkout's remote refs, so --check reuses the pin the install recorded
+    # and the same source commit always rebuilds the same rule bytes.
+    stored = None
+    rules_receipt = root/receipt('rules')
+    if mode == 'check' and rules_receipt.is_file():
+        doc = json.loads(rules_receipt.read_text())
+        stored = doc.get('link_pin') if isinstance(doc, dict) else None
+    link_pin = stored if isinstance(stored, str) else (published_commit(source) or '')
+    components = [] if kept else [('rules', lambda s: rules_bundle(s, link_pin))]
     components += [(agent, lambda s, a=agent: project_bundle(a, s)) for agent in agents]
     version = source_version(source)
     before = installed_versions(root, [name for name, _ in components])
     result = {'scope': 'project', 'root': str(root), 'installer_version': version, 'installed_versions': before,
-              'components': run(components, source, root, mode, {'source_version': version})}
+              'components': run(components, source, root, mode, {'source_version': version, 'link_pin': link_pin})}
     if kept:
         result['kept'] = {'rules': kept}
     if synced:

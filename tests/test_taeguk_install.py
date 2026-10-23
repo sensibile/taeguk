@@ -99,6 +99,18 @@ class BundleTest(unittest.TestCase):
             lf = {**install.project_bundle('codex', SOURCE), **install.rules_bundle(SOURCE)}
         self.assertEqual(crlf, lf)
 
+    def test_git_ignored_skill_directory_is_skipped_before_validation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp).resolve()
+            for name in ('codex', 'docs/rules', 'installer'):
+                shutil.copytree(SOURCE/name, source/name, ignore=shutil.ignore_patterns('__pycache__'))
+            (source/'.gitignore').write_text('codex/skills/taeguk-local/\n')
+            subprocess.run(['git', 'init', '-q', str(source)], check=True, env=install.git_env())
+            (source/'codex/skills/taeguk-local').mkdir()
+            (source/'codex/skills/taeguk-local/notes.txt').write_text('scratch')
+            bundle = install.project_bundle('claude', source)
+        self.assertFalse([key for key in bundle if 'taeguk-local' in key])
+
     def test_git_ignored_roles_are_not_bundled(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp).resolve()
@@ -407,6 +419,15 @@ class ScopeTest(unittest.TestCase):
         self.assertEqual(result['synced_agents'], ['codex'])
         self.assertEqual(set(result['components']), {'rules', 'claude', 'codex'})
         self.assertNotEqual(json.loads(path.read_text())['source_version'], 'older')
+
+    def test_check_reuses_recorded_link_pin(self):
+        commit = 'b' * 40
+        with patch.object(install, 'published_commit', return_value=commit):
+            install.project(SOURCE, self.root, self.home, ['claude'], 'apply')
+        self.assertEqual(json.loads((self.root/install.receipt('rules')).read_text())['link_pin'], commit)
+        with patch.object(install, 'published_commit', return_value=None):
+            result = install.project(SOURCE, self.root, self.home, ['claude'], 'check')
+        self.assertEqual(result['components']['rules']['status'], 'verified')
 
     def test_partial_uninstall_keeps_shared_components(self):
         install.project(SOURCE, self.root, self.home, ['claude', 'codex'], 'apply')
