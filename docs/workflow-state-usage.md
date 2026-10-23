@@ -25,7 +25,10 @@ taeguk state create work.json
 taeguk state get WORK_UUID
 taeguk state command WORK_UUID command.json
 taeguk state history WORK_UUID 0
+taeguk state verify-evidence WORK_UUID EVIDENCE_ROOT
 ```
+
+`verify-evidence`는 현재 관측과 improvement 단계에 등록된 evidence의 SHA-256을 `EVIDENCE_ROOT` 아래 파일과 대조한다. 위치는 root 기준 상대 경로여야 하며 `taeguk verify`와 같이 traversal과 symlink를 거부한다. 불일치는 FAIL, 없는 파일·절대 경로·읽을 수 없는 위치는 UNKNOWN, 등록된 evidence가 없으면 UNKNOWN이다. 파일 동일성만 확인하며 근거의 진실성·독립성·승인은 확인하지 않는다. 과거 revision의 evidence는 history로 확인한다.
 
 ## 요청 예시
 
@@ -71,11 +74,12 @@ WAL, foreign keys, FULL synchronous, 5초 busy timeout을 사용한다. 쓰기 t
 
 실행 중 DB 파일만 복사하면 WAL의 최근 변경을 놓칠 수 있다. 백업은 SQLite backup API를 사용하거나 API를 정상 종료하고 DB 연결이 닫힌 뒤 진행한다. 이번 구현은 자동 백업/복원 명령을 제공하지 않는다. DB 디렉터리·token·로그 접근권한은 로컬 운영자가 관리한다.
 
-검사는 전용 테스트 파일로 실행한다. 일반 `mix test`는 상태 DB 미설정 시 DB 통합 검사를 skip한다. DB 통합 검사에는 실제 별도 파일과 token이 필요하다.
+검사는 전용 테스트 파일로 실행한다. 일반 `mix test`는 상태 DB 미설정 시 DB 통합 검사를 skip한다. DB 통합 검사에는 `*-test.sqlite3`로 끝나는 별도 파일과 token이 필요하다. `TAEGUK_REQUIRE_STATE_TESTS=1`을 주면 DB 미설정 시 skip 대신 실패한다.
 
 ```sh
-TAEGUK_DATABASE_PATH=/private/tmp/taeguk-state-test.sqlite3 mix ecto.migrate
-TAEGUK_DATABASE_PATH=/private/tmp/taeguk-state-test.sqlite3 TAEGUK_API_TOKEN=local-test-token-at-least-24-bytes mix test
+export TAEGUK_DATABASE_PATH="${TMPDIR:-/tmp}/taeguk-state-test.sqlite3"
+mix ecto.migrate
+TAEGUK_API_TOKEN=local-test-token-at-least-24-bytes TAEGUK_REQUIRE_STATE_TESTS=1 mix test
 ```
 
 설계/검증 계획: [workflow-state-plan.md](workflow-state-plan.md). SQLite transaction 설정 근거: [Ecto SQLite3](https://ecto-sqlite3.hexdocs.pm/Ecto.Adapters.SQLite3.html), [SQLite WAL](https://sqlite.org/wal.html).

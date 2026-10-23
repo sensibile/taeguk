@@ -31,4 +31,4 @@
 
 지침이 실제 다음 과제에서 시간·토큰을 줄였는지는 아직 미확인이다. 도구 동작은 실행으로 확인했지만 지침 준수와 효율 개선은 다음 작업에서 실행 횟수·오염 재시도·결과 도착과 보고서 완료 사이 대기를 관찰해야 한다. 이번 요청에는 새로운 Veloce 과제 전체 재실행을 넣지 않았다.
 
-원시 검증·설치 기록은 `/Users/tonton/Documents/study/experiments/taeguk-workflow-efficiency-20261011`에 보관한다. 원래 실패/수정 기록은 `taeguk-verification-pipeline-20261011` 실험에 유지한다.
+원시 검증·설치 기록은 `/Users/tonton/Documents/study/experiments/taeguk-workflow-efficiency-20261011`에 보관한다. 원래 실패/수정 기록은 `taeguk-verification-pipeline-20261011` 실험에 유지한다. 이 경로는 작성자 로컬 보관 위치이며 저장소에 포함하지 않았다. clone한 환경에서는 이 근거를 확인할 수 없다.

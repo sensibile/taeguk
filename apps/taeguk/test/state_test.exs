@@ -74,6 +74,9 @@ defmodule Taeguk.StateTest do
     assert {:error, {:conflict, "command_id_reused"}} =
              State.create(%{p | "purpose" => "different"})
 
+    assert {:error, {:conflict, "work_exists"}} =
+             State.create(%{p | "command_id" => Ecto.UUID.generate()})
+
     o = observation(1)
     assert {:ok, ack} = State.command(p["id"], o)
     assert {:ok, _} = State.command(p["id"], observation(2, "llm"))
@@ -258,6 +261,17 @@ defmodule Taeguk.StateTest do
       |> Plug.Conn.put_req_header("x-taeguk-token", token)
 
     assert TaegukWeb.Router.call(conn, TaegukWeb.Router.init([])).status == 422
+
+    cursor =
+      Plug.Test.conn(
+        :get,
+        "/api/work-items/#{Ecto.UUID.generate()}/history?after_revision[]=1"
+      )
+      |> Plug.Conn.put_req_header("x-taeguk-token", token)
+      |> TaegukWeb.Router.call(TaegukWeb.Router.init([]))
+
+    assert cursor.status == 422
+    assert Jason.decode!(cursor.resp_body) == %{"error" => "invalid_cursor"}
   end
 
   test "different work items contend for one resource on separate connections" do
