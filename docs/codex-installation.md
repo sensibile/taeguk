@@ -1,5 +1,7 @@
 # Codex 설치
 
+이 문서는 전역 설치 방식이다. 새 구성은 사용자 레벨 `taeguk-init`과 프로젝트 설치를 쓰는 [에이전트별 설치](installation.md)를 따른다. 설치 엔진(충돌 확인·복구·제거)은 공유한다.
+
 ## 공식 형식과 로컬 구성
 
 2026-10-11 공식 문서에서 개인 에이전트 TOML은 `~/.codex/agents`, 개인 스킬은 `~/.agents/skills`의 발견 경로를 확인했다. 에이전트의 `name`, `description`, `developer_instructions`, `model`, `model_reasoning_effort`와 스킬의 `name`, `description`을 사용한다. 모델은 명시된 역할에만 지정하고, 다른 역할과 전역 Codex 설정은 변경하지 않는다.

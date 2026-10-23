@@ -75,7 +75,16 @@ def atomic_write(path, data, mode):
             os.unlink(name)
 
 
-def execute(source, home, mode='dry-run', build=None, receipt_path=RECEIPT):
+def prune(home, directory):
+    """Remove empty directories that belong to Taeguk; shared parents such as ~/.local/bin stay."""
+    def owned(path):
+        return any(part.startswith(('taeguk', '.taeguk')) for part in path.relative_to(home).parts)
+    while directory != home and owned(directory) and directory.is_dir() and not any(directory.iterdir()):
+        directory.rmdir()
+        directory = directory.parent
+
+
+def execute(source, home, mode='dry-run', build=None, receipt_path=RECEIPT, meta=None):
     if mode not in ('dry-run', 'apply', 'check', 'uninstall'):
         raise ValueError('unsupported mode')
     source, home = source.resolve(), home.resolve()
@@ -122,12 +131,14 @@ def execute(source, home, mode='dry-run', build=None, receipt_path=RECEIPT):
                 atomic_write(home/key,*bundle[key])
             else:
                 (home/key).unlink()
+                prune(home, (home/key).parent)
         touched.append(receipt_path)
         if mode == 'apply':
-            data=json.dumps({'schema_version':1,'source_root':str(source),'files':hashes},indent=2).encode()+b'\n'
+            data=json.dumps({'schema_version':1,**({'source_root':str(source)} if meta is None else meta),'files':hashes},indent=2).encode()+b'\n'
             atomic_write(receipt,data,0o600)
         else:
             receipt.unlink()
+            prune(home, receipt.parent)
     except Exception:
         for key in reversed(touched):
             saved=snapshot[key]

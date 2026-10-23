@@ -28,7 +28,7 @@ python3 scripts/install_codex.py --apply
 python3 scripts/install_codex.py --check
 ```
 
-첫 설치 명령은 dry-run이다. 기존 비관리 파일이나 사용자가 수정한 설치본은 덮어쓰지 않는다. 설치 경로·제거·발견 확인은 [Codex 설치](docs/codex-installation.md)를 참고한다. Claude Code에서는 같은 원본을 변환해 `python3 scripts/install_claude.py --apply`로 설치한다. 형식 변환·모델 매핑·한계는 [Claude Code 설치](docs/claude-installation.md)에 있다. CLI는 `~/.local/bin/taeguk`에 설치되며 PATH는 자동 수정하지 않는다.
+첫 설치 명령은 dry-run이다. 기존 비관리 파일이나 사용자가 수정한 설치본은 덮어쓰지 않는다. 설치 경로·제거·발견 확인은 [Codex 설치](docs/codex-installation.md)를 참고한다. 프로젝트 단위 설치와 Claude Code 지원은 [에이전트별 설치](docs/installation.md)를 따른다. 사용자 레벨에 `taeguk_install.py user --apply`로 `/taeguk-init`을 설치한 뒤 각 프로젝트에서 실행한다. CLI는 `~/.local/bin/taeguk`에 설치되며 PATH는 자동 수정하지 않는다.
 
 SQLite 상태 API는 저장 경로와 token을 설정한 뒤 시작한다.
 
@@ -68,4 +68,4 @@ mix format --check-formatted
 
 일반 `mix test`는 DB 설정이 없으면 DB 통합 검사를 skip한다. 별도 `*-test.sqlite3` 파일을 설정해 migration과 통합 검사를 수행해야 저장 동작을 확인할 수 있다. 명령은 [상태 API 사용법](docs/workflow-state-usage.md)에 있다. GitHub Actions는 현재 규칙 구조와 Python 검사만 실행한다. Rust·Elixir·실제 HTTP 검증까지 CI가 수행한다고 해석하지 않는다.
 
-첫 self-improvement 실험에서는 로컬 SQLite 오류 분류를 같은 두 사례에서 비교해 분류 오류 1건 → 0건을 확인했다. 사용자 시간 절감, 장기 효과, 여러 프로젝트의 전이·공통화는 아직 확인하지 않았다. 자동 배포, 운영 복구와 프로젝트별 설치 격리는 제공하지 않는다.
+첫 self-improvement 실험에서는 로컬 SQLite 오류 분류를 같은 두 사례에서 비교해 분류 오류 1건 → 0건을 확인했다. 사용자 시간 절감, 장기 효과, 여러 프로젝트의 전이·공통화는 아직 확인하지 않았다. 자동 배포와 운영 복구는 제공하지 않는다. 프로젝트별 설치는 Claude Code와 Codex만 지원한다.

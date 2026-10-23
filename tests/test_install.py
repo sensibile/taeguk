@@ -36,6 +36,9 @@ class InstallerTest(unittest.TestCase):
         install.execute(SOURCE, self.home, 'uninstall')
         self.assertEqual(config.read_text(), 'unrelated')
         self.assertFalse((self.home/install.RECEIPT).exists())
+        self.assertFalse((self.home/'.agents/skills/taeguk-test').exists())
+        self.assertTrue((self.home/'.local/bin').is_dir())
+        self.assertTrue((self.home/'.agents/skills').is_dir())
 
     def test_collision_preflight_preserves_all_files(self):
         path = self.home / '.local/bin/taeguk'
