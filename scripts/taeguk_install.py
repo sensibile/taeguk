@@ -231,8 +231,10 @@ def select_agents(text, mode, root, prefix=''):
         return parse_agents(text)
     if mode in ('check', 'uninstall'):
         agents = installed(root, prefix)
-        # A user scope holding only the CLI (e.g. right after migrate) is still a managed installation.
-        if not agents and not (prefix == 'init-' and (root/receipt('cli')).exists()):
+        # A scope holding only its shared component (user CLI after migrate, project rules after a
+        # partial install) is still a managed installation.
+        shared = 'cli' if prefix == 'init-' else 'rules'
+        if not agents and not (root/receipt(shared)).exists():
             raise ValueError('no managed installation')
         return agents
     return list(AGENTS)
@@ -250,6 +252,11 @@ def project(source, root, home, agents, mode):
     if kept:
         result['kept'] = {'rules': kept}
     if mode != 'uninstall':
+        managed = [receipt(name) for name, _ in components] + [key for _, build in components for key in build(source)]
+        ignored = sorted(path.relative_to(root).as_posix() for path in git_ignored(root, [root/key for key in managed]))
+        if ignored:
+            result['ignored_by_git'] = {'count': len(ignored), 'examples': ignored[:5],
+                                        'action': 'add .gitignore exceptions so the installed files and receipts can be committed'}
         names = sorted({skill for skill, _, _ in skill_files(source)})
         user_skills = {'claude': '.claude/skills', 'codex': '.agents/skills'}
         shadowed = {agent: found for agent in agents

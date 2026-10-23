@@ -231,6 +231,21 @@ class ScopeTest(unittest.TestCase):
         self.assertEqual(readme.read_text(), 'project readme')
         self.assertTrue((self.root/'.claude/agents/taeguk-designer.md').is_file())
 
+    def test_rules_only_project_can_be_checked_and_removed(self):
+        install.project(SOURCE, self.root, self.home, [], 'apply')
+        self.assertEqual(install.select_agents(None, 'uninstall', self.root), [])
+        self.assertEqual(install.project(SOURCE, self.root, self.home, [], 'check')['components']['rules']['status'], 'verified')
+        install.project(SOURCE, self.root, self.home, [], 'uninstall')
+        self.assertFalse((self.root/'.taeguk').exists())
+
+    def test_git_ignored_install_targets_are_reported(self):
+        subprocess.run(['git', 'init', '-q', str(self.root)], check=True, env=install.git_env())
+        (self.root/'.gitignore').write_text('.taeguk/\n')
+        result = install.project(SOURCE, self.root, self.home, ['claude'], 'dry-run')
+        self.assertIn('.taeguk/receipts/rules.json', result['ignored_by_git']['examples'])
+        (self.root/'.gitignore').write_text('.taeguk/*\n!.taeguk/rules/\n!.taeguk/receipts/\n')
+        self.assertNotIn('ignored_by_git', install.project(SOURCE, self.root, self.home, ['claude'], 'dry-run'))
+
     def test_partial_uninstall_keeps_shared_components(self):
         install.project(SOURCE, self.root, self.home, ['claude', 'codex'], 'apply')
         result = install.project(SOURCE, self.root, self.home, ['claude'], 'uninstall')
