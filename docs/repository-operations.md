@@ -23,10 +23,10 @@
 1. 작업 worktree와 브랜치에서 변경하고 AGENTS.md의 검증 명령 중 해당하는 것을 실행한다.
 2. push 전에 로컬에서 `codex review --base main`과 Claude Code `/security-review`를 실행하고 지적 사항을 반영하거나 반영하지 않은 이유를 남긴다.
 3. PR을 만들면 Codex가 자동으로 리뷰한다. 자동 리뷰가 시작되지 않으면 `@codex review` 댓글로 요청한다.
-4. `Codex review gate` workflow가 PR head 커밋에 대한 Codex 리뷰 결과를 commit status `codex-review`로 남긴다. 근거는 `chatgpt-codex-connector[bot]` 요약 댓글의 `codex-review-state` 상태다. head 커밋에 대한 리뷰가 `completed`이고 미해소 지적이 없으면 success, 미해소 지적이 있으면 failure, 그 밖에는 pending이다. 새 커밋을 push하면 pending으로 돌아가고, 이전 커밋을 리뷰한 상태이면 workflow가 head마다 한 번 `@codex review`를 요청한다. 요청 댓글에는 head SHA 표식을 남겨 중복 요청을 막는다.
-5. `codex-review`가 success가 되면 workflow가 squash auto-merge를 켠다. 머지는 리뷰한 head 커밋으로 고정(`--match-head-commit`)되고, 리뷰 스레드 해소와 나머지 필수 체크가 통과하면 GitHub가 머지한다. draft PR이나 `no-auto-merge` label이 붙은 PR은 auto-merge를 켜지 않고, 이미 켜져 있으면 해제한다.
+4. `Codex review gate` workflow가 PR head 커밋에 대한 Codex 리뷰 결과를 commit status `codex-review`로 남긴다. 근거는 `chatgpt-codex-connector[bot]` 요약 댓글의 `codex-review-state` 상태다. head 커밋에 대한 리뷰가 `completed`이고 미해소 지적이 없으면 success, 미해소 지적이 있으면 failure, 그 밖에는 pending이다. 새 커밋을 push하면 pending으로 돌아가고, 이전 커밋을 리뷰한 상태이면 workflow가 head마다 한 번 `@codex review`를 요청한다. 요청 댓글에는 head SHA 표식을 남겨 중복 요청을 막는다. Codex 요약 댓글이 삭제되거나 PR base가 바뀌면 이전 리뷰를 무효로 표시하고 다시 요청한다. 무효 표시 이후 Codex가 요약을 갱신해야 다시 판정한다.
+5. `codex-review`가 success가 되면 workflow가 squash auto-merge를 켠다. 머지는 리뷰한 head 커밋으로 고정(`--match-head-commit`)되고, 리뷰 스레드 해소와 나머지 필수 체크가 통과하면 GitHub가 머지한다. draft PR이나 `no-auto-merge` label이 붙은 PR은 auto-merge를 켜지 않고, 이미 켜져 있으면 해제한다. label은 GitHub의 머지 조건이 아니어서 이 처리는 workflow가 실행된 뒤에 적용된다. 그 사이 마지막 필수 체크가 끝나면 머지될 수 있다. 확실히 멈추려면 PR을 draft로 바꾸거나 auto-merge를 직접 해제한다. draft PR은 GitHub가 머지를 막는다.
 
-요약 댓글의 상태 표식은 Codex의 공개 API가 아니다. 형식이 바뀌어 읽을 수 없으면 gate는 pending으로 남고 머지는 진행되지 않는다. 이 경우 Codex 결과를 직접 확인하고 수동으로 머지한다. fork PR과 기본 브랜치가 아닌 base로 향하는 PR은 gate가 처리하지 않는다. commit status는 PR이 아니라 커밋 SHA에 붙으므로, 같은 head를 공유하는 다른 base PR의 결과가 `main` PR 판정을 덮어쓰지 않게 하기 위해서다.
+요약 댓글의 상태 표식은 Codex의 공개 API가 아니다. 형식이 바뀌어 읽을 수 없으면 gate는 pending으로 남고 머지는 진행되지 않는다. 이 경우 Codex 결과를 직접 확인하고 수동으로 머지한다. gate workflow는 `pull_request_target`과 `issue_comment`로만 실행된다. 두 이벤트 모두 기본 브랜치의 workflow와 스크립트를 실행하므로 PR이 자기 판정 코드를 바꿀 수 없다. 다만 push 권한이 있는 사람은 다른 workflow로 `GITHUB_TOKEN` status를 게시할 수 있다. gate는 저장소 writer를 신뢰하는 전제의 자동화이며, writer에 대한 보안 경계는 아니다. fork PR과 기본 브랜치가 아닌 base로 향하는 PR은 gate가 처리하지 않는다. commit status는 PR이 아니라 커밋 SHA에 붙으므로, 같은 head를 공유하는 다른 base PR의 결과가 `main` PR 판정을 덮어쓰지 않게 하기 위해서다.
 
 CodeQL은 Elixir를 지원하지 않는다. `apps/taeguk` 변경은 2단계의 로컬 보안 리뷰로 보완한다. 리뷰 도구의 결과는 검토 보조 증거이며 요구사항 충족 판정을 대신하지 않는다.
 

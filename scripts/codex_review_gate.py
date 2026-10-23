@@ -28,14 +28,18 @@ def is_codex(comment):
     return user.get('login') == CODEX_LOGIN and user.get('type') == 'Bot' and app.get('slug') == CODEX_APP
 
 
-def codex_state(comments):
-    """Return the state from the newest Codex summary comment, or {} if it is unreadable."""
+def codex_summary(comments):
     summaries = [comment for comment in comments
                  if is_codex(comment) and any(marker in (comment.get('body') or '') for marker in SUMMARY_MARKERS)]
-    if not summaries:
-        return None
     # Never fall back to an older summary: the newest one is the current verdict.
-    newest = max(summaries, key=lambda comment: comment.get('updated_at') or '')
+    return max(summaries, key=lambda comment: comment.get('updated_at') or '') if summaries else None
+
+
+def codex_state(comments):
+    """Return the state from the newest Codex summary comment, or {} if it is unreadable."""
+    newest = codex_summary(comments)
+    if newest is None:
+        return None
     match = STATE.search(newest.get('body') or '')
     try:
         state = json.loads(match.group(1)) if match else None
@@ -67,6 +71,23 @@ def request_marker(head_sha):
     return f'<!-- codex-review-gate-request:{head_sha} -->'
 
 
+def invalidation_marker(head_sha):
+    return f'<!-- codex-review-gate-invalidated:{head_sha} -->'
+
+
+def invalidated(comments, head_sha):
+    """True when the gate voided the review evidence for this head after Codex last updated it."""
+    summary = codex_summary(comments)
+    reviewed_at = (summary or {}).get('updated_at') or ''
+    marker = invalidation_marker(head_sha)
+    return any((comment.get('user') or {}).get('login') == ACTIONS_LOGIN and marker in (comment.get('body') or '')
+               and (comment.get('created_at') or '') > reviewed_at for comment in comments)
+
+
+def opted_out(pr):
+    return bool(pr.get('draft')) or NO_AUTO_MERGE_LABEL in {label.get('name') for label in pr.get('labels') or []}
+
+
 def needs_review_request(state, comments, head_sha):
     """Ask again only after Codex reviewed an older head; it reviews new PRs by itself."""
     review = (state or {}).get('code_review')
@@ -77,7 +98,7 @@ def needs_review_request(state, comments, head_sha):
                    for comment in comments)
 
 
-def run(repo, number, request_review=False, auto_merge=False, call=gh):
+def run(repo, number, request_review=False, auto_merge=False, invalidate=False, call=gh):
     pr = json.loads(call('api', f'repos/{repo}/pulls/{number}'))
     head_repo = (pr.get('head') or {}).get('repo') or {}
     base = pr.get('base') or {}
@@ -88,27 +109,37 @@ def run(repo, number, request_review=False, auto_merge=False, call=gh):
     if base.get('ref') != (base.get('repo') or {}).get('default_branch'):
         return {'pr': number, 'skipped': 'pull request does not target the default branch'}
     head = pr['head']['sha']
+    actions = []
+    if invalidate:
+        # A deleted summary or a retargeted base voids the evidence; the marker
+        # keeps later runs pending until Codex reviews again.
+        call('api', '-X', 'POST', f'repos/{repo}/issues/{number}/comments', '-f', f'body=@codex review\n\n{invalidation_marker(head)}')
+        actions.append('invalidated_codex_review')
     pages = json.loads(call('api', '--paginate', '--slurp', f'repos/{repo}/issues/{number}/comments'))
     comments = [comment for page in pages for comment in page]
     state = codex_state(comments)
-    status, description = evaluate(state, head)
-    actions = []
-    labels = {label.get('name') for label in pr.get('labels') or []}
-    opted_out = pr.get('draft') or NO_AUTO_MERGE_LABEL in labels
-    if auto_merge and opted_out and pr.get('auto_merge'):
+    if invalidate or invalidated(comments, head):
+        status, description = 'pending', 'Codex review evidence was invalidated; waiting for a new review'
+    else:
+        status, description = evaluate(state, head)
+    if auto_merge and opted_out(pr) and pr.get('auto_merge'):
         # Before the status: a success could otherwise merge the PR first. A
         # failed disable raises here, so no status is published.
         call('pr', 'merge', str(number), '--repo', repo, '--disable-auto')
         actions.append('disabled_auto_merge')
     call('api', '-X', 'POST', f'repos/{repo}/statuses/{head}', '-f', f'state={status}',
          '-f', f'context={CONTEXT}', '-f', f'description={description}', '-f', f'target_url={pr["html_url"]}')
-    if request_review and status == 'pending' and needs_review_request(state, comments, head):
+    if request_review and not invalidate and status == 'pending' and needs_review_request(state, comments, head):
         call('api', '-X', 'POST', f'repos/{repo}/issues/{number}/comments', '-f', f'body=@codex review\n\n{request_marker(head)}')
         actions.append('requested_codex_review')
-    if auto_merge and status == 'success' and not opted_out and not pr.get('auto_merge'):
-        # Bind the merge to the reviewed commit so a later push cannot ride along.
-        call('pr', 'merge', str(number), '--repo', repo, '--auto', '--squash', '--match-head-commit', head)
-        actions.append('enabled_auto_merge')
+    if auto_merge and status == 'success' and not opted_out(pr) and not pr.get('auto_merge'):
+        # Re-read just before enabling to narrow the window for a new opt-out or
+        # push; draft is the only opt-out GitHub itself enforces at merge time.
+        latest = json.loads(call('api', f'repos/{repo}/pulls/{number}'))
+        if not opted_out(latest) and latest['head']['sha'] == head and not latest.get('auto_merge'):
+            # Bind the merge to the reviewed commit so a later push cannot ride along.
+            call('pr', 'merge', str(number), '--repo', repo, '--auto', '--squash', '--match-head-commit', head)
+            actions.append('enabled_auto_merge')
     return {'pr': number, 'head': head, 'status': status, 'description': description, 'actions': actions}
 
 
@@ -118,9 +149,10 @@ def main():
     parser.add_argument('--pr', required=True, type=int)
     parser.add_argument('--request-review', action='store_true', help='comment @codex review once per head after Codex reviewed an older head')
     parser.add_argument('--auto-merge', action='store_true', help='enable squash auto-merge once the gate succeeds')
+    parser.add_argument('--invalidate', action='store_true', help='void the current review evidence and request a new review')
     args = parser.parse_args()
     try:
-        result = run(args.repo, args.pr, args.request_review, args.auto_merge)
+        result = run(args.repo, args.pr, args.request_review, args.auto_merge, args.invalidate)
     except subprocess.CalledProcessError as error:
         print(error.stderr, file=sys.stderr)
         return 1
