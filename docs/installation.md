@@ -47,7 +47,7 @@ python3 scripts/install_codex.py --uninstall
 python3 scripts/taeguk_install.py user --apply
 ```
 
-`migrate`는 CLI hash가 기존 receipt와 일치할 때만 CLI 항목을 `~/.taeguk/receipts/cli.json`으로 옮긴다. 이후 `install_codex.py --uninstall`은 CLI를 남기고 전역 역할·스킬만 제거한다. 이전 뒤 `install_codex.py --check`는 receipt 불일치로 실패하는 것이 정상이다.
+`migrate`는 CLI hash가 기존 receipt와 일치할 때만 CLI 항목을 `~/.taeguk/receipts/cli.json`으로 옮긴다. 이후 `install_codex.py --uninstall`은 CLI를 남기고 전역 역할·스킬만 제거한다. 원본에 release CLI를 빌드하지 않았다면 `user --apply --no-cli`로 init만 설치하고, CLI는 이전된 receipt가 계속 관리한다. 이 경우 `--check`에도 `--no-cli`를 붙인다. 이전 뒤 `install_codex.py --check`는 receipt 불일치로 실패하는 것이 정상이다.
 
 ## 한계
 
