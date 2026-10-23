@@ -106,7 +106,7 @@ def execute(source, home, mode='dry-run', build=None, receipt_path=RECEIPT, meta
                 raise ValueError('invalid receipt hash')
             if not target.exists() or digest(target.read_bytes()) != previous[key]:
                 raise ValueError(f'managed file is missing or locally modified: {key}')
-        elif target.exists():
+        elif target.exists() and mode != 'uninstall':
             raise ValueError(f'unmanaged installation collision: {key}')
     if mode == 'check':
         if previous != hashes:

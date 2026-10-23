@@ -148,6 +148,22 @@ class MigrateTest(unittest.TestCase):
         self.assertEqual(json.loads(self.legacy.read_text())['files'], self.files)
         self.assertFalse((self.home/'.taeguk').exists())
 
+    def test_legacy_uninstall_after_migration_keeps_cli(self):
+        agent = self.home/'.codex/agents/a.toml'
+        agent.parent.mkdir()
+        agent.write_bytes(b'role')
+        self.files['.codex/agents/a.toml'] = hashlib.sha256(b'role').hexdigest()
+        self.legacy.write_text(json.dumps({'schema_version': 1, 'source_root': '/src', 'files': self.files}))
+        install.migrate(self.home, 'apply')
+        legacy_bundle = {install.CLI: (b'cli', 0o755), '.codex/agents/a.toml': (b'role', 0o644)}
+        with patch.object(install.engine, 'payload', return_value=legacy_bundle):
+            with self.assertRaises(ValueError):
+                install.engine.execute(SOURCE, self.home, 'apply')
+            install.engine.execute(SOURCE, self.home, 'uninstall')
+        self.assertFalse(agent.exists())
+        self.assertFalse(self.legacy.exists())
+        self.assertEqual((self.home/install.CLI).read_bytes(), b'cli')
+
     def test_migrated_cli_can_be_updated_by_user_scope(self):
         install.migrate(self.home, 'apply')
         with patch.object(install, 'cli_bundle', return_value={install.CLI: (b'new cli', 0o755)}):
