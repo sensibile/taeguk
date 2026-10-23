@@ -140,11 +140,27 @@ def project_bundle(agent, source):
 REPO_BLOB = b'https://github.com/sensibile/taeguk/blob/'
 
 
+def published_commit(source):
+    """Newest commit of a clean source that is also on origin/main.
+
+    Rule links pin to it rather than to HEAD: a squash-merged feature branch is deleted, but main keeps
+    its commits, so the pinned links keep resolving.
+    """
+    if not re.fullmatch(r'[0-9a-f]{40}', source_version(source)):
+        return None
+    try:
+        out = subprocess.run(['git', '-C', str(source), 'merge-base', 'HEAD', 'origin/main'], capture_output=True,
+                             text=True, check=True, env=git_env()).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return out if re.fullmatch(r'[0-9a-f]{40}', out) else None
+
+
 def rules_bundle(source):
     rules = source/'docs/rules'
-    version = source_version(source)
-    # Links into this repository follow the installed commit, so a snapshot never cites a later main.
-    pin = version.encode() if re.fullmatch(r'[0-9a-f]{40}', version) else None
+    # Links into this repository follow a commit on main, so a snapshot never cites a later main.
+    commit = published_commit(source)
+    pin = commit.encode() if commit else None
     files = {}
     for src in tracked_files(source, rules):
         data = lf(src.name, src.read_bytes())

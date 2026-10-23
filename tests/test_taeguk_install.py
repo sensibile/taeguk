@@ -129,13 +129,28 @@ class BundleTest(unittest.TestCase):
 
     def test_rule_links_follow_installed_commit(self):
         commit = 'a' * 40
-        with patch.object(install, 'source_version', return_value=commit):
+        with patch.object(install, 'published_commit', return_value=commit):
             pinned = install.rules_bundle(SOURCE)['.taeguk/rules/approvals.md'][0]
-        with patch.object(install, 'source_version', return_value=commit + '+dirty'):
+        with patch.object(install, 'published_commit', return_value=None):
             unpinned = install.rules_bundle(SOURCE)['.taeguk/rules/approvals.md'][0]
         self.assertIn(f'taeguk/blob/{commit}/docs/research'.encode(), pinned)
         self.assertNotIn(b'taeguk/blob/main/', pinned)
         self.assertIn(b'taeguk/blob/main/docs/research', unpinned)
+
+    def test_pin_uses_newest_main_commit_not_branch_head(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            env = {**install.git_env(), 'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@t', 'GIT_COMMITTER_NAME': 't', 'GIT_COMMITTER_EMAIL': 't@t'}
+            git = lambda *a: subprocess.run(['git', '-C', str(repo), *a], check=True, capture_output=True, text=True, env=env).stdout.strip()
+            git('init', '-q', '-b', 'main')
+            git('commit', '-q', '--allow-empty', '-m', 'main')
+            on_main = git('rev-parse', 'HEAD')
+            git('update-ref', 'refs/remotes/origin/main', on_main)
+            git('checkout', '-q', '-b', 'feature')
+            git('commit', '-q', '--allow-empty', '-m', 'feature')
+            self.assertEqual(install.published_commit(repo), on_main)
+            git('update-ref', '-d', 'refs/remotes/origin/main')
+            self.assertIsNone(install.published_commit(repo))
 
     def test_cli_found_in_cargo_target_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
