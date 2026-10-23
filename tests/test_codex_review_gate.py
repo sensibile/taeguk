@@ -21,12 +21,13 @@ def state_comment(sha=HEAD, status='completed', unresolved=False, updated='2026-
 
 
 class FakeGitHub:
-    def __init__(self, comments, draft=False, labels=(), head_repo=REPO, auto_merge=None, base='main', later=()):
+    def __init__(self, comments, draft=False, labels=(), head_repo=REPO, auto_merge=None, base='main', later=(), later_comments=None):
         self.pr = {'state': 'open', 'draft': draft, 'html_url': f'https://github.com/{REPO}/pull/9', 'auto_merge': auto_merge,
                    'labels': [{'name': name} for name in labels], 'head': {'sha': HEAD, 'repo': {'full_name': head_repo}},
                    'base': {'ref': base, 'repo': {'default_branch': 'main'}}}
         self.comments = comments
         self.later = list(later)  # PR changes seen by each later fetch
+        self.later_comments = later_comments  # comments seen by every fetch after the first
         self.calls = []
 
     def __call__(self, *args):
@@ -36,6 +37,8 @@ class FakeGitHub:
                 self.pr = {**self.pr, **self.later.pop(0)}
             return json.dumps(self.pr)
         if args[:3] == ('api', '--paginate', '--slurp'):
+            if len(self.called(args)) > 1 and self.later_comments is not None:
+                return json.dumps([self.later_comments])
             return json.dumps([self.comments])
         return '{}'
 
@@ -178,15 +181,27 @@ class RunTests(unittest.TestCase):
                 gate.run(REPO, 9, call=github)
                 self.assertEqual(github.posted_status()[0]['state'], 'success')
 
-    def test_invalidate_requests_review_before_publishing_pending(self):
+    def test_invalidate_only_records_the_marker(self):
+        # The record step runs unserialized; only the serialized gate step publishes.
         github = FakeGitHub([state_comment()])
         result = gate.run(REPO, 9, auto_merge=True, invalidate=True, call=github)
-        comment = ('api', '-X', 'POST', f'repos/{REPO}/issues/9/comments', '-f', f'body=@codex review\n\n<!-- codex-review-gate-invalidated:{HEAD} -->')
-        status = next(i for i, call in enumerate(github.calls) if call[:3] == ('api', '-X', 'POST') and 'statuses' in call[3])
-        self.assertLess(github.calls.index(comment), status)
-        self.assertEqual(github.posted_status()[0]['state'], 'pending')
+        self.assertEqual(github.called(('api', '-X', 'POST', f'repos/{REPO}/issues/9/comments')),
+                         [('api', '-X', 'POST', f'repos/{REPO}/issues/9/comments', '-f', f'body=@codex review\n\n<!-- codex-review-gate-invalidated:{HEAD} -->')])
+        self.assertEqual(github.posted_status(), [])
         self.assertEqual(github.called(('pr', 'merge')), [])
         self.assertEqual(result['actions'], ['invalidated_codex_review'])
+
+    def test_success_is_rechecked_against_comments_changed_during_the_run(self):
+        # Runs are not serialized: a parallel run may void the evidence after this one read it.
+        changed = {'invalidated': [state_comment(updated='2026-10-23T04:00:00Z'), self.invalidation('2026-10-23T05:00:00Z')],
+                   'summary deleted': []}
+        for name, comments in changed.items():
+            with self.subTest(name):
+                github = FakeGitHub([state_comment(updated='2026-10-23T04:00:00Z')], later_comments=comments)
+                result = gate.run(REPO, 9, auto_merge=True, call=github)
+                self.assertEqual(github.posted_status()[0]['state'], 'pending')
+                self.assertEqual(github.called(('pr', 'merge')), [])
+                self.assertEqual(result['status'], 'pending')
 
     def test_opt_out_added_during_the_run_blocks_enabling(self):
         for name, change in {'label': {'labels': [{'name': gate.NO_AUTO_MERGE_LABEL}]}, 'draft': {'draft': True},

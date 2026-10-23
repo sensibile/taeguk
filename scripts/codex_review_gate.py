@@ -98,6 +98,16 @@ def needs_review_request(state, comments, head_sha):
                    for comment in comments)
 
 
+def judge(repo, number, head, call):
+    """Decide only from persistent PR state, never from the triggering event."""
+    pages = json.loads(call('api', '--paginate', '--slurp', f'repos/{repo}/issues/{number}/comments'))
+    comments = [comment for page in pages for comment in page]
+    state = codex_state(comments)
+    if invalidated(comments, head):
+        return state, comments, 'pending', 'Codex review evidence was invalidated; waiting for a new review'
+    return (state, comments, *evaluate(state, head))
+
+
 def run(repo, number, request_review=False, auto_merge=False, invalidate=False, call=gh):
     pr = json.loads(call('api', f'repos/{repo}/pulls/{number}'))
     head_repo = (pr.get('head') or {}).get('repo') or {}
@@ -111,17 +121,17 @@ def run(repo, number, request_review=False, auto_merge=False, invalidate=False, 
     head = pr['head']['sha']
     actions = []
     if invalidate:
-        # A deleted summary or a retargeted base voids the evidence; the marker
-        # keeps later runs pending until Codex reviews again.
+        # Record step: a deleted summary or a retargeted base voids the evidence.
+        # The marker is persistent state, so the serialized gate step sees it even
+        # if the run carrying this event is replaced in the queue.
         call('api', '-X', 'POST', f'repos/{repo}/issues/{number}/comments', '-f', f'body=@codex review\n\n{invalidation_marker(head)}')
         actions.append('invalidated_codex_review')
-    pages = json.loads(call('api', '--paginate', '--slurp', f'repos/{repo}/issues/{number}/comments'))
-    comments = [comment for page in pages for comment in page]
-    state = codex_state(comments)
-    if invalidate or invalidated(comments, head):
-        status, description = 'pending', 'Codex review evidence was invalidated; waiting for a new review'
-    else:
-        status, description = evaluate(state, head)
+        return {'pr': number, 'head': head, 'actions': actions}
+    state, comments, status, description = judge(repo, number, head, call)
+    if status == 'success':
+        # Re-read right before publishing success to narrow the window for
+        # evidence that changed while this run was working.
+        state, comments, status, description = judge(repo, number, head, call)
     if auto_merge and opted_out(pr) and pr.get('auto_merge'):
         # Before the status: a success could otherwise merge the PR first. A
         # failed disable raises here, so no status is published.
@@ -129,7 +139,7 @@ def run(repo, number, request_review=False, auto_merge=False, invalidate=False, 
         actions.append('disabled_auto_merge')
     call('api', '-X', 'POST', f'repos/{repo}/statuses/{head}', '-f', f'state={status}',
          '-f', f'context={CONTEXT}', '-f', f'description={description}', '-f', f'target_url={pr["html_url"]}')
-    if request_review and not invalidate and status == 'pending' and needs_review_request(state, comments, head):
+    if request_review and status == 'pending' and needs_review_request(state, comments, head):
         call('api', '-X', 'POST', f'repos/{repo}/issues/{number}/comments', '-f', f'body=@codex review\n\n{request_marker(head)}')
         actions.append('requested_codex_review')
     if auto_merge and status == 'success' and not opted_out(pr) and not pr.get('auto_merge'):
@@ -149,7 +159,7 @@ def main():
     parser.add_argument('--pr', required=True, type=int)
     parser.add_argument('--request-review', action='store_true', help='comment @codex review once per head after Codex reviewed an older head')
     parser.add_argument('--auto-merge', action='store_true', help='enable squash auto-merge once the gate succeeds')
-    parser.add_argument('--invalidate', action='store_true', help='void the current review evidence and request a new review')
+    parser.add_argument('--invalidate', action='store_true', help='only record that the current review evidence is void and request a new review')
     args = parser.parse_args()
     try:
         result = run(args.repo, args.pr, args.request_review, args.auto_merge, args.invalidate)

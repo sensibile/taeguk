@@ -12,12 +12,38 @@ on:
     types: [created, edited, deleted]
 permissions: {}
 jobs:
-  gate:
-    # Only same-repository PRs, and only comments written by the Codex app.
+  # Unserialized, so a queued run can never drop it: turns an event that voids
+  # the review (deleted Codex summary, retargeted base) into a persistent marker.
+  record:
     if: >-
+      github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.action == 'deleted' &&
+      github.event.comment.user.login == 'chatgpt-codex-connector[bot]' && contains(github.event.comment.body, 'codex-pull-request-review-summary') ||
+      github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.action == 'edited' && github.event.changes.base != null
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+        run: python3 scripts/codex_review_gate.py --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" --invalidate
+
+  # Serialized per PR so verdicts are published in order. It decides only from
+  # persistent PR state, so a run replaced in the queue loses nothing: the run
+  # replacing it was queued later and reads the same or newer state.
+  gate:
+    needs: record
+    if: >-
+      !cancelled() && needs.record.result != 'failure' && (
       (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository) ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.user.login == 'chatgpt-codex-connector[bot]')
-    # Job-level so filtered-out events never join, and never cancel, a running gate.
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.user.login == 'chatgpt-codex-connector[bot]'))
     concurrency:
       group: codex-review-gate-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: false
@@ -35,12 +61,4 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
-          # A deleted Codex summary or a retargeted base voids the earlier review.
-          INVALIDATE: >-
-            ${{ (github.event_name == 'issue_comment' && github.event.action == 'deleted' && contains(github.event.comment.body, 'codex-pull-request-review-summary')) ||
-            (github.event_name == 'pull_request_target' && github.event.action == 'edited' && github.event.changes.base != null) }}
-        # Every event re-checks the review request: a queued run can be replaced by a later event.
-        run: |
-          args=(--repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" --request-review --auto-merge)
-          if [ "$INVALIDATE" = true ]; then args+=(--invalidate); fi
-          python3 scripts/codex_review_gate.py "${args[@]}"
+        run: python3 scripts/codex_review_gate.py --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" --request-review --auto-merge
