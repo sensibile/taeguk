@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -122,6 +123,51 @@ sys.exit(module.main())
         self.assertEqual(result.returncode, 143)
         self.assertEqual(self.run_once('pass').returncode, 0)
 
+    def run_patched(self, patch, code):
+        """Run the wrapper in-process after `patch` replaces part of its environment."""
+        harness = f'''
+import importlib.util, os, signal, subprocess, sys
+spec = importlib.util.spec_from_file_location('run_exclusive', {str(RUNNER)!r})
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+{patch}
+sys.argv = ['run_exclusive.py', '--lock', {str(self.lock)!r}, '--', sys.executable, '-c', {code!r}]
+sys.exit(module.main())
+'''
+        return subprocess.run([sys.executable, '-c', harness], capture_output=True, text=True, timeout=10)
+
+    def test_signal_queued_before_failed_spawn_is_reported(self):
+        # A start failure must not swallow a stop request that already arrived.
+        patch = f'''
+def popen(*args, **kwargs):
+    os.kill(os.getpid(), {int(signal.SIGTERM)})
+    raise FileNotFoundError(2, 'No such file or directory')
+module.subprocess.Popen = popen
+'''
+        result = self.run_patched(patch, 'pass')
+        self.assertEqual(result.returncode, 143, result.stderr)
+        self.assertIn('interrupted', result.stderr)
+        self.assertEqual(self.run_once('pass').returncode, 0)
+
+    def test_signal_during_handler_installation_is_not_lost(self):
+        # SIGTERM arrives after the first handler is installed but before its own.
+        marker = Path(self.tmp.name) / 'should-not-exist'
+        patch = f'''
+real_signal = signal.signal
+installed = []
+def install(sig, handler):
+    previous = real_signal(sig, handler)
+    if not installed:
+        os.kill(os.getpid(), {int(signal.SIGTERM)})
+    installed.append(sig)
+    return previous
+module.signal.signal = install
+'''
+        result = self.run_patched(patch, f'from pathlib import Path; Path({str(marker)!r}).touch()')
+        self.assertEqual(result.returncode, 143, result.stderr)
+        self.assertFalse(marker.exists())
+        self.assertEqual(self.run_once('pass').returncode, 0)
+
     def assert_signal_forwarded_before_lease_release(self, signum):
         process, _ = self.hold()
         process.send_signal(signum)
@@ -135,6 +181,50 @@ sys.exit(module.main())
 
     def test_quit_is_forwarded_before_lease_release(self):
         self.assert_signal_forwarded_before_lease_release(signal.SIGQUIT)
+
+    def test_missing_lock_directories_are_private_even_with_permissive_umask(self):
+        # Another account must not be able to pre-create the lock in a directory the runner made.
+        lock = Path(self.tmp.name) / 'state' / 'taeguk' / 'locks' / 'database.lock'
+        result = subprocess.run(['sh', '-c', 'umask 000 && exec "$@"', 'sh', *self.command('pass', lock)], capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for directory in (lock.parent, lock.parent.parent, lock.parent.parent.parent):
+            with self.subTest(str(directory.relative_to(self.tmp.name))):
+                self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o700)
+
+    def test_restrictive_umask_still_creates_a_reusable_private_lock(self):
+        # umask 0777 strips owner bits too: creation must not depend on a later chmod.
+        lock = Path(self.tmp.name) / 'state' / 'locks' / 'database.lock'
+        umask_run = lambda: subprocess.run(['sh', '-c', 'umask 0777 && exec "$@"', 'sh', *self.command('pass', lock)], capture_output=True, text=True, timeout=5)
+        for attempt in ('first', 'second'):
+            with self.subTest(attempt):
+                result = umask_run()
+                self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(stat.S_IMODE(lock.parent.stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(lock.stat().st_mode), 0o600)
+
+    def test_command_keeps_the_callers_umask(self):
+        code = 'import os; current = os.umask(0); print(oct(current))'
+        result = subprocess.run(['sh', '-c', 'umask 027 && exec "$@"', 'sh', *self.command(code)], capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.stdout.strip(), '0o27', result.stderr)
+
+    def test_existing_shared_lock_keeps_its_mode(self):
+        # The shared-group setup relies on a pre-created group-writable lock staying that way.
+        self.lock.touch()
+        self.lock.chmod(0o660)
+        self.assertEqual(self.run_once('pass').returncode, 0)
+        self.assertEqual(stat.S_IMODE(self.lock.stat().st_mode), 0o660)
+
+    @unittest.skipIf(os.geteuid() == 0, 'root ignores file permissions')
+    def test_lock_another_account_created_first_blocks_the_command(self):
+        # Why the guide keeps locks out of shared /tmp: a pre-created lock the
+        # runner cannot open stops every run (exit 2) without starting it.
+        self.lock.touch(mode=0o000)
+        self.addCleanup(self.lock.chmod, 0o600)
+        marker = Path(self.tmp.name) / 'should-not-exist'
+        result = self.run_once(f'from pathlib import Path; Path({str(marker)!r}).touch()')
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('lock could not open', result.stderr)
+        self.assertFalse(marker.exists())
 
     def test_direct_child_keeps_lease_after_wrapper_is_killed(self):
         process, child_pid = self.hold()
