@@ -36,6 +36,9 @@ class BundleTest(unittest.TestCase):
         self.assertIn('effort: medium\n', head)
         self.assertIn('model: sonnet\n', bundle['.claude/agents/taeguk-implementer.md'][0].decode())
         self.assertNotIn('model:', bundle['.claude/agents/taeguk-coordinator.md'][0].decode().split('---')[1])
+        verifier = bundle['.claude/agents/taeguk-verifier.md'][0].decode().split('---')[1]
+        self.assertNotIn('model:', verifier)
+        self.assertIn('effort: medium\n', verifier)
         with self.assertRaises(ValueError):
             install.claude_agent({'name': 'taeguk_x', 'description': 'd', 'developer_instructions': 'i', 'model': 'x'})
 
@@ -101,6 +104,38 @@ class ScopeTest(unittest.TestCase):
         self.assertFalse((moved/'.taeguk').exists())
         self.assertFalse((moved/'.agents/skills/taeguk-work-contract').exists())
         self.assertEqual(list((moved/'.claude/agents').iterdir()), [])
+
+    def test_partial_uninstall_keeps_shared_components(self):
+        install.project(SOURCE, self.root, self.home, ['claude', 'codex'], 'apply')
+        result = install.project(SOURCE, self.root, self.home, ['claude'], 'uninstall')
+        self.assertEqual(result['kept'], {'rules': ['codex']})
+        self.assertTrue((self.root/'.taeguk/rules/registry.toml').is_file())
+        self.assertFalse((self.root/'.claude/agents/taeguk-verifier.md').exists())
+        self.assertEqual(install.project(SOURCE, self.root, self.home, ['codex'], 'check')['components']['codex']['status'], 'verified')
+        install.project(SOURCE, self.root, self.home, ['codex'], 'uninstall')
+        self.assertFalse((self.root/'.taeguk').exists())
+        install.user(SOURCE, self.home, list(install.AGENTS), 'apply')
+        result = install.user(SOURCE, self.home, ['claude'], 'uninstall')
+        self.assertEqual(result['kept'], {'cli': ['codex']})
+        self.assertTrue((self.home/install.CLI).is_file())
+        install.user(SOURCE, self.home, ['codex'], 'uninstall')
+        self.assertFalse((self.home/install.CLI).exists())
+
+    def test_uninstall_ignores_unmanaged_files_at_new_bundle_paths(self):
+        install.project(SOURCE, self.root, self.home, ['claude'], 'apply')
+        path = self.root/install.receipt('claude')
+        doc = json.loads(path.read_text())
+        new_path = '.claude/agents/taeguk-designer.md'
+        del doc['files'][new_path]
+        path.write_text(json.dumps(doc))
+        install.project(SOURCE, self.root, self.home, ['claude'], 'uninstall')
+        self.assertTrue((self.root/new_path).is_file())
+        self.assertFalse((self.root/install.receipt('claude')).exists())
+
+    def test_pending_model_mapping_is_reported(self):
+        result = install.project(SOURCE, self.root, self.home, ['claude'], 'dry-run')
+        self.assertEqual(result['unmapped_models'], ['taeguk_verifier=gpt-6-sol'])
+        self.assertNotIn('unmapped_models', install.project(SOURCE, self.root, self.home, ['codex'], 'dry-run'))
 
     def test_collision_in_later_component_blocks_every_component(self):
         target = self.root/'.agents/skills/taeguk-work-contract/SKILL.md'

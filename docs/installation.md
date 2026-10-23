@@ -13,7 +13,7 @@
 | project | `claude` | `.claude/skills/taeguk-*/`, `.claude/agents/taeguk-*.md` |
 | project | `codex` | `.agents/skills/taeguk-*/`, `.codex/agents/taeguk_*.toml` |
 
-구성요소마다 receipt를 `<root>/.taeguk/receipts/<구성요소>.json`에 둔다. 프로젝트 receipt에는 절대경로 없이 원본 commit(`source_version`, 원본에 미커밋 변경이 있으면 `+dirty`)만 기록하므로 clone 위치가 달라도 `--check`가 동작한다. 적용·제거 전에 모든 구성요소의 충돌을 먼저 확인한다. 충돌 확인, 사용자 수정 보호, 쓰기 실패 복구, hash 대조 제거는 [Codex 설치](codex-installation.md)의 구현을 재사용한다. 제거 시 비게 된 `taeguk*` 디렉터리만 정리하고 공유 디렉터리는 남긴다.
+한 에이전트만 제거할 때 다른 에이전트 설치가 남아 있으면 공유 구성요소(프로젝트의 `rules`, 사용자 레벨의 `cli`)는 남기고 결과의 `kept`로 표시한다. 제거 사전 검사는 receipt에 기록된 파일의 hash만 확인한다. 구성요소마다 receipt를 `<root>/.taeguk/receipts/<구성요소>.json`에 둔다. 프로젝트 receipt에는 절대경로 없이 원본 commit(`source_version`, 원본에 미커밋 변경이 있으면 `+dirty`)만 기록하므로 clone 위치가 달라도 `--check`가 동작한다. 적용·제거 전에 모든 구성요소의 충돌을 먼저 확인한다. 충돌 확인, 사용자 수정 보호, 쓰기 실패 복구, hash 대조 제거는 [Codex 설치](codex-installation.md)의 구현을 재사용한다. 제거 시 비게 된 `taeguk*` 디렉터리만 정리하고 공유 디렉터리는 남긴다.
 
 발견 경로는 2026-10-23 공식 문서에서 확인했다. Claude Code는 프로젝트 `.claude/skills`, `.claude/agents`를 읽는다. 같은 이름이면 스킬은 개인 레벨이, 에이전트는 프로젝트 레벨이 우선한다. Codex는 CWD에서 저장소 루트까지의 `.agents/skills`와 프로젝트 `.codex/agents`를 읽고, 같은 이름의 스킬은 병합하지 않고 모두 노출한다.
 
@@ -22,7 +22,7 @@
 
 ## Claude 변환
 
-`agents/openai.yaml`을 제외하고 Markdown의 `$taeguk-*` 호출을 `/taeguk-*`로 바꾼다. 역할 TOML은 `name`의 `_`를 `-`로, `developer_instructions`를 본문으로 옮긴다. 모델은 `gpt-6-astra`→`opus`, `gpt-6-luna`→`sonnet`(BOSS 결정)이고, 결정에 없던 verifier의 `gpt-6-sol`은 `opus`로 두어 BOSS 확인 대상이다. 매핑에 없는 모델은 설치를 거부한다. `model_reasoning_effort`는 `effort`로 옮긴다. Codex 설치본은 원본 그대로 복사한다.
+`agents/openai.yaml`을 제외하고 Markdown의 `$taeguk-*` 호출을 `/taeguk-*`로 바꾼다. 역할 TOML은 `name`의 `_`를 `-`로, `developer_instructions`를 본문으로 옮긴다. 모델은 `gpt-6-astra`→`opus`, `gpt-6-luna`→`sonnet`(BOSS 결정)이다. verifier의 `gpt-6-sol`은 BOSS 확인 전까지 `model`을 기록하지 않아 세션 모델을 상속하며, 프로젝트 설치 결과의 `unmapped_models`로 표시한다. 그 밖의 매핑에 없는 모델은 설치를 거부한다. `model_reasoning_effort`는 `effort`로 옮긴다. Codex 설치본은 원본 그대로 복사한다.
 
 ## 명령
 

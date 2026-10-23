@@ -11,7 +11,9 @@ import tomllib
 import install_codex as engine
 
 AGENTS = ('codex', 'claude')
-MODELS = {'gpt-6-astra': 'opus', 'gpt-6-sol': 'opus', 'gpt-6-luna': 'sonnet'}
+MODELS = {'gpt-6-astra': 'opus', 'gpt-6-luna': 'sonnet'}
+# Mapping awaits BOSS confirmation; these roles inherit the session model until then.
+PENDING_MODELS = {'gpt-6-sol'}
 EFFORTS = {'low', 'medium', 'high'}
 SKILL_REF = re.compile(r'\$(taeguk-[a-z0-9-]+)')
 CLI = '.local/bin/taeguk'
@@ -29,7 +31,8 @@ def source_version(source):
         return subprocess.run(['git', '-C', str(source), *args], capture_output=True, text=True, check=True).stdout.strip()
     try:
         head = git('rev-parse', 'HEAD')
-        dirty = git('status', '--porcelain', '--', 'codex', 'docs/rules', 'installer')
+        dirty = git('status', '--porcelain', '--', 'codex', 'docs/rules', 'installer', 'scripts/taeguk_install.py',
+                    'scripts/install_codex.py', 'tools/taeguk-cli')
     except (OSError, subprocess.CalledProcessError):
         return 'unknown'
     return head + ('+dirty' if dirty else '')
@@ -66,7 +69,7 @@ def skill_files(source):
 def claude_agent(role):
     name = role['name'].replace('_', '-')
     lines = ['---', f'name: {name}', f'description: {json.dumps(role["description"])}']
-    if 'model' in role:
+    if 'model' in role and role['model'] not in PENDING_MODELS:
         if role['model'] not in MODELS:
             raise ValueError(f'unmapped agent model: {role["model"]}')
         lines.append(f'model: {MODELS[role["model"]]}')
@@ -126,22 +129,43 @@ def cli_bundle(source):
     return {CLI: (binary.read_bytes(), 0o755)}
 
 
+def verify_receipt(root, name):
+    path = engine.safe_target(root, receipt(name))
+    if not path.exists():
+        raise ValueError(f'no managed installation: {name}')
+    doc = json.loads(path.read_text())
+    if not isinstance(doc, dict) or doc.get('schema_version') != 1 or not isinstance(doc.get('files'), dict):
+        raise ValueError('invalid installation receipt')
+    for key, expected in doc['files'].items():
+        target = engine.safe_target(root, key)
+        if not target.exists() or engine.digest(target.read_bytes()) != expected:
+            raise ValueError(f'managed file is missing or locally modified: {key}')
+
+
 def run(components, source, root, mode, meta):
     """Preflight every component before changing any, then run them in order."""
-    if mode in ('apply', 'uninstall'):
-        for name, build in components:
+    for name, build in components:
+        if mode == 'apply':
             engine.execute(source, root, 'dry-run', build, receipt(name), meta)
-            if mode == 'uninstall' and not (root/receipt(name)).exists():
-                raise ValueError(f'no managed installation: {name}')
+        elif mode == 'uninstall':
+            verify_receipt(root, name)
     return {name: engine.execute(source, root, mode, build, receipt(name), meta) for name, build in components}
+
+
+def remaining(root, agents, prefix=''):
+    """Agents installed at root that this command does not touch."""
+    return [agent for agent in AGENTS if agent not in agents and (root/receipt(prefix+agent)).exists()]
 
 
 def user(source, home, agents, mode, with_cli=True):
     components = [(f'init-{agent}', lambda s, a=agent: init_bundle(a, s)) for agent in agents]
-    if with_cli:
+    kept = remaining(home, agents, 'init-') if mode == 'uninstall' else []
+    if with_cli and not kept:
         components.append(('cli', cli_bundle))
     result = {'scope': 'user', 'root': str(home), 'components': run(components, source, home, mode,
               {'source_root': str(source), 'source_version': source_version(source)})}
+    if with_cli and kept:
+        result['kept'] = {'cli': kept}
     legacy = [path for path in LEGACY_RECEIPTS if (home/path).exists()]
     if legacy:
         result['legacy'] = {'receipts': legacy,
@@ -150,10 +174,18 @@ def user(source, home, agents, mode, with_cli=True):
 
 
 def project(source, root, home, agents, mode):
-    components = [('rules', rules_bundle)] + [(agent, lambda s, a=agent: project_bundle(a, s)) for agent in agents]
+    kept = remaining(root, agents) if mode == 'uninstall' else []
+    components = [] if kept else [('rules', rules_bundle)]
+    components += [(agent, lambda s, a=agent: project_bundle(a, s)) for agent in agents]
     version = source_version(source)
     result = {'scope': 'project', 'root': str(root), 'source_version': version,
               'components': run(components, source, root, mode, {'source_version': version})}
+    if kept:
+        result['kept'] = {'rules': kept}
+    if 'claude' in agents:
+        pending = sorted(f'{role["name"]}={role["model"]}' for _, role in roles(source) if role.get('model') in PENDING_MODELS)
+        if pending:
+            result['unmapped_models'] = pending
     names = sorted({skill for skill, _, _ in skill_files(source)})
     user_skills = {'claude': '.claude/skills', 'codex': '.agents/skills'}
     shadowed = {agent: found for agent in agents
