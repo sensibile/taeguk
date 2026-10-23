@@ -62,10 +62,13 @@ python3 scripts/check_rules.py
 python3 -m unittest discover -s tests -v
 cargo test --manifest-path tools/taeguk-cli/Cargo.toml --locked
 cd apps/taeguk
-mix test
 mix format --check-formatted
+export TAEGUK_DATABASE_PATH=/private/tmp/taeguk-state-test.sqlite3
+export TAEGUK_API_TOKEN=local-test-token-at-least-24-bytes
+mix ecto.migrate
+TAEGUK_REQUIRE_STATE_TESTS=1 mix test
 ```
 
-일반 `mix test`는 DB 설정이 없으면 DB 통합 검사를 skip한다. 별도 `*-test.sqlite3` 파일을 설정해 migration과 통합 검사를 수행해야 저장 동작을 확인할 수 있다. 명령은 [상태 API 사용법](docs/workflow-state-usage.md)에 있다. GitHub Actions는 현재 규칙 구조와 Python 검사만 실행한다. Rust·Elixir·실제 HTTP 검증까지 CI가 수행한다고 해석하지 않는다.
+일반 `mix test`는 DB 설정이 없으면 DB 통합 검사를 skip한다. `TAEGUK_REQUIRE_STATE_TESTS=1`이면 DB 미설정 시 바로 실패하므로 skip이 통과로 보이지 않는다. DB 경로는 `*-test.sqlite3`로 끝나야 한다. GitHub Actions는 규칙 구조, Python, Rust, DB를 포함한 Elixir 검사를 실행한다. 실제 서버를 띄운 HTTP 검증과 branch protection 필수 검사 지정은 CI 범위가 아니다.
 
 첫 self-improvement 실험에서는 로컬 SQLite 오류 분류를 같은 두 사례에서 비교해 분류 오류 1건 → 0건을 확인했다. 사용자 시간 절감, 장기 효과, 여러 프로젝트의 전이·공통화는 아직 확인하지 않았다. 자동 배포, 운영 복구와 프로젝트별 설치 격리는 제공하지 않는다.
