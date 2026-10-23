@@ -1,6 +1,7 @@
 import hashlib
 import importlib.util
 import json
+import shlex
 from pathlib import Path
 import sys
 import tempfile
@@ -52,9 +53,19 @@ class BundleTest(unittest.TestCase):
         codex = install.init_bundle('codex', SOURCE)[install.INIT['codex']][0].decode()
         self.assertIn('disable-model-invocation: true', claude)
         self.assertNotIn('disable-model-invocation', codex)
-        self.assertIn(f'"{SOURCE}/scripts/taeguk_install.py" project', claude)
+        self.assertIn(f'python3 {SOURCE}/scripts/taeguk_install.py project', claude)
         self.assertIn('--agent claude', claude)
         self.assertNotIn('{{', claude + codex)
+
+
+    def test_init_command_quotes_installer_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp)/'taeguk $(touch pwned) "x"'
+            (source/'installer').mkdir(parents=True)
+            (source/'installer/taeguk-init.md').write_bytes((SOURCE/'installer/taeguk-init.md').read_bytes())
+            text = install.init_bundle('claude', source)[install.INIT['claude']][0].decode()
+        command = next(line for line in text.splitlines() if 'project --root' in line).split('`')[1]
+        self.assertEqual(shlex.split(command)[1], str(source/'scripts/taeguk_install.py'))
 
 
 class ScopeTest(unittest.TestCase):
@@ -104,6 +115,13 @@ class ScopeTest(unittest.TestCase):
         self.assertFalse((moved/'.taeguk').exists())
         self.assertFalse((moved/'.agents/skills/taeguk-work-contract').exists())
         self.assertEqual(list((moved/'.claude/agents').iterdir()), [])
+
+    def test_intermediate_file_blocks_every_component(self):
+        (self.root/'.claude').write_text('user file')
+        with self.assertRaises(ValueError):
+            install.project(SOURCE, self.root, self.home, ['codex', 'claude'], 'apply')
+        self.assertFalse((self.root/'.taeguk').exists())
+        self.assertFalse((self.root/'.codex').exists())
 
     def test_partial_uninstall_keeps_shared_components(self):
         install.project(SOURCE, self.root, self.home, ['claude', 'codex'], 'apply')

@@ -51,10 +51,12 @@ def safe_target(home, relative):
     if rel.is_absolute() or any(p in ('..', '.') for p in rel.parts):
         raise ValueError('unsafe installation path')
     path = home
-    for part in rel.parts:
+    for index, part in enumerate(rel.parts):
         path = path/part
         if path.is_symlink():
             raise ValueError(f'symlink target is not supported: {relative}')
+        if index < len(rel.parts)-1 and path.exists() and not path.is_dir():
+            raise ValueError(f'installation path component is not a directory: {relative}')
     if path.exists() and not path.is_file():
         raise ValueError(f'target is not a file: {relative}')
     return path
@@ -88,8 +90,6 @@ def execute(source, home, mode='dry-run', build=None, receipt_path=RECEIPT, meta
     if mode not in ('dry-run', 'apply', 'check', 'uninstall'):
         raise ValueError('unsupported mode')
     source, home = source.resolve(), home.resolve()
-    bundle = (build or payload)(source)
-    hashes = {key:digest(data) for key,(data,_) in bundle.items()}
     receipt = safe_target(home, receipt_path)
     previous = {}
     if receipt.exists():
@@ -97,16 +97,19 @@ def execute(source, home, mode='dry-run', build=None, receipt_path=RECEIPT, meta
         if not isinstance(doc, dict) or doc.get('schema_version') != 1 or not isinstance(doc.get('files'),dict):
             raise ValueError('invalid installation receipt')
         previous = doc['files']
-        if not set(previous).issubset(bundle):
-            raise ValueError('receipt contains files outside this bundle; use its original installer')
-    for key in bundle:
+    # Uninstall is decided by the receipt alone: no build output or current bundle is needed.
+    bundle = {} if mode == 'uninstall' else (build or payload)(source)
+    hashes = {key:digest(data) for key,(data,_) in bundle.items()}
+    if bundle and not set(previous).issubset(bundle):
+        raise ValueError('receipt contains files outside this bundle; use its original installer')
+    for key in sorted(set(bundle)|set(previous)):
         target = safe_target(home,key)
         if key in previous:
             if not isinstance(previous[key],str) or len(previous[key]) != 64:
                 raise ValueError('invalid receipt hash')
             if not target.exists() or digest(target.read_bytes()) != previous[key]:
                 raise ValueError(f'managed file is missing or locally modified: {key}')
-        elif target.exists() and mode != 'uninstall':
+        elif target.exists():
             raise ValueError(f'unmanaged installation collision: {key}')
     if mode == 'check':
         if previous != hashes:

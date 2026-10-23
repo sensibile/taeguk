@@ -78,6 +78,27 @@ class InstallerTest(unittest.TestCase):
         self.assertFalse((self.home/'.codex/agents/taeguk_test.toml').exists())
         self.assertFalse((self.home/install.RECEIPT).exists())
 
+    def test_uninstall_needs_only_the_receipt(self):
+        install.execute(SOURCE, self.home, 'apply')
+        with patch.object(install, 'payload', side_effect=ValueError('build the release CLI before installation')):
+            install.execute(SOURCE, self.home, 'uninstall')
+        self.assertFalse((self.home/'.local/bin/taeguk').exists())
+        self.assertFalse((self.home/install.RECEIPT).exists())
+
+    def test_uninstall_removes_files_dropped_from_current_bundle(self):
+        install.execute(SOURCE, self.home, 'apply')
+        self.bundle.pop('.agents/skills/taeguk-test/SKILL.md')
+        with self.assertRaises(ValueError):
+            install.execute(SOURCE, self.home, 'apply')
+        install.execute(SOURCE, self.home, 'uninstall')
+        self.assertFalse((self.home/'.agents/skills/taeguk-test').exists())
+
+    def test_file_in_intermediate_path_fails_preflight(self):
+        (self.home/'.agents').write_text('user file')
+        with self.assertRaises(ValueError):
+            install.execute(SOURCE, self.home, 'dry-run')
+        self.assertFalse((self.home/'.codex').exists())
+
     def test_non_object_receipt_is_rejected(self):
         path = self.home/install.RECEIPT
         path.parent.mkdir(parents=True)

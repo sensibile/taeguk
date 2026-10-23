@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import tomllib
 
@@ -116,7 +117,8 @@ def init_bundle(agent, source):
              'description: "Install or update the Taeguk project bundle in the current project; use only when the user explicitly asks to initialize Taeguk."']
     if agent == 'claude':
         front.append('disable-model-invocation: true')
-    body = template.replace('{{SOURCE}}', str(source)).replace('{{AGENT}}', agent)
+    installer = shlex.quote(str(source/'scripts/taeguk_install.py'))
+    body = template.replace('{{INSTALLER}}', installer).replace('{{SOURCE}}', str(source)).replace('{{AGENT}}', agent)
     return {INIT[agent]: (('\n'.join(front + ['---', '']) + body).encode(), 0o644)}
 
 
