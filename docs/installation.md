@@ -34,7 +34,7 @@ python3 scripts/taeguk_install.py project --root /path/to/project --agent claude
 python3 scripts/taeguk_install.py project --root /path/to/project --agent claude --apply
 ```
 
-모든 명령의 기본 실행은 dry-run이며 `--check`, `--uninstall`을 지원한다. `--agent` 기본값은 `codex,claude`다. 사용자 레벨 설치 뒤에는 각 프로젝트에서 `/taeguk-init`을 실행한다. 스킬이 dry-run 결과를 보여주고 BOSS 승인 뒤 `--apply`, `--check`를 실행한다. AGENTS.md·CLAUDE.md에 `.taeguk/rules/index.md`를 읽도록 하는 한 줄은 승인을 받아야만 추가한다.
+모든 명령의 기본 실행은 dry-run이며 `--check`, `--uninstall`을 지원한다. `--agent`를 생략하면 설치는 `codex,claude` 전체를, `--check`·`--uninstall`은 receipt가 있는 에이전트(user 범위는 설치된 init과 CLI)만 대상으로 한다. 제거 전에는 각 receipt가 자기 구성요소 경로(예: `.claude/skills/taeguk-*`, `.taeguk/rules/`)만 기록했는지 확인하고, 그 밖의 경로가 있으면 아무것도 지우지 않는다. 사용자 레벨 설치 뒤에는 각 프로젝트에서 `/taeguk-init`을 실행한다. 스킬이 dry-run 결과를 보여주고 BOSS 승인 뒤 `--apply`, `--check`를 실행한다. AGENTS.md·CLAUDE.md에 `.taeguk/rules/index.md`를 읽도록 하는 한 줄은 승인을 받아야만 추가한다.
 
 ## 기존 전역 설치 이전
 

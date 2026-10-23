@@ -22,6 +22,10 @@ CLI = '.local/bin/taeguk' + EXE
 INIT = {'codex': '.agents/skills/taeguk-init/SKILL.md', 'claude': '.claude/skills/taeguk-init/SKILL.md'}
 PROJECT_SKILLS = {'codex': '.agents/skills', 'claude': '.claude/skills'}
 LEGACY_RECEIPTS = ('.codex/taeguk-install.json',)
+# Paths each component may own; a receipt naming anything else is rejected before removal.
+OWNED = {'rules': ('.taeguk/rules/',), 'claude': ('.claude/skills/taeguk-', '.claude/agents/taeguk-'),
+         'codex': ('.agents/skills/taeguk-', '.codex/agents/taeguk_'),
+         'init-claude': (INIT['claude'],), 'init-codex': (INIT['codex'],), 'cli': (CLI,)}
 
 
 def git_env():
@@ -164,6 +168,8 @@ def verify_receipt(root, name):
     if not isinstance(doc, dict) or doc.get('schema_version') != 1 or not isinstance(doc.get('files'), dict):
         raise ValueError('invalid installation receipt')
     for key, expected in doc['files'].items():
+        if not any(key == owned or (owned.endswith(('/', '-', '_')) and key.startswith(owned)) for owned in OWNED[name]):
+            raise ValueError(f'receipt {name} claims a path outside its component: {key}')
         target = engine.safe_target(root, key)
         if not target.exists() or not engine.unchanged(target.read_bytes(), expected, key):
             raise ValueError(f'managed file is missing or locally modified: {key}')
@@ -179,20 +185,27 @@ def run(components, source, root, mode, meta):
     return {name: engine.execute(source, root, mode, build, receipt(name), meta) for name, build in components}
 
 
+def installed(root, prefix=''):
+    return [agent for agent in AGENTS if (root/receipt(prefix+agent)).exists()]
+
+
 def remaining(root, agents, prefix=''):
     """Agents installed at root that this command does not touch."""
-    return [agent for agent in AGENTS if agent not in agents and (root/receipt(prefix+agent)).exists()]
+    return [agent for agent in installed(root, prefix) if agent not in agents]
 
 
 def user(source, home, agents, mode, with_cli=True):
     components = [(f'init-{agent}', lambda s, a=agent: init_bundle(a, s)) for agent in agents]
     kept = remaining(home, agents, 'init-') if mode == 'uninstall' else []
-    if with_cli and not kept:
+    cli_managed = (home/receipt('cli')).exists()
+    if with_cli and not kept and (mode in ('dry-run', 'apply') or cli_managed):
         components.append(('cli', cli_bundle))
     result = {'scope': 'user', 'root': str(home), 'components': run(components, source, home, mode,
               {'source_root': str(source), 'source_version': source_version(source)})}
     if with_cli and kept:
         result['kept'] = {'cli': kept}
+    elif with_cli and mode in ('check', 'uninstall') and not cli_managed:
+        result['cli'] = 'not installed'
     legacy = [path for path in LEGACY_RECEIPTS if (home/path).exists()]
     if legacy:
         result['legacy'] = {'receipts': legacy,
@@ -205,6 +218,18 @@ def parse_agents(text):
     if not agents or set(agents) - set(AGENTS) or len(set(agents)) != len(agents):
         raise ValueError('agents must be distinct values from: '+', '.join(AGENTS))
     return agents
+
+
+def select_agents(text, mode, root, prefix=''):
+    """Explicit agents, else every agent for install and the installed ones for check/uninstall."""
+    if text:
+        return parse_agents(text)
+    if mode in ('check', 'uninstall'):
+        agents = installed(root, prefix)
+        if not agents:
+            raise ValueError('no managed installation')
+        return agents
+    return list(AGENTS)
 
 
 def project(source, root, home, agents, mode):
@@ -267,7 +292,7 @@ def main():
     project_cmd = commands.add_parser('project', help='install the Taeguk bundle into a project')
     project_cmd.add_argument('--root', type=Path, required=True)
     for command in (user_cmd, project_cmd):
-        command.add_argument('--agent', default=','.join(AGENTS), help='comma-separated: '+', '.join(AGENTS))
+        command.add_argument('--agent', help='comma-separated: '+', '.join(AGENTS)+'; default all for install, installed ones for check/uninstall')
         group = command.add_mutually_exclusive_group()
         for name in ('apply', 'check', 'uninstall'):
             group.add_argument('--'+name, action='store_true')
@@ -281,7 +306,8 @@ def main():
         if args.command == 'migrate':
             result = migrate(home, mode)
         else:
-            agents = parse_agents(args.agent)
+            root = home if args.command == 'user' else args.root.resolve()
+            agents = select_agents(args.agent, mode, root, 'init-' if args.command == 'user' else '')
             if args.command == 'user':
                 result = user(source, home, agents, mode, not args.no_cli)
             else:

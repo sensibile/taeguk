@@ -179,6 +179,35 @@ class ScopeTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             install.project(SOURCE, self.root, self.home, ['claude'], 'uninstall')
 
+    def test_default_agents_follow_installed_receipts(self):
+        install.project(SOURCE, self.root, self.home, ['claude'], 'apply')
+        self.assertEqual(install.select_agents(None, 'check', self.root), ['claude'])
+        self.assertEqual(install.select_agents(None, 'apply', self.root), list(install.AGENTS))
+        agents = install.select_agents(None, 'check', self.root)
+        self.assertEqual(install.project(SOURCE, self.root, self.home, agents, 'check')['components']['claude']['status'], 'verified')
+        with self.assertRaises(ValueError):
+            install.select_agents(None, 'uninstall', self.home, 'init-')
+
+    def test_user_uninstall_without_cli_receipt(self):
+        install.user(SOURCE, self.home, ['claude'], 'apply', with_cli=False)
+        self.assertEqual(install.user(SOURCE, self.home, ['claude'], 'check')['cli'], 'not installed')
+        result = install.user(SOURCE, self.home, ['claude'], 'uninstall')
+        self.assertEqual(result['cli'], 'not installed')
+        self.assertFalse((self.home/install.INIT['claude']).exists())
+
+    def test_receipt_cannot_claim_unowned_project_files(self):
+        install.project(SOURCE, self.root, self.home, ['claude'], 'apply')
+        readme = self.root/'README.md'
+        readme.write_text('project readme')
+        path = self.root/install.receipt('claude')
+        doc = json.loads(path.read_text())
+        doc['files']['README.md'] = hashlib.sha256(b'project readme').hexdigest()
+        path.write_text(json.dumps(doc))
+        with self.assertRaises(ValueError):
+            install.project(SOURCE, self.root, self.home, ['claude'], 'uninstall')
+        self.assertEqual(readme.read_text(), 'project readme')
+        self.assertTrue((self.root/'.claude/agents/taeguk-designer.md').is_file())
+
     def test_partial_uninstall_keeps_shared_components(self):
         install.project(SOURCE, self.root, self.home, ['claude', 'codex'], 'apply')
         result = install.project(SOURCE, self.root, self.home, ['claude'], 'uninstall')
