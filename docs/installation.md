@@ -13,7 +13,7 @@
 | project | `claude` | `.claude/skills/taeguk-*/`, `.claude/agents/taeguk-*.md` |
 | project | `codex` | `.agents/skills/taeguk-*/`, `.codex/agents/taeguk_*.toml` |
 
-한 에이전트만 제거할 때 다른 에이전트 설치가 남아 있으면 공유 구성요소(프로젝트의 `rules`, 사용자 레벨의 `cli`)는 남기고 결과의 `kept`로 표시한다. 제거 사전 검사는 receipt에 기록된 파일의 hash만 확인한다. hash 확인은 Git이 LF를 CRLF로 바꿔 checkout한 파일도 수정되지 않은 것으로 본다. `--root`는 이미 존재하는 디렉터리여야 하고 `--agent`에는 중복을 허용하지 않는다. 구성요소마다 receipt를 `<root>/.taeguk/receipts/<구성요소>.json`에 둔다. 프로젝트 receipt에는 절대경로 없이 원본 commit(`source_version`, 원본에 미커밋 변경이 있으면 `+dirty`)만 기록하므로 clone 위치가 달라도 `--check`가 동작한다. 적용·제거 전에 모든 구성요소의 충돌을 먼저 확인한다. 충돌 확인, 사용자 수정 보호, 쓰기 실패 복구, hash 대조 제거는 [Codex 설치](codex-installation.md)의 구현을 재사용한다. 제거 시 비게 된 `taeguk*` 디렉터리만 정리하고 공유 디렉터리는 남긴다.
+한 에이전트만 제거할 때 다른 에이전트 설치가 남아 있으면 공유 구성요소(프로젝트의 `rules`, 사용자 레벨의 `cli`)는 남기고 결과의 `kept`로 표시한다. 제거 사전 검사는 receipt에 기록된 파일의 hash만 확인한다. hash 확인은 Git이 LF를 CRLF로 바꿔 checkout한 텍스트 파일(Markdown·TOML·Python 등)도 수정되지 않은 것으로 보며, CLI 같은 실행 파일은 원시 바이트로만 확인한다. 번들에는 원본 checkout에서 Git이 무시하는 파일(`__pycache__` 등)을 넣지 않는다. CLI 파일 이름에는 플랫폼 실행 파일 접미사를 붙이지만 Windows 실행은 검증하지 않았다. `--root`는 이미 존재하는 디렉터리여야 하고 `--agent`에는 중복을 허용하지 않는다. 구성요소마다 receipt를 `<root>/.taeguk/receipts/<구성요소>.json`에 둔다. 프로젝트 receipt에는 절대경로 없이 원본 commit(`source_version`, 원본에 미커밋 변경이 있으면 `+dirty`)만 기록하므로 clone 위치가 달라도 `--check`가 동작한다. 적용·제거 전에 모든 구성요소의 충돌을 먼저 확인한다. 충돌 확인, 사용자 수정 보호, 쓰기 실패 복구, hash 대조 제거는 [Codex 설치](codex-installation.md)의 구현을 재사용한다. 제거 시 비게 된 `taeguk*` 디렉터리만 정리하고 공유 디렉터리는 남긴다.
 
 발견 경로는 2026-10-23 공식 문서에서 확인했다. Claude Code는 프로젝트 `.claude/skills`, `.claude/agents`를 읽는다. 같은 이름이면 스킬은 개인 레벨이, 에이전트는 프로젝트 레벨이 우선한다. Codex는 CWD에서 저장소 루트까지의 `.agents/skills`와 프로젝트 `.codex/agents`를 읽고, 같은 이름의 스킬은 병합하지 않고 모두 노출한다.
 
@@ -51,4 +51,4 @@ python3 scripts/taeguk_install.py user --apply
 
 ## 한계
 
-설치 성공은 파일 배치와 hash 일치만 뜻한다. 새 세션에서 발견, 모델·effort 적용, `/taeguk-init` 실행은 별도로 확인한다. 규칙 스냅샷의 `../research/archive` 링크는 프로젝트 안에서 끊기며 원본 commit의 태극 저장소를 가리킨다. `taeguk-init`은 설치 시점의 태극 저장소 절대경로를 담으므로 저장소를 옮기면 `user --apply`를 다시 실행한다. 원본에서 파일이 삭제되면 기존 receipt가 새 번들에 없는 파일을 가리켜 업데이트가 거부된다. 이 경우 먼저 제거 후 재설치한다. 제거는 receipt만으로 대상을 정하므로 원본 빌드나 현재 번들이 없어도 동작한다. 여러 구성요소 중 일부 적용 뒤 예외가 나면 앞선 구성요소는 적용된 상태로 남는다.
+설치 성공은 파일 배치와 hash 일치만 뜻한다. 2026-10-23 hoplites 작업 트리(trusted 프로젝트, codex-cli 0.163.0)에서 `.codex/config.toml`의 역할별 등록 없이 프로젝트 `.codex/agents/taeguk_*.toml` 10개가 Codex 역할 목록에 나타나고 `taeguk_designer` 호출이 성공하는 것을 관측했다. trusted가 아닌 프로젝트에서의 발견은 확인하지 않았다. 새 세션에서 발견, 모델·effort 적용, `/taeguk-init` 실행은 별도로 확인한다. 규칙 스냅샷의 `../research/archive` 링크는 프로젝트 안에서 끊기며 원본 commit의 태극 저장소를 가리킨다. `taeguk-init`은 설치 시점의 태극 저장소 절대경로를 담으므로 저장소를 옮기면 `user --apply`를 다시 실행한다. 원본에서 파일이 삭제되면 기존 receipt가 새 번들에 없는 파일을 가리켜 업데이트가 거부된다. 이 경우 먼저 제거 후 재설치한다. 제거는 receipt만으로 대상을 정하므로 원본 빌드나 현재 번들이 없어도 동작한다. 여러 구성요소 중 일부 적용 뒤 예외가 나면 앞선 구성요소는 적용된 상태로 남는다.

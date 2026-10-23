@@ -3,10 +3,12 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shlex
 import subprocess
+import sysconfig
 import tomllib
 
 import install_codex as engine
@@ -15,10 +17,16 @@ AGENTS = ('codex', 'claude')
 MODELS = {'gpt-6-astra': 'opus', 'gpt-6-sol': 'opus', 'gpt-6-luna': 'sonnet'}
 EFFORTS = {'low', 'medium', 'high'}
 SKILL_REF = re.compile(r'\$(taeguk-[a-z0-9-]+)')
-CLI = '.local/bin/taeguk'
+EXE = sysconfig.get_config_var('EXE') or ''
+CLI = '.local/bin/taeguk' + EXE
 INIT = {'codex': '.agents/skills/taeguk-init/SKILL.md', 'claude': '.claude/skills/taeguk-init/SKILL.md'}
 PROJECT_SKILLS = {'codex': '.agents/skills', 'claude': '.claude/skills'}
 LEGACY_RECEIPTS = ('.codex/taeguk-install.json',)
+
+
+def git_env():
+    """Environment for Git calls on the source checkout, free of a caller's GIT_DIR (e.g. inside hooks)."""
+    return {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
 
 
 def receipt(component):
@@ -27,7 +35,7 @@ def receipt(component):
 
 def source_version(source):
     def git(*args):
-        return subprocess.run(['git', '-C', str(source), *args], capture_output=True, text=True, check=True).stdout.strip()
+        return subprocess.run(['git', '-C', str(source), *args], capture_output=True, text=True, check=True, env=git_env()).stdout.strip()
     try:
         head = git('rev-parse', 'HEAD')
         dirty = git('status', '--porcelain', '--', 'codex', 'docs/rules', 'installer', 'scripts/taeguk_install.py',
@@ -35,6 +43,31 @@ def source_version(source):
     except (OSError, subprocess.CalledProcessError):
         return 'unknown'
     return head + ('+dirty' if dirty else '')
+
+
+def git_ignored(source, paths):
+    """Paths Git ignores in the source checkout; none when Git is unavailable."""
+    if not paths:
+        return set()
+    try:
+        out = subprocess.run(['git', '-C', str(source), 'check-ignore', '--stdin', '-z'], capture_output=True, env=git_env(),
+                             input='\0'.join(str(p.relative_to(source)) for p in paths).encode())
+    except OSError:
+        return set()
+    if out.returncode not in (0, 1):
+        return set()
+    return {source/name for name in out.stdout.decode().split('\0') if name}
+
+
+def tracked_files(source, directory):
+    files = []
+    for src in sorted(directory.rglob('*')):
+        if src.is_symlink():
+            raise ValueError('symlink source is not supported')
+        if src.is_file():
+            files.append(src)
+    ignored = git_ignored(source, files)
+    return [src for src in files if src not in ignored]
 
 
 def roles(source):
@@ -58,11 +91,8 @@ def skill_files(source):
     for skill in skills:
         if skill.is_symlink() or not (skill/'SKILL.md').is_file():
             raise ValueError('invalid skill directory')
-        for src in sorted(skill.rglob('*')):
-            if src.is_symlink():
-                raise ValueError('symlink source is not supported')
-            if src.is_file():
-                yield skill.name, src.relative_to(skill), src.read_bytes()
+        for src in tracked_files(source, skill):
+            yield skill.name, src.relative_to(skill), src.read_bytes()
 
 
 def claude_agent(role):
@@ -101,11 +131,8 @@ def project_bundle(agent, source):
 def rules_bundle(source):
     rules = source/'docs/rules'
     files = {}
-    for src in sorted(rules.rglob('*')):
-        if src.is_symlink():
-            raise ValueError('symlink source is not supported')
-        if src.is_file():
-            files[f'.taeguk/rules/{src.relative_to(rules).as_posix()}'] = (src.read_bytes(), 0o644)
+    for src in tracked_files(source, rules):
+        files[f'.taeguk/rules/{src.relative_to(rules).as_posix()}'] = (src.read_bytes(), 0o644)
     if '.taeguk/rules/registry.toml' not in files:
         raise ValueError('bundle has no rule registry')
     return files
@@ -123,7 +150,7 @@ def init_bundle(agent, source):
 
 
 def cli_bundle(source):
-    binary = source/'tools/taeguk-cli/target/release/taeguk'
+    binary = source/'tools/taeguk-cli/target/release'/('taeguk' + EXE)
     if not binary.is_file() or binary.is_symlink():
         raise ValueError('build the release CLI before installation')
     return {CLI: (binary.read_bytes(), 0o755)}
@@ -138,7 +165,7 @@ def verify_receipt(root, name):
         raise ValueError('invalid installation receipt')
     for key, expected in doc['files'].items():
         target = engine.safe_target(root, key)
-        if not target.exists() or not engine.unchanged(target.read_bytes(), expected):
+        if not target.exists() or not engine.unchanged(target.read_bytes(), expected, key):
             raise ValueError(f'managed file is missing or locally modified: {key}')
 
 

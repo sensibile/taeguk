@@ -16,9 +16,14 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def unchanged(data, expected):
-    """Match the recorded hash, also after a Git checkout converted LF to CRLF."""
-    return expected in (digest(data), digest(data.replace(b'\r\n', b'\n')))
+TEXT_SUFFIXES = {'.md', '.toml', '.py', '.yaml', '.yml', '.json', '.txt'}
+
+
+def unchanged(data, expected, key=''):
+    """Match the recorded hash; text files may also differ by a Git LF-to-CRLF checkout."""
+    if digest(data) == expected:
+        return True
+    return Path(key).suffix in TEXT_SUFFIXES and digest(data.replace(b'\r\n', b'\n')) == expected
 
 
 def payload(source):
@@ -112,7 +117,7 @@ def execute(source, home, mode='dry-run', build=None, receipt_path=RECEIPT, meta
         if key in previous:
             if not isinstance(previous[key],str) or len(previous[key]) != 64:
                 raise ValueError('invalid receipt hash')
-            if not target.exists() or not unchanged(target.read_bytes(), previous[key]):
+            if not target.exists() or not unchanged(target.read_bytes(), previous[key], key):
                 raise ValueError(f'managed file is missing or locally modified: {key}')
         elif target.exists():
             raise ValueError(f'unmanaged installation collision: {key}')

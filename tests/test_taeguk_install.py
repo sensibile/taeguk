@@ -2,6 +2,9 @@ import hashlib
 import importlib.util
 import json
 import shlex
+import shutil
+import subprocess
+import sysconfig
 from pathlib import Path
 import sys
 import tempfile
@@ -66,6 +69,31 @@ class BundleTest(unittest.TestCase):
             text = install.init_bundle('claude', source)[install.INIT['claude']][0].decode()
         command = next(line for line in text.splitlines() if 'project --root' in line).split('`')[1]
         self.assertEqual(shlex.split(command)[1], str(source/'scripts/taeguk_install.py'))
+
+
+    def test_git_ignored_files_are_not_bundled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp).resolve()
+            for name in ('codex', 'docs/rules', 'installer'):
+                shutil.copytree(SOURCE/name, source/name, ignore=shutil.ignore_patterns('__pycache__'))
+            (source/'.gitignore').write_text('__pycache__/\n*.pyc\n')
+            subprocess.run(['git', 'init', '-q', str(source)], check=True, env=install.git_env())
+            cache = source/'codex/skills/taeguk-plan-cross-verification/scripts/__pycache__'
+            cache.mkdir()
+            (cache/'run_exclusive.cpython-313.pyc').write_bytes(b'bytecode')
+            (source/'docs/rules/local.pyc').write_bytes(b'bytecode')
+            bundle = {**install.project_bundle('codex', source), **install.rules_bundle(source)}
+        self.assertFalse([k for k in bundle if '__pycache__' in k or k.endswith('.pyc')])
+        self.assertIn('.agents/skills/taeguk-plan-cross-verification/scripts/run_exclusive.py', bundle)
+
+    def test_cli_uses_platform_executable_suffix(self):
+        suffix = sysconfig.get_config_var('EXE') or ''
+        self.assertEqual(install.CLI, '.local/bin/taeguk' + suffix)
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp)/'tools/taeguk-cli/target/release'/('taeguk' + suffix)
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b'cli')
+            self.assertEqual(install.cli_bundle(Path(tmp)), {install.CLI: (b'cli', 0o755)})
 
 
 class ScopeTest(unittest.TestCase):

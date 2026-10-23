@@ -99,6 +99,18 @@ class InstallerTest(unittest.TestCase):
             install.execute(SOURCE, self.home, 'dry-run')
         self.assertFalse((self.home/'.codex').exists())
 
+    def test_crlf_tolerance_applies_to_text_files_only(self):
+        self.bundle['.codex/agents/taeguk_test.toml'] = (b'a\nb\n', 0o644)
+        self.bundle['.local/bin/taeguk'] = (b'\x7fELF\nbin\n', 0o755)
+        install.execute(SOURCE, self.home, 'apply')
+        role = self.home/'.codex/agents/taeguk_test.toml'
+        role.write_bytes(b'a\r\nb\r\n')
+        self.assertEqual(install.execute(SOURCE, self.home, 'check')['status'], 'verified')
+        cli = self.home/'.local/bin/taeguk'
+        cli.write_bytes(b'\x7fELF\r\nbin\r\n')
+        with self.assertRaises(ValueError):
+            install.execute(SOURCE, self.home, 'check')
+
     def test_non_object_receipt_is_rejected(self):
         path = self.home/install.RECEIPT
         path.parent.mkdir(parents=True)
