@@ -111,6 +111,30 @@ class BundleTest(unittest.TestCase):
             bundle = install.project_bundle('claude', source)
         self.assertFalse([key for key in bundle if 'taeguk-local' in key])
 
+    def test_ignored_cache_with_symlink_does_not_block_bundle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp).resolve()
+            for name in ('codex', 'docs/rules', 'installer'):
+                shutil.copytree(SOURCE/name, source/name, ignore=shutil.ignore_patterns('__pycache__'))
+            (source/'.gitignore').write_text('.cache/\n')
+            subprocess.run(['git', 'init', '-q', str(source)], check=True, env=install.git_env())
+            cache = source/'codex/skills/taeguk-work-contract/.cache'
+            cache.mkdir()
+            (cache/'link').symlink_to(source)
+            bundle = install.project_bundle('codex', source)
+        self.assertFalse([key for key in bundle if '.cache' in key])
+
+    def test_archive_inside_another_repository_is_unknown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            outer = Path(tmp).resolve()
+            env = {**install.git_env(), 'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@t', 'GIT_COMMITTER_NAME': 't', 'GIT_COMMITTER_EMAIL': 't@t'}
+            subprocess.run(['git', 'init', '-q', str(outer)], check=True, env=env)
+            subprocess.run(['git', '-C', str(outer), 'commit', '-q', '--allow-empty', '-m', 'outer'], check=True, env=env)
+            vendored = outer/'vendor/taeguk'
+            vendored.mkdir(parents=True)
+            self.assertEqual(install.source_version(vendored), 'unknown')
+            self.assertIsNone(install.published_commit(vendored))
+
     def test_git_ignored_roles_are_not_bundled(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp).resolve()
@@ -415,6 +439,9 @@ class ScopeTest(unittest.TestCase):
         doc = json.loads(path.read_text())
         doc['source_version'] = 'older'
         path.write_text(json.dumps(doc))
+        preview = install.project(SOURCE, self.root, self.home, ['claude'], 'dry-run')
+        self.assertEqual(preview['synced_agents'], ['codex'])
+        self.assertEqual(set(preview['components']), {'rules', 'claude', 'codex'})
         result = install.project(SOURCE, self.root, self.home, ['claude'], 'apply')
         self.assertEqual(result['synced_agents'], ['codex'])
         self.assertEqual(set(result['components']), {'rules', 'claude', 'codex'})
@@ -553,6 +580,13 @@ class MigrateTest(unittest.TestCase):
         (self.home/install.CLI).write_bytes(b'tampered')
         with self.assertRaises(ValueError):
             install.user(SOURCE, self.home, [], 'check', with_cli=False)
+
+    def test_migrate_rejects_legacy_receipt_with_unowned_paths(self):
+        self.files['.ssh/config'] = '0' * 64
+        self.legacy.write_text(json.dumps({'schema_version': 1, 'source_root': '/src', 'files': self.files}))
+        with self.assertRaises(ValueError):
+            install.migrate(self.home, 'apply')
+        self.assertFalse((self.home/install.receipt('cli')).exists())
 
     def test_migrated_cli_can_be_updated_by_user_scope(self):
         install.migrate(self.home, 'apply')

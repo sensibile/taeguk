@@ -41,6 +41,9 @@ def source_version(source):
     def git(*args):
         return subprocess.run(['git', '-C', str(source), *args], capture_output=True, text=True, check=True, env=git_env()).stdout.strip()
     try:
+        # An archive unpacked inside another repository would otherwise report that repository's HEAD.
+        if Path(git('rev-parse', '--show-toplevel')).resolve() != Path(source).resolve():
+            return 'unknown'
         head = git('rev-parse', 'HEAD')
         dirty = git('status', '--porcelain', '--', 'codex', 'docs/rules', 'installer', 'scripts/taeguk_install.py',
                     'scripts/install_codex.py', 'tools/taeguk-cli')
@@ -66,17 +69,27 @@ def git_ignored(source, paths):
 def tracked_files(source, directory, skip=()):
     """Regular files under directory, without Git-ignored ones; directories in skip are never entered."""
     skip = {path.resolve() for path in skip}
+    # One Git call lists ignored untracked entries (directories collapsed) under this directory.
+    try:
+        out = subprocess.run(['git', '-C', str(source), 'ls-files', '-z', '--others', '--ignored', '--exclude-standard',
+                              '--directory', '--', str(directory.relative_to(source))],
+                             capture_output=True, env=git_env())
+        listed = out.stdout.decode().split('\0') if out.returncode == 0 else []
+    except (OSError, ValueError):
+        listed = []
+    ignored_entries = {(source/name.rstrip('/')).resolve() for name in listed if name}
     files = []
     for current, dirs, names in os.walk(directory):
         here = Path(current)
         dirs[:] = [name for name in dirs if (here/name).resolve() not in skip or (here/name).is_symlink()]
+        # Ignored local artifacts (caches, links) are neither entered nor validated.
+        dirs[:] = [name for name in dirs if (here/name).resolve() not in ignored_entries]
+        names = [name for name in names if (here/name).resolve() not in ignored_entries]
         for name in dirs + names:
             if (here/name).is_symlink():
                 raise ValueError('symlink source is not supported')
         files += [here/name for name in names if (here/name).is_file()]
-    files.sort()
-    ignored = git_ignored(source, files)
-    return [src for src in files if src not in ignored]
+    return sorted(files)
 
 
 def lf(rel, data):
@@ -324,7 +337,7 @@ def project(source, root, home, agents, mode):
         raise ValueError(f'project root is not an existing directory: {root}')
     kept = remaining(root, agents) if mode == 'uninstall' else []
     # Updating the shared rules alone would leave other installed agents on an older version.
-    synced = remaining(root, agents) if mode == 'apply' else []
+    synced = remaining(root, agents) if mode in ('dry-run', 'apply') else []
     agents = list(agents) + synced
     # The link pin depends on the checkout's remote refs, so --check reuses the pin the install recorded
     # and the same source commit always rebuilds the same rule bytes.
@@ -367,6 +380,9 @@ def migrate(home, mode):
     legacy = json.loads(legacy_path.read_text())
     if not isinstance(legacy, dict) or legacy.get('schema_version') != 1 or not isinstance(legacy.get('files'), dict):
         raise ValueError('invalid installation receipt')
+    outside = [key for key in legacy['files'] if not engine.owns(engine.LEGACY_OWNED, key)]
+    if outside:
+        raise ValueError(f'receipt claims paths outside its component: {outside[0]}')
     expected = legacy['files'].get(CLI)
     if expected is None:
         return {'status': 'nothing to migrate'}
