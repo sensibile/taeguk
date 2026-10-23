@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Install Taeguk for coding agents: user-level init skill and CLI, project-level bundles."""
 import argparse
+from functools import lru_cache
 import hashlib
 import json
 import os
@@ -37,13 +38,24 @@ def receipt(component):
     return f'.taeguk/receipts/{component}.json'
 
 
+@lru_cache(maxsize=None)
+def own_repository(source):
+    """Whether source is the top level of its own Git checkout, not a directory inside another repository."""
+    try:
+        top = subprocess.run(['git', '-C', str(source), 'rev-parse', '--show-toplevel'], capture_output=True, text=True,
+                             check=True, env=git_env()).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return False
+    return Path(top).resolve() == Path(source).resolve()
+
+
 def source_version(source):
     def git(*args):
         return subprocess.run(['git', '-C', str(source), *args], capture_output=True, text=True, check=True, env=git_env()).stdout.strip()
+    # An archive unpacked inside another repository would otherwise report that repository's HEAD.
+    if not own_repository(source):
+        return 'unknown'
     try:
-        # An archive unpacked inside another repository would otherwise report that repository's HEAD.
-        if Path(git('rev-parse', '--show-toplevel')).resolve() != Path(source).resolve():
-            return 'unknown'
         head = git('rev-parse', 'HEAD')
         dirty = git('status', '--porcelain', '--', 'codex', 'docs/rules', 'installer', 'scripts/taeguk_install.py',
                     'scripts/install_codex.py', 'tools/taeguk-cli')
@@ -73,8 +85,16 @@ def tracked_files(source, directory, skip=()):
     if not directory.is_dir():
         return []
     skip = {lexical(path) for path in skip}
-    # One Git call lists ignored untracked entries (directories collapsed) under this directory.
+    # Symlinks are refused below the walk root too, so the root and its ancestors up to source must be real.
+    relative = directory.relative_to(source)
+    for depth in range(len(relative.parts) + 1):
+        if (source/Path(*relative.parts[:depth])).is_symlink():
+            raise ValueError('symlink source is not supported')
+    # One Git call lists ignored untracked entries (directories collapsed) under this directory. Only the
+    # source's own repository decides what is ignored; a surrounding repository's rules do not apply.
     try:
+        if not own_repository(source):
+            raise ValueError('not a repository root')
         out = subprocess.run(['git', '-C', str(source), 'ls-files', '-z', '--others', '--ignored', '--exclude-standard',
                               '--directory', '--', str(directory.relative_to(source))],
                              capture_output=True, env=git_env())
@@ -120,7 +140,7 @@ def roles(source):
 
 def skill_files(source):
     skills = sorted((source/'codex/skills').glob('taeguk-*'))
-    ignored = git_ignored(source, skills)
+    ignored = git_ignored(source, skills) if own_repository(source) else set()
     skills = [skill for skill in skills if skill not in ignored]
     if not skills:
         raise ValueError('bundle has no skills')
@@ -225,7 +245,7 @@ def cargo_target_dir(source):
     crate = source/'tools/taeguk-cli'
     try:
         out = subprocess.run(['cargo', 'metadata', '--format-version', '1', '--no-deps', '--manifest-path',
-                              str(crate/'Cargo.toml')], capture_output=True, text=True, check=True)
+                              str(crate/'Cargo.toml')], capture_output=True, text=True, check=True, cwd=crate)
         return Path(json.loads(out.stdout)['target_directory'])
     except (OSError, subprocess.CalledProcessError, ValueError, KeyError):
         return Path(os.environ['CARGO_TARGET_DIR']) if os.environ.get('CARGO_TARGET_DIR') else crate/'target'

@@ -162,6 +162,38 @@ class BundleTest(unittest.TestCase):
             finally:
                 references.chmod(0o755)
 
+    def test_surrounding_repository_ignores_do_not_filter_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            outer = Path(tmp).resolve()
+            subprocess.run(['git', 'init', '-q', str(outer)], check=True, env=install.git_env())
+            (outer/'.gitignore').write_text('*.md\n')
+            source = outer/'vendor/taeguk'
+            for name in ('codex', 'docs/rules', 'installer'):
+                shutil.copytree(SOURCE/name, source/name, ignore=shutil.ignore_patterns('__pycache__'))
+            bundle = {**install.project_bundle('claude', source), **install.rules_bundle(source)}
+        self.assertIn('.claude/skills/taeguk-work-contract/SKILL.md', bundle)
+        self.assertIn('.taeguk/rules/index.md', bundle)
+
+    def test_symlinked_walk_root_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp).resolve()/'source'
+            for name in ('codex', 'docs/rules', 'installer'):
+                shutil.copytree(SOURCE/name, source/name, ignore=shutil.ignore_patterns('__pycache__'))
+            outside = Path(tmp).resolve()/'outside-agents'
+            shutil.move(str(source/'codex/agents'), outside)
+            (source/'codex/agents').symlink_to(outside, target_is_directory=True)
+            with self.assertRaises(ValueError):
+                install.project_bundle('codex', source)
+
+    def test_cargo_metadata_runs_from_the_crate(self):
+        calls = []
+        def fake_run(args, **kwargs):
+            calls.append((args, kwargs))
+            raise OSError('no cargo')
+        with patch.object(install.subprocess, 'run', side_effect=fake_run):
+            install.cargo_target_dir(SOURCE)
+        self.assertEqual(calls[0][1].get('cwd'), SOURCE/'tools/taeguk-cli')
+
     def test_git_ignored_roles_are_not_bundled(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp).resolve()
