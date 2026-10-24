@@ -4,7 +4,9 @@ target/
 __pycache__/
 *.pyc
 .env
-.taeguk/
+.taeguk/*
+!.taeguk/rules/
+!.taeguk/receipts/
 .DS_Store
 
 *.sqlite3

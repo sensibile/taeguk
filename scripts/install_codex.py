@@ -1,19 +1,43 @@
 #!/usr/bin/env python3
 """Install the local Taeguk bundle without modifying unrelated Codex settings."""
 import argparse
+from fnmatch import fnmatchcase
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import stat
 import tempfile
 import tomllib
 
 RECEIPT = '.codex/taeguk-install.json'
+# Paths the legacy bundle may own: each segment is a glob; a trailing '/' owns that directory's subtree,
+# otherwise the pattern names one file.
+LEGACY_OWNED = ('.codex/agents/taeguk_*.toml', '.agents/skills/taeguk-*/', '.local/bin/taeguk')
 
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
+
+
+TEXT_SUFFIXES = {'.md', '.toml', '.py', '.yaml', '.yml', '.json', '.txt'}
+
+
+def owns(patterns, key):
+    parts = PurePosixPath(key).parts
+    for pattern in patterns:
+        head = PurePosixPath(pattern.rstrip('/')).parts
+        size_ok = len(parts) > len(head) if pattern.endswith('/') else len(parts) == len(head)
+        if size_ok and all(fnmatchcase(part, glob) for part, glob in zip(parts, head)):
+            return True
+    return False
+
+
+def unchanged(data, expected, key=''):
+    """Match the recorded hash; text files may also differ by a Git LF-to-CRLF checkout."""
+    if digest(data) == expected:
+        return True
+    return Path(key).suffix in TEXT_SUFFIXES and digest(data.replace(b'\r\n', b'\n')) == expected
 
 
 def payload(source):
@@ -46,15 +70,31 @@ def payload(source):
     return files
 
 
+def is_link(path):
+    """Symlink, or any Windows reparse point (junctions included, also on Python 3.11 without is_junction)."""
+    if path.is_symlink() or getattr(path, 'is_junction', lambda: False)():
+        return True
+    try:
+        attributes = getattr(os.lstat(path), 'st_file_attributes', 0)
+    except OSError:
+        return False
+    return bool(attributes & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400))
+
+
 def safe_target(home, relative):
     rel = Path(relative)
     if rel.is_absolute() or any(p in ('..', '.') for p in rel.parts):
         raise ValueError('unsafe installation path')
     path = home
-    for part in rel.parts:
+    for index, part in enumerate(rel.parts):
         path = path/part
-        if path.is_symlink():
+        if is_link(path):
             raise ValueError(f'symlink target is not supported: {relative}')
+        # Catches any other link type (e.g. a Windows junction on older Python) that leaves the root.
+        if path.exists() and not path.resolve().is_relative_to(home.resolve()):
+            raise ValueError(f'installation path leaves the root: {relative}')
+        if index < len(rel.parts)-1 and path.exists() and not path.is_dir():
+            raise ValueError(f'installation path component is not a directory: {relative}')
     if path.exists() and not path.is_file():
         raise ValueError(f'target is not a file: {relative}')
     return path
@@ -75,27 +115,40 @@ def atomic_write(path, data, mode):
             os.unlink(name)
 
 
-def execute(source, home, mode='dry-run'):
+def prune(home, directory):
+    """Remove empty directories that belong to Taeguk; shared parents such as ~/.local/bin stay."""
+    def owned(path):
+        return any(part.startswith(('taeguk', '.taeguk')) for part in path.relative_to(home).parts)
+    while directory != home and owned(directory) and directory.is_dir() and not any(directory.iterdir()):
+        directory.rmdir()
+        directory = directory.parent
+
+
+def execute(source, home, mode='dry-run', build=None, receipt_path=RECEIPT, meta=None, owned=LEGACY_OWNED):
     if mode not in ('dry-run', 'apply', 'check', 'uninstall'):
         raise ValueError('unsupported mode')
     source, home = source.resolve(), home.resolve()
-    bundle = payload(source)
-    hashes = {key:digest(data) for key,(data,_) in bundle.items()}
-    receipt = safe_target(home, RECEIPT)
+    receipt = safe_target(home, receipt_path)
     previous = {}
     if receipt.exists():
         doc = json.loads(receipt.read_text())
         if not isinstance(doc, dict) or doc.get('schema_version') != 1 or not isinstance(doc.get('files'),dict):
             raise ValueError('invalid installation receipt')
         previous = doc['files']
-        if not set(previous).issubset(bundle):
-            raise ValueError('receipt contains files outside this bundle; use its original installer')
-    for key in bundle:
+        outside = [key for key in previous if not owns(owned, key)]
+        if outside:
+            raise ValueError(f'receipt claims paths outside its component: {outside[0]}')
+    # Uninstall is decided by the receipt alone: no build output or current bundle is needed.
+    bundle = {} if mode == 'uninstall' else (build or payload)(source)
+    hashes = {key:digest(data) for key,(data,_) in bundle.items()}
+    if bundle and not set(previous).issubset(bundle):
+        raise ValueError('receipt contains files outside this bundle; use its original installer')
+    for key in sorted(set(bundle)|set(previous)):
         target = safe_target(home,key)
         if key in previous:
             if not isinstance(previous[key],str) or len(previous[key]) != 64:
                 raise ValueError('invalid receipt hash')
-            if not target.exists() or digest(target.read_bytes()) != previous[key]:
+            if not target.exists() or not unchanged(target.read_bytes(), previous[key], key):
                 raise ValueError(f'managed file is missing or locally modified: {key}')
         elif target.exists():
             raise ValueError(f'unmanaged installation collision: {key}')
@@ -103,7 +156,9 @@ def execute(source, home, mode='dry-run'):
         if previous != hashes:
             raise ValueError('installed bundle does not match current source')
         for key,(_,expected_mode) in bundle.items():
-            if expected_mode & 0o111 and not stat.S_IMODE((home/key).stat().st_mode)&0o111:
+            # Windows keeps no POSIX execute bit; the executable suffix marks the CLI there.
+            # os.access asks whether this user may run it, not whether any class has an execute bit.
+            if os.name != 'nt' and expected_mode & 0o111 and not os.access(home/key, os.X_OK):
                 raise ValueError('installed CLI is not executable')
         return {'status':'verified','files':len(hashes)}
     if mode == 'dry-run':
@@ -112,7 +167,7 @@ def execute(source, home, mode='dry-run'):
         raise ValueError('no managed installation')
     targets = list(bundle) if mode == 'apply' else list(previous)
     snapshot, touched = {}, []
-    for key in targets+[RECEIPT]:
+    for key in targets+[receipt_path]:
         target = safe_target(home,key)
         snapshot[key] = (target.read_bytes(),stat.S_IMODE(target.stat().st_mode)) if target.exists() else None
     try:
@@ -122,12 +177,14 @@ def execute(source, home, mode='dry-run'):
                 atomic_write(home/key,*bundle[key])
             else:
                 (home/key).unlink()
-        touched.append(RECEIPT)
+                prune(home, (home/key).parent)
+        touched.append(receipt_path)
         if mode == 'apply':
-            data=json.dumps({'schema_version':1,'source_root':str(source),'files':hashes},indent=2).encode()+b'\n'
+            data=json.dumps({'schema_version':1,**({'source_root':str(source)} if meta is None else meta),'files':hashes},indent=2).encode()+b'\n'
             atomic_write(receipt,data,0o600)
         else:
             receipt.unlink()
+            prune(home, receipt.parent)
     except Exception:
         for key in reversed(touched):
             saved=snapshot[key]

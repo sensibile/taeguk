@@ -23,12 +23,12 @@ Python 3.11 이상, Rust 2024 edition을 지원하는 toolchain, Elixir와 Erlan
 git clone https://github.com/sensibile/taeguk.git
 cd taeguk
 cargo build --release --manifest-path tools/taeguk-cli/Cargo.toml --locked
-python3 scripts/install_codex.py
-python3 scripts/install_codex.py --apply
-python3 scripts/install_codex.py --check
+python3 scripts/taeguk_install.py user
+python3 scripts/taeguk_install.py user --apply
+python3 scripts/taeguk_install.py user --check
 ```
 
-첫 설치 명령은 dry-run이다. 기존 비관리 파일이나 사용자가 수정한 설치본은 덮어쓰지 않는다. 설치 경로·제거·발견 확인은 [Codex 설치](docs/codex-installation.md)를 참고한다. CLI는 `~/.local/bin/taeguk`에 설치되며 PATH는 자동 수정하지 않는다.
+첫 설치 명령은 dry-run이다. 사용자 레벨에는 Claude Code·Codex용 `taeguk-init` 스킬과 CLI만 설치하고, 각 프로젝트에서 Claude Code는 `/taeguk-init`, Codex는 `$taeguk-init`으로 실행해 역할·스킬·규칙을 프로젝트에 설치한다. 기존 비관리 파일이나 사용자가 수정한 설치본은 덮어쓰지 않는다. 설치 경로·제거·발견 확인은 [에이전트별 설치](docs/installation.md)를 참고한다. 이전에 `install_codex.py`로 전역 설치했다면 같은 문서의 `migrate` 절차를 먼저 수행한다. CLI는 `~/.local/bin/taeguk`에 설치되며 PATH는 자동 수정하지 않는다.
 
 SQLite 상태 API는 저장 경로와 token을 설정한 뒤 시작한다.
 
@@ -72,4 +72,4 @@ TAEGUK_REQUIRE_STATE_TESTS=1 mix test
 
 일반 `mix test`는 DB 설정이 없으면 DB 통합 검사를 skip한다. `TAEGUK_REQUIRE_STATE_TESTS=1`이면 DB 미설정 시 바로 실패하므로 skip이 통과로 보이지 않는다. DB 경로는 `*-test.sqlite3`로 끝나야 한다. GitHub Actions는 규칙 구조, Python, Rust, DB를 포함한 Elixir 검사를 실행한다. 같은 저장소 브랜치에서 `main`으로 향하는 PR에는 Codex 리뷰 결과를 commit status `codex-review`로 남기는 gate가 붙는다. head 커밋에 대한 리뷰가 미해소 지적 없이 끝나 success가 되면 squash auto-merge를 켠다. draft PR과 `no-auto-merge` label이 붙은 PR은 제외한다. fork PR은 gate가 처리하지 않는다. 필수 체크와 머지 조건은 [저장소 운영](docs/repository-operations.md)에 기록한다. 실제 서버를 띄운 HTTP 검증은 CI 범위가 아니다.
 
-첫 self-improvement 실험에서는 로컬 SQLite 오류 분류를 같은 두 사례에서 비교해 분류 오류 1건 → 0건을 확인했다. 사용자 시간 절감, 장기 효과, 여러 프로젝트의 전이·공통화는 아직 확인하지 않았다. 자동 배포, 운영 복구와 프로젝트별 설치 격리는 제공하지 않는다.
+첫 self-improvement 실험에서는 로컬 SQLite 오류 분류를 같은 두 사례에서 비교해 분류 오류 1건 → 0건을 확인했다. 사용자 시간 절감, 장기 효과, 여러 프로젝트의 전이·공통화는 아직 확인하지 않았다. 자동 배포와 운영 복구는 제공하지 않는다. 프로젝트별 설치는 Claude Code와 Codex만 지원한다.
