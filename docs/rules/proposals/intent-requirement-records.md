@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | 규칙 본문 | Taeguk `docs/rules/` | 승인 후 REQ-001 1.1, REQ-007 1.0 |
 | 템플릿 | Taeguk `codex/skills/taeguk-work-contract/references/` | 프로젝트 설치로 시험 프로젝트에 전달 |
-| 의도 기록 | 시험 프로젝트 `intent/` | 제품 단위. acropolis는 하위 저장소 위치 미결정 |
+| 의도 기록 | 시험 프로젝트 `intent/` | 제품 단위. acropolis는 공통 기록을 상위 저장소에, 저장소별 기록을 atheum·akashic·axiom에 둔다(BOSS 확인 결과) |
 | 요구사항 기록 | 시험 프로젝트 `requirements/` | 제품 영역별 파일 |
 
 ## 문제 사례
