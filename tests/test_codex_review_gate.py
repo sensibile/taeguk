@@ -2,6 +2,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import unittest
 
 SOURCE = Path(__file__).resolve().parents[1]
@@ -21,13 +22,16 @@ def state_comment(sha=HEAD, status='completed', unresolved=False, updated='2026-
 
 
 class FakeGitHub:
-    def __init__(self, comments, draft=False, labels=(), head_repo=REPO, auto_merge=None, base='main', later=(), later_comments=None):
+    def __init__(self, comments, draft=False, labels=(), head_repo=REPO, auto_merge=None, base='main', later=(), later_comments=None,
+                 threads=(), more_threads=False, threads_error=False):
         self.pr = {'state': 'open', 'draft': draft, 'html_url': f'https://github.com/{REPO}/pull/9', 'auto_merge': auto_merge,
                    'labels': [{'name': name} for name in labels], 'head': {'sha': HEAD, 'repo': {'full_name': head_repo}},
                    'base': {'ref': base, 'repo': {'default_branch': 'main'}}}
         self.comments = comments
         self.later = list(later)  # PR changes seen by each later fetch
         self.later_comments = later_comments  # comments seen by every fetch after the first
+        self.threads = {'pageInfo': {'hasNextPage': more_threads}, 'nodes': list(threads)}
+        self.threads_error = threads_error
         self.calls = []
 
     def __call__(self, *args):
@@ -40,6 +44,10 @@ class FakeGitHub:
             if len(self.called(args)) > 1 and self.later_comments is not None:
                 return json.dumps([self.later_comments])
             return json.dumps([self.comments])
+        if args[:2] == ('api', 'graphql'):
+            if self.threads_error:
+                raise subprocess.CalledProcessError(1, ['gh', *args], stderr='HTTP 502')
+            return json.dumps({'data': {'repository': {'pullRequest': {'reviewThreads': self.threads}}}})
         return '{}'
 
     def posted_status(self):
@@ -47,6 +55,61 @@ class FakeGitHub:
 
     def called(self, prefix):
         return [call for call in self.calls if call[:len(prefix)] == prefix]
+
+
+def receipt(sha=HEAD[:10], text="Codex Review: Didn't find any major issues. :rocket:", login=gate.CODEX_LOGIN, app=gate.CODEX_APP):
+    return {'user': {'login': login, 'type': 'Bot'}, 'performed_via_github_app': {'slug': app}, 'updated_at': '2026-10-24T02:45:39Z',
+            'body': f'<!-- codex-review-receipt:v1 -->\n\n{text}\n\n**Reviewed commit:** `{sha}`'}
+
+
+def thread(resolved, author='chatgpt-codex-connector'):
+    return {'isResolved': resolved, 'comments': {'nodes': [{'author': {'login': author}}]}}
+
+
+def missing_findings_field():
+    # Only an explicit null was approved; a dropped field is a format change.
+    comment = state_comment(unresolved=None)
+    return {**comment, 'body': comment['body'].replace('"has_unresolved_findings": null, ', '')}
+
+
+class NullFindingsTests(unittest.TestCase):
+    # Codex sometimes completes a clean review with has_unresolved_findings: null
+    # (PR #3, cf3a08f). BOSS approved success only with a clean same-commit
+    # receipt and no unresolved Codex threads; anything else stays pending.
+    def status(self, comments, **github):
+        fake = FakeGitHub(comments, **github)
+        gate.run(REPO, 9, call=fake)
+        return fake.posted_status()[0]['state'], fake
+
+    def test_clean_receipt_and_no_unresolved_codex_threads_succeed(self):
+        state, _ = self.status([state_comment(unresolved=None), receipt()], threads=[thread(True), thread(False, author='sensibile')])
+        self.assertEqual(state, 'success')
+
+    def test_missing_or_weak_evidence_stays_pending(self):
+        cases = {'no receipt': ([state_comment(unresolved=None)], {}),
+                 'receipt for other commit': ([state_comment(unresolved=None), receipt(sha='0' * 10)], {}),
+                 'receipt with suggestions': ([state_comment(unresolved=None), receipt(text='Here are some automated review suggestions for this pull request.')], {}),
+                 'receipt not by codex': ([state_comment(unresolved=None), receipt(login='mallory')], {}),
+                 'receipt from other app': ([state_comment(unresolved=None), receipt(app='other-app')], {}),
+                 'short commit prefix': ([state_comment(unresolved=None), receipt(sha=HEAD[:4])], {}),
+                 'unresolved codex thread': ([state_comment(unresolved=None), receipt()], {'threads': [thread(False)]}),
+                 'threads not fully listed': ([state_comment(unresolved=None), receipt()], {'more_threads': True}),
+                 'thread lookup failed': ([state_comment(unresolved=None), receipt()], {'threads_error': True}),
+                 'finding field missing': ([missing_findings_field(), receipt()], {}),
+                 'receipt text echoed in a reply': ([state_comment(unresolved=None), {**receipt(), 'body': "Sure, here is what you asked:\n> <!-- codex-review-receipt:v1 -->\n> Codex Review: Didn't find any major issues\n> **Reviewed commit:** `" + HEAD[:10] + "`"}], {})}
+        for name, (comments, github) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(self.status(comments, **github)[0], 'pending')
+
+    def test_newest_receipt_for_the_head_decides(self):
+        older = {**receipt(), 'updated_at': '2026-10-24T01:00:00Z'}
+        newer = {**receipt(text='Here are some automated review suggestions for this pull request.'), 'updated_at': '2026-10-24T03:00:00Z'}
+        self.assertEqual(self.status([state_comment(unresolved=None), older, newer])[0], 'pending')
+
+    def test_explicit_false_does_not_query_threads(self):
+        state, fake = self.status([state_comment()])
+        self.assertEqual(state, 'success')
+        self.assertEqual(fake.called(('api', 'graphql')), [])
 
 
 class EvaluateTests(unittest.TestCase):
