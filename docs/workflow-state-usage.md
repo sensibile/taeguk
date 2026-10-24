@@ -40,7 +40,7 @@ create 파일은 아래 형태다. UUID와 참조는 실제 값으로 교체한�
   "command_id": "22222222-2222-4222-8222-222222222222",
   "actor": "designer",
   "purpose": "중복 검증을 줄이면서 완료 근거를 보존한다",
-  "requirement_ref": "docs/requirements.md#R1",
+  "requirement_ref": "example:requirements/area.md#r-001@0123456789abcdef0123456789abcdef01234567",
   "rule_ref": "rules:v1",
   "design_ref": "design:commit",
   "plan_ref": "plan:commit",
