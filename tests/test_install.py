@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import os
 import stat
 import tempfile
 import unittest
@@ -121,6 +122,7 @@ class InstallerTest(unittest.TestCase):
             self.assertTrue(install.is_link(path))
         self.assertFalse(install.is_link(path))
 
+    @unittest.skipIf(hasattr(os, 'geteuid') and os.geteuid() == 0, 'root may execute without the owner execute bit')
     def test_execute_bit_must_apply_to_the_current_user(self):
         install.execute(SOURCE, self.home, 'apply')
         (self.home/'.local/bin/taeguk').chmod(0o611)
