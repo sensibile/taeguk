@@ -15,8 +15,6 @@ import tomllib
 import install_codex as engine
 
 AGENTS = ('codex', 'claude')
-MODELS = {'gpt-6-astra': 'opus', 'gpt-6-sol': 'opus', 'gpt-6-luna': 'sonnet'}
-EFFORTS = {'low', 'medium', 'high'}
 SKILL_REF = re.compile(r'\$(taeguk-[a-z0-9-]+)')
 EXE = sysconfig.get_config_var('EXE') or ''
 CLI = '.local/bin/taeguk' + EXE
@@ -175,14 +173,10 @@ def skill_files(source):
 def claude_agent(role):
     name = role['name'].replace('_', '-')
     lines = ['---', f'name: {name}', f'description: {json.dumps(role["description"])}']
-    if 'model' in role:
-        if role['model'] not in MODELS:
-            raise ValueError(f'unmapped agent model: {role["model"]}')
-        lines.append(f'model: {MODELS[role["model"]]}')
-    if 'model_reasoning_effort' in role:
-        if role['model_reasoning_effort'] not in EFFORTS:
-            raise ValueError(f'unsupported reasoning effort: {role["model_reasoning_effort"]}')
-        lines.append(f'effort: {role["model_reasoning_effort"]}')
+    # Roles inherit the session model; a pinned role would silently diverge between Codex and Claude Code.
+    pinned = sorted({'model', 'model_reasoning_effort'} & role.keys())
+    if pinned:
+        raise ValueError(f'agent model pinning is not supported: {", ".join(pinned)}')
     body = SKILL_REF.sub(r'/\1', role['developer_instructions'].strip())
     return name, ('\n'.join(lines + ['---', '', body]) + '\n').encode()
 

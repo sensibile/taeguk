@@ -22,7 +22,7 @@
 
 ## Claude 변환
 
-`agents/openai.yaml`을 제외하고 Markdown의 `$taeguk-*` 호출을 `/taeguk-*`로 바꾼다. 역할 TOML은 `name`의 `_`를 `-`로, `developer_instructions`를 본문으로 옮긴다. 모델은 `gpt-6-astra`→`opus`, `gpt-6-luna`→`sonnet`(2026-10-23 BOSS 결정), verifier의 `gpt-6-sol`→`opus`(같은 날 BOSS 확인)다. 매핑에 없는 모델은 설치를 거부한다. `model_reasoning_effort`는 `effort`로 옮긴다. Codex 설치본은 원본 그대로 복사한다.
+`agents/openai.yaml`을 제외하고 Markdown의 `$taeguk-*` 호출을 `/taeguk-*`로 바꾼다. 역할 TOML은 `name`의 `_`를 `-`로, `developer_instructions`를 본문으로 옮긴다. 역할은 모델과 effort를 지정하지 않고 실행 세션의 설정을 상속한다(2026-10-25 BOSS 결정으로 2026-10-23의 `opus`·`sonnet` 매핑을 폐기). 역할 TOML에 `model`이나 `model_reasoning_effort`가 있으면 설치를 거부한다. Codex 설치본은 원본 그대로 복사한다.
 
 ## 명령
 

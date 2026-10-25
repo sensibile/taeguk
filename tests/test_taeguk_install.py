@@ -36,16 +36,14 @@ class BundleTest(unittest.TestCase):
         bundle = install.project_bundle('claude', SOURCE)
         self.assertFalse([k for k in bundle if k.endswith('/agents/openai.yaml')])
         self.assertFalse([k for k, (d, _) in bundle.items() if k.endswith('.md') and b'$taeguk-' in d])
-        head = bundle['.claude/agents/taeguk-designer.md'][0].decode().split('---')[1]
-        self.assertIn('model: opus\n', head)
-        self.assertIn('effort: medium\n', head)
-        self.assertIn('model: sonnet\n', bundle['.claude/agents/taeguk-implementer.md'][0].decode())
-        self.assertNotIn('model:', bundle['.claude/agents/taeguk-coordinator.md'][0].decode().split('---')[1])
-        verifier = bundle['.claude/agents/taeguk-verifier.md'][0].decode().split('---')[1]
-        self.assertIn('model: opus\n', verifier)
-        self.assertIn('effort: medium\n', verifier)
-        with self.assertRaises(ValueError):
-            install.claude_agent({'name': 'taeguk_x', 'description': 'd', 'developer_instructions': 'i', 'model': 'x'})
+        for key, (data, _) in bundle.items():
+            if key.startswith('.claude/agents/'):
+                head = data.decode().split('---')[1]
+                self.assertNotIn('model:', head, key)
+                self.assertNotIn('effort:', head, key)
+        for pinned in ({'model': 'x'}, {'model_reasoning_effort': 'low'}):
+            with self.assertRaises(ValueError):
+                install.claude_agent({'name': 'taeguk_x', 'description': 'd', 'developer_instructions': 'i', **pinned})
 
     def test_codex_project_bundle_is_unchanged_source(self):
         bundle = install.project_bundle('codex', SOURCE)
