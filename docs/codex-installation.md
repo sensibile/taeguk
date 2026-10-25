@@ -4,7 +4,7 @@
 
 ## 공식 형식과 로컬 구성
 
-2026-10-11 공식 문서에서 개인 에이전트 TOML은 `~/.codex/agents`, 개인 스킬은 `~/.agents/skills`의 발견 경로를 확인했다. 에이전트의 `name`, `description`, `developer_instructions`, `model`, `model_reasoning_effort`와 스킬의 `name`, `description`을 사용한다. 모델은 명시된 역할에만 지정하고, 다른 역할과 전역 Codex 설정은 변경하지 않는다.
+2026-10-11 공식 문서에서 개인 에이전트 TOML은 `~/.codex/agents`, 개인 스킬은 `~/.agents/skills`의 발견 경로를 확인했다. 에이전트의 `name`, `description`, `developer_instructions`와 스킬의 `name`, `description`을 사용한다. 역할에 `model`, `model_reasoning_effort`를 지정하지 않으므로 모든 역할이 실행 환경의 모델을 상속한다. 전역 Codex 설정은 변경하지 않는다.
 
 - [Custom agents](https://learn.chatgpt.com/docs/agent-configuration/subagents)
 - [Build skills](https://learn.chatgpt.com/docs/build-skills)

@@ -15,6 +15,17 @@ NO_AUTO_MERGE_LABEL = 'no-auto-merge'
 # leave the gate pending, never successful.
 SUMMARY_MARKERS = ('codex-pull-request-review-summary', 'codex-review-state')
 STATE = re.compile(r'<!--\s*codex-review-state:v1\s+(\{.*?\})\s*-->', re.DOTALL)
+# A receipt starts with its marker; the clean verdict starts its own line, so
+# text Codex merely quotes in a reply cannot pass as a receipt.
+RECEIPT_MARKER = '<!-- codex-review-receipt:v1 -->'
+RECEIPT_COMMIT = re.compile(r'^\*\*Reviewed commit:\*\*\s*`([0-9a-f]{7,40})`', re.MULTILINE)
+CLEAN_RECEIPT = re.compile(r"^Codex Review: Didn't find any major issues", re.MULTILINE)
+CODEX_THREAD_AUTHOR = 'chatgpt-codex-connector'  # GraphQL drops the [bot] suffix
+THREADS = '''query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+    reviewThreads(first: 100) { pageInfo { hasNextPage } nodes { isResolved comments(first: 1) { nodes { author { login } } } } }
+  } }
+}'''
 
 
 def gh(*args):
@@ -67,6 +78,43 @@ def evaluate(state, head_sha):
     return 'pending', 'Codex review finding state is unknown'
 
 
+def null_findings(state, head_sha):
+    review = (state or {}).get('code_review')
+    return (isinstance(review, dict) and review.get('commit_sha') == head_sha
+            and review.get('status') == 'completed'
+            # Only an explicit null was approved; a missing field is a format change.
+            and 'has_unresolved_findings' in review and review['has_unresolved_findings'] is None)
+
+
+def clean_receipt(comments, head_sha):
+    """True when Codex's newest receipt for this head reports no major issues."""
+    receipts = []
+    for comment in comments:
+        body = comment.get('body') or ''
+        match = RECEIPT_COMMIT.search(body)
+        if is_codex(comment) and body.lstrip().startswith(RECEIPT_MARKER) and match and head_sha.startswith(match.group(1)):
+            receipts.append(comment)
+    if not receipts:
+        return False
+    newest = max(receipts, key=lambda comment: comment.get('updated_at') or '')
+    return bool(CLEAN_RECEIPT.search(newest.get('body') or ''))
+
+
+def unresolved_codex_threads(repo, number, call):
+    """Count unresolved review threads Codex started; None if not fully listed."""
+    owner, name = repo.split('/', 1)
+    try:
+        data = json.loads(call('api', 'graphql', '-f', f'query={THREADS}', '-f', f'owner={owner}', '-f', f'name={name}', '-F', f'number={number}'))
+        threads = data['data']['repository']['pullRequest']['reviewThreads']
+        if threads['pageInfo']['hasNextPage']:
+            return None
+        return sum(1 for thread in threads['nodes'] if not thread['isResolved']
+                   and any((comment.get('author') or {}).get('login') == CODEX_THREAD_AUTHOR for comment in thread['comments']['nodes']))
+    except (subprocess.CalledProcessError, ValueError, KeyError, TypeError):
+        # Unknown, not clean: the caller then publishes pending over any older success.
+        return None
+
+
 def request_marker(head_sha):
     return f'<!-- codex-review-gate-request:{head_sha} -->'
 
@@ -105,6 +153,10 @@ def judge(repo, number, head, call):
     state = codex_state(comments)
     if invalidated(comments, head):
         return state, comments, 'pending', 'Codex review evidence was invalidated; waiting for a new review'
+    if null_findings(state, head) and clean_receipt(comments, head) and unresolved_codex_threads(repo, number, call) == 0:
+        # Approved by BOSS (2026-10-24): a completed review with unknown finding
+        # state counts only with a clean same-commit receipt and no open Codex thread.
+        return state, comments, 'success', 'Codex review completed; receipt reports no major issues'
     return (state, comments, *evaluate(state, head))
 
 
