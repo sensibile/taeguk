@@ -6,7 +6,7 @@
 
 흐름 역할은 `taeguk_coordinator` → `taeguk_designer` + `taeguk_verification_builder`(설계 중 검증 계획·도구 범위) → `taeguk_verifier`(계획 검토·확정) → `taeguk_implementer`와 필요한 검증 도구 제작 → `taeguk_tool_verifier`와 `taeguk_llm_reviewer` → 수정 및 verifier가 정한 재검증이다. 구현자와 검토자는 같은 버전의 계획과 정확한 산출물 버전을 사용한다. `taeguk_structure_reviewer`, `taeguk_outcome_observer`, `taeguk_rule_reviewer`는 해당 작업에서 계속 선택해 사용한다. 구성이 역할 생성을 자동 예약하거나 위임하는 것은 아니다.
 
-Designer는 `gpt-6-astra` medium, verifier는 `gpt-6-sol` medium, implementer와 tool verifier는 `gpt-6-luna`(effort 미지정), LLM reviewer는 `gpt-6-astra` low를 사용한다. 나머지 역할과 전역 Codex 설정은 기존 설정을 상속한다. 역할 설정은 모델 지정이며 실제 호출이나 권한 강제를 증명하지 않는다.
+역할 TOML은 `model`과 `model_reasoning_effort`를 지정하지 않는다. 모든 역할은 실행 환경의 모델과 전역 Codex 설정을 상속한다. 2026-10-25 BOSS 지시로 역할별 고정 배치를 해제했다. 고정 배치의 관측 이점이 일정하지 않았기 때문이다. 역할 정의는 실제 호출이나 권한 강제를 증명하지 않는다.
 
 검증 계획은 원 요구와 승인된 oracle을 각 검사, 방법(도구·LLM·혼합), 근거, 범위, 누락, 상태에 연결한다. 도구 관측, 의미 판단, 재현이 필요한 추론을 구분한다. 계획 참조와 CLI 증거 연결 검사는 기준의 진실성이나 전체 완료를 판정하지 않는다.
 
