@@ -196,6 +196,12 @@ class RecordFailureTests(unittest.TestCase):
         gate.run(REPO, 9, call=fake)
         self.assertEqual(fake.posted_status()[0]['state'], 'success')
 
+    def test_failed_invalidation_in_the_same_second_counts(self):
+        failed = {**self.record_failed, 'created_at': '2026-10-23T06:00:00Z'}
+        fake = FakeGitHub([state_comment(updated='2026-10-23T06:00:00Z')], current=failed)
+        gate.run(REPO, 9, call=fake)
+        self.assertEqual(fake.posted_status()[0]['state'], 'pending')
+
     def test_failed_invalidation_without_a_time_counts(self):
         fake = FakeGitHub([state_comment(updated='2026-10-23T06:00:00Z')], current=self.record_failed)
         gate.run(REPO, 9, call=fake)

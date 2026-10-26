@@ -125,16 +125,17 @@ def invalidation_marker(head_sha):
 
 
 def invalidated(comments, statuses, head_sha):
-    """True when the gate voided the review evidence for this head after Codex last updated it."""
+    """True unless Codex updated its summary strictly after the gate voided the evidence for this head."""
     summary = codex_summary(comments)
     reviewed_at = (summary or {}).get('updated_at') or ''
     marker = invalidation_marker(head_sha)
     if any((comment.get('user') or {}).get('login') == ACTIONS_LOGIN and marker in (comment.get('body') or '')
-           and (comment.get('created_at') or '') > reviewed_at for comment in comments):
+           and (comment.get('created_at') or '') >= reviewed_at for comment in comments):
         return True
-    # A status without a readable time counts: an unprovable order must not restore success.
+    # Timestamps have one-second resolution, so a tie counts as voided, and so does a
+    # status without a readable time: an unprovable order must not restore success.
     return any(status.get('context') == CONTEXT and (status.get('creator') or {}).get('login') == ACTIONS_LOGIN
-               and status.get('description') == RECORD_FAILED and (status.get('created_at') or '\uffff') > reviewed_at
+               and status.get('description') == RECORD_FAILED and (status.get('created_at') or '\uffff') >= reviewed_at
                for status in statuses)
 
 
