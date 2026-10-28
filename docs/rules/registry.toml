@@ -100,14 +100,6 @@ enforcement = "guidance"
 approval = "approvals.md#approval-2026-10-11"
 
 [[rules]]
-id = "GOV-005"
-version = "0.1"
-status = "proposed"
-scope = "Taeguk and explicitly assigned workflows"
-document = "proposals/index.md#gov-005"
-enforcement = "guidance"
-
-[[rules]]
 id = "VER-005"
 version = "1.0"
 status = "approved"
@@ -115,3 +107,11 @@ scope = "Taeguk and explicitly assigned workflows"
 document = "verification.md#ver-005"
 enforcement = "guidance"
 approval = "approvals.md#approval-2026-10-28"
+
+[[rules]]
+id = "GOV-005"
+version = "0.1"
+status = "proposed"
+scope = "Taeguk and explicitly assigned workflows"
+document = "proposals/index.md#gov-005"
+enforcement = "guidance"
