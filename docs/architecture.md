@@ -4,7 +4,9 @@
 
 에이전트는 맥락·대안·다음 행동, 스킬은 반복 절차, 도구는 계산·실행 결과·상태 조회를 맡는다. CLI는 계산·증거 대조와 로컬 상태 API 요청을 수행한다. SQLite API는 작업 revision과 근거·실행 소유권을 저장한다. 프로세스의 실제 실행·종료나 모델 호출을 관리하는 workflow engine은 구현하지 않았다.
 
-흐름 역할은 `taeguk_coordinator` → `taeguk_designer` + `taeguk_verification_builder`(설계 중 검증 계획·도구 범위) → `taeguk_verifier`(계획 검토·확정) → `taeguk_implementer`와 필요한 검증 도구 제작 → `taeguk_tool_verifier`와 `taeguk_llm_reviewer` → 수정 및 verifier가 정한 재검증이다. 구현자와 검토자는 같은 버전의 계획과 정확한 산출물 버전을 사용한다. `taeguk_structure_reviewer`, `taeguk_outcome_observer`, `taeguk_rule_reviewer`, `taeguk_codex_cross_reviewer`, `taeguk_codex_security_reviewer`는 해당 작업에서 계속 선택해 사용한다. 구성이 역할 생성을 자동 예약하거나 위임하는 것은 아니다.
+작업은 Phase 0 아이디어, Phase 1 계획 강화(반복), Phase 1.5 구현, Phase 2 검증·다각화 리뷰·수정(반복), Phase 3 코드 정리·구조 개선(반복), Phase 4 전달·효과 관측으로 진행한다. 단계별 역할, 종료·상향 조건, 되돌아가기는 설치되는 [작업 단계](../codex/skills/taeguk-work-contract/references/phases.md)에 있다. 2026-10-28 BOSS가 확인했다.
+
+구현자와 검토자는 같은 버전의 계획과 정확한 산출물 버전을 사용한다. 단계 표의 역할은 해당 작업에서 필요한 것만 선택한다. 문서만 바뀐 변경의 보안 리뷰처럼 대상이 없으면 NOT_APPLICABLE로 남긴다. 구성이 역할 생성을 자동 예약하거나 위임하는 것은 아니다.
 
 역할 TOML은 `model`과 `model_reasoning_effort`를 지정하지 않는다. 모든 역할은 실행 환경의 모델과 전역 Codex 설정을 상속한다. 2026-10-25 BOSS 지시로 역할별 고정 배치를 해제했다. 고정 배치의 관측 이점이 일정하지 않았기 때문이다. 역할 정의는 실제 호출이나 권한 강제를 증명하지 않는다.
 
