@@ -106,3 +106,11 @@ status = "proposed"
 scope = "Taeguk and explicitly assigned workflows"
 document = "proposals/index.md#gov-005"
 enforcement = "guidance"
+
+[[rules]]
+id = "VER-005"
+version = "0.1"
+status = "proposed"
+scope = "Taeguk and explicitly assigned workflows"
+document = "proposals/index.md#ver-005"
+enforcement = "guidance"
