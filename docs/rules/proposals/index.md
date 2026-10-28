@@ -8,6 +8,10 @@ Taeguk 저장소의 [기존 규칙 목록](https://github.com/sensibile/taeguk/b
 
 새 개정안은 Taeguk 저장소에서 작성하며 현재 ID·버전, 문제 사례, 변경 전후 판정, 정상·실패 사례 검사, 비용·권한 영향, 전환·되돌림 조건을 기록한다. BOSS 확인 전에는 현행 기준을 유지한다. 스킬: taeguk-propose-rule-change.
 
+## archon 시험 프로젝트 추가
+
+제안 상태다. [archon 시험 프로젝트 추가 개정안](archon-pilot.md)은 REQ-001과 REQ-007의 적용 대상에 archon을 넣는다. BOSS 확인 전에는 현행 적용 대상을 유지한다.
+
 ## VER-005
 
 2026-10-28 승인되어 VER-005 1.0으로 현행 규칙에 반영했다. [리뷰 반복 종료·상향 기준 개정안](review-loop-exit.md)은 개정 근거로 보존한다.
