@@ -1,0 +1,4 @@
+interface:
+  display_name: "Taeguk test-gap"
+  short_description: "Coverage-located test gaps, judged against requirements, report-only"
+  default_prompt: "Use $taeguk-test-gap for a report-only run."

@@ -42,6 +42,16 @@ GitHub의 Codex 자동 리뷰는 저장소가 아니라 Codex 설정에서 켜�
 - 구조 개선 후보는 근거와 대안을 붙여 BOSS에게 보고만 한다. 승인 뒤 일반 작업으로 Phase 0부터 시작한다. 시그널 측정 방법은 [구조 개선 시그널 연구](research/structure-signal.md)에서 다룬다.
 - 범위는 이 저장소뿐이다. 시험 프로젝트에는 프로젝트별 BOSS 승인 없이 적용하지 않는다.
 
+## 테스트 빈 곳 점검
+
+2026-10-29 BOSS가 "테스트 커버리지를 목표로 두면 이상한 짓을 할게 뻔하니... 그걸 측정도구 삼아서 테스트가 비는 부분을 찾고 채우는 방향으로"라고 했다. 운영 범위로 수동 실행과 보고만 하는 모드를 골랐다.
+
+- 절차는 [`taeguk-test-gap`](../codex/skills/taeguk-test-gap/SKILL.md) 스킬이다. BOSS가 시작할 때만 돈다. 보고는 main checkout의 `.taeguk/test-gap/`(Git 무시 대상)에 남긴다. 테스트·제품 코드 변경을 커밋하지 않고 브랜치와 PR도 만들지 않는다. 상위 제안이 실제 빈 곳인지 확인하는 결함 주입만 측정 worktree에서 임시로 하고 원복한다.
+- 커버리지 수치는 결과나 목표로 보고하지 않는다. 빈 곳마다 요구사항 연결 여부를 분류하고, 테스트 제안에는 기대값의 출처와 그 테스트를 실패시킬 결함 주입을 붙인다.
+- 측정 도구는 Python `coverage`(`.taeguk/test-gap/venv`에 격리 설치), Rust `cargo-llvm-cov`(`llvm-tools-preview` 필요), Elixir 내장 `mix test --cover`다. 저장소 의존성에는 넣지 않았다.
+- 테스트 작성, PR과 자동 머지, 예약 실행으로 넓히려면 BOSS 확인이 필요하다. "커버리지는 측정 도구이지 목표가 아니다"를 규칙으로 고정할지는 [커버리지 측정 도구 개정안](rules/proposals/coverage-as-instrument.md)에서 확인을 기다린다.
+- 범위는 이 저장소뿐이다.
+
 ## GitHub 설정
 
 2026-10-23에 적용하고 API 조회로 반영을 확인했다.
