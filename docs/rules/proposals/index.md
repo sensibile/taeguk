@@ -10,7 +10,7 @@ Taeguk 저장소의 [기존 규칙 목록](https://github.com/sensibile/taeguk/b
 
 ## archon 시험 프로젝트 추가
 
-제안 상태다. [archon 시험 프로젝트 추가 개정안](archon-pilot.md)은 REQ-001과 REQ-007의 적용 대상에 archon을 넣는다. BOSS 확인 전에는 현행 적용 대상을 유지한다.
+2026-10-29 승인되어 REQ-001 1.2와 REQ-007 1.1로 현행 규칙에 반영했다. [archon 시험 프로젝트 추가 개정안](archon-pilot.md)은 개정 근거로 보존한다.
 
 ## VER-005
 
