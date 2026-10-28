@@ -12,7 +12,7 @@
 
 ## 로컬 Codex 검토
 
-`taeguk_codex_cross_reviewer`와 `taeguk_codex_security_reviewer`는 [taeguk-codex-local-review](../codex/skills/taeguk-codex-local-review/SKILL.md) 절차로 로컬 `codex exec review`를 read-only sandbox에서 정확한 변경 범위에 실행한다. 2026-10-28 BOSS 지시로 이 CLI 호출은 `gpt-6-astra`, `medium` effort를 명령 인수로 지정한다. 역할 TOML의 모델 비고정 원칙은 그대로다. 교차 검토는 다른 에이전트가 구현한 변경의 정확성·요구 불일치를, 보안 검토는 실행 동작에 영향을 주는 변경의 취약점과 악용 시나리오를 본다. Codex 출력은 LLM 판단으로 분류하고 검토 역할이 각 지적을 재현·타당·기각·재현 필요로 평가한다. 지적 없음은 PASS가 아니다. PR의 `codex-review` gate와는 별개이며 gate를 대신하지 않는다.
+`taeguk_codex_cross_reviewer`와 `taeguk_codex_security_reviewer`는 [taeguk-codex-local-review](../codex/skills/taeguk-codex-local-review/SKILL.md) 절차로 로컬 `codex exec review`를 read-only sandbox에서 정확한 변경 범위에 실행한다. 2026-10-28 BOSS 지시로 이 CLI 호출은 `gpt-6-astra`, `medium` effort를 명령 인수로 지정한다. 역할 TOML의 모델 비고정 원칙은 그대로다. 교차 검토는 다른 에이전트가 구현한 변경의 정확성·요구 불일치를, 보안 검토는 실행 동작에 영향을 주는 변경의 취약점과 악용 시나리오를 본다. Codex 출력은 LLM 판단으로 분류하고 검토 역할이 각 지적을 재현·타당·기각·재현 필요로 평가한다. 지적 없음은 PASS가 아니다. 2026-10-28 GitHub의 `codex-review` gate를 없앤 뒤로는 이 로컬 리뷰가 PR 리뷰 단계다. 절차는 [저장소 운영](repository-operations.md)에 있다.
 
 CLI 실행은 diff와 저장소 맥락을 OpenAI로 보낸다. 2026-10-28 BOSS가 Claude Code 세션에서 이 전송을 "태극 저장소 작업에선 상시 허용"으로 선택했다. AGENTS.md상 실행 권한 변경은 BOSS 확인 사항이며 이 선택이 그 확인이다. 범위는 `sensibile/taeguk` 작업뿐이고, 시험 프로젝트를 포함한 다른 저장소는 작업별 BOSS 승인이 없으면 NOT_RUN으로 남긴다. 전송 전 diff에 비밀값이 있으면 실행하지 않는다.
 
