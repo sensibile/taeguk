@@ -220,11 +220,9 @@ pub(crate) fn normalize(path: &Path) -> PathBuf {
     out
 }
 
-/// Largest source file an analyzer reads.
-const MAX_SOURCE: u64 = 8 << 20;
-/// Reads a source file that resolves to a regular file inside ROOT (canonical), within MAX_SOURCE.
-/// Returns its canonical path with the text, so links cannot pull in files outside ROOT or devices.
-pub(crate) fn read_source(root: &Path, path: &Path) -> Result<(PathBuf, String), String> {
+/// Checks without opening (a FIFO would block on open) that `path` resolves to a regular file
+/// inside ROOT (canonical) within MAX_SOURCE, and returns the resolved path.
+pub(crate) fn check_source(root: &Path, path: &Path) -> Result<PathBuf, String> {
     let shown = || relative(root, path).unwrap_or_else(|| path.display().to_string());
     let real = path
         .canonicalize()
@@ -236,6 +234,18 @@ pub(crate) fn read_source(root: &Path, path: &Path) -> Result<(PathBuf, String),
     if !meta.is_file() {
         return Err(format!("{} is not a regular file", shown()));
     }
+    if meta.len() > MAX_SOURCE {
+        return Err(format!("{} is larger than {MAX_SOURCE} bytes", shown()));
+    }
+    Ok(real)
+}
+/// Largest source file an analyzer reads.
+const MAX_SOURCE: u64 = 8 << 20;
+/// Reads a source file that resolves to a regular file inside ROOT (canonical), within MAX_SOURCE.
+/// Returns its canonical path with the text, so links cannot pull in files outside ROOT or devices.
+pub(crate) fn read_source(root: &Path, path: &Path) -> Result<(PathBuf, String), String> {
+    let shown = || relative(root, path).unwrap_or_else(|| path.display().to_string());
+    let real = check_source(root, path)?;
     let mut text = String::new();
     fs::File::open(&real)
         .and_then(|f| f.take(MAX_SOURCE + 1).read_to_string(&mut text))
@@ -309,7 +319,7 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
     for lang in &langs {
         let (a, result) = match lang.as_str() {
             "elixir" => elixir::analyze(&root, &files),
-            "go" => go::analyze(&root),
+            "go" => go::analyze(&root, &files),
             "python" => python::analyze(&root, &files),
             "rust" => rust::analyze(&root),
             other => return Err(format!("unsupported language: {other}")),

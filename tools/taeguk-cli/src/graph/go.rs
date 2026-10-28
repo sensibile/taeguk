@@ -1,4 +1,4 @@
-use super::{Analyzer, Edge, Gap, Node, Partial, exec, relative, tool_version};
+use super::{Analyzer, Edge, Gap, Node, Partial, check_source, exec, relative, tool_version};
 use serde::Deserialize;
 use std::{collections::BTreeSet, path::Path, process::Command};
 
@@ -34,14 +34,30 @@ struct PackageError {
 
 const COMMAND: [&str; 7] = ["go", "list", "-e", "-deps", "-test", "-json", "./..."];
 
-pub(super) fn analyze(root: &Path) -> (Analyzer, Result<Partial, String>) {
+pub(super) fn analyze(root: &Path, tracked: &[String]) -> (Analyzer, Result<Partial, String>) {
     let mut a = Analyzer::new("go", "go", &COMMAND);
     a.version = tool_version(root, "go");
-    let result = run(root, &mut a);
+    let result = run(root, tracked, &mut a);
     (a, result)
 }
 
-fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
+/// Files go reads for the module: sources and module files.
+/// go skips `testdata` and `_`/`.`-prefixed directories, so files there are not checked.
+fn is_go_input(f: &str) -> bool {
+    let mut parts: Vec<&str> = f.split('/').collect();
+    let name = parts.pop().unwrap_or(f);
+    let skipped = parts
+        .iter()
+        .any(|d| *d == "testdata" || d.starts_with('_') || d.starts_with('.'));
+    !skipped
+        && (name.ends_with(".go") || ["go.mod", "go.sum", "go.work", "go.work.sum"].contains(&name))
+}
+
+fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, String> {
+    // go reads these itself, so links out of ROOT and special files are refused before it runs.
+    for f in tracked.iter().filter(|f| is_go_input(f)) {
+        check_source(root, &root.join(f))?;
+    }
     // -test also loads test-only imports, so a missing one fails like any other import.
     // No network or toolchain download: missing modules must fail instead of being fetched.
     // GOPRIVATE/GONOPROXY would otherwise send matching modules straight to their VCS hosts.
@@ -98,6 +114,19 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
                 format!("{rel_dir}/{f}")
             }
         };
+        // Untracked files in a package directory are read by go too; they must also stay inside ROOT.
+        for f in [
+            &p.go_files,
+            &p.cgo_files,
+            &p.test_go_files,
+            &p.x_test_go_files,
+            &p.ignored_go_files,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            check_source(root, &dir.join(f))?;
+        }
         let mut files: Vec<String> = [
             &p.go_files,
             &p.cgo_files,

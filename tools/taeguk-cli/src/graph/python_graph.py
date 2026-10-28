@@ -17,7 +17,10 @@ def read_source(root, path):
     real = os.path.realpath(os.path.join(root, path))
     if os.path.commonpath([root, real]) != root:
         raise ValueError("resolves outside ROOT")
-    with open(real, "rb") as f:
+    # Check before opening: opening a FIFO blocks until a writer appears.
+    if not stat.S_ISREG(os.stat(real).st_mode):
+        raise ValueError("not a regular file")
+    with open(os.open(real, os.O_RDONLY | os.O_NONBLOCK), "rb") as f:
         if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
             raise ValueError("not a regular file")
         data = f.read(MAX_SOURCE + 1)
@@ -107,7 +110,11 @@ def eval_path(node, path, env):
     elif isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute) and node.value.attr == "parents":
         index = node.slice
         if isinstance(index, ast.Constant) and isinstance(index.value, int):
-            return norm(dir_value(node.value.value, path, env) + [".."] * (index.value + 1))
+            base = dir_value(node.value.value, path, env)
+            # Check the index first so a huge literal cannot allocate a huge list.
+            if not 0 <= index.value < len(base):
+                raise Unresolved(f"parents[{index.value}] leaves ROOT")
+            return base[: len(base) - index.value - 1]
     elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
         right = eval_path(node.right, path, env)
         if isinstance(right, tuple):
@@ -134,6 +141,11 @@ def eval_path(node, path, env):
     raise Unresolved(ast.unparse(node))
 
 
+def is_sys_path(node):
+    return (isinstance(node, ast.Attribute) and node.attr == "path"
+            and isinstance(node.value, ast.Name) and node.value.id == "sys")
+
+
 def sys_path_changes(tree, path):
     """Directories added to sys.path, evaluated from module-level path variables."""
     env, front, back, unresolved = {}, [], [], []
@@ -146,11 +158,19 @@ def sys_path_changes(tree, path):
             except Unresolved:
                 pass
     for node in ast.walk(tree):
+        # Assignments to sys.path or its slices, and `from sys import path`, are not evaluated.
+        targets = []
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+            targets = [node.target]
+        if any(is_sys_path(t.value if isinstance(t, ast.Subscript) else t) for t in targets):
+            unresolved.append(f"line {node.lineno}: sys.path assignment")
+        if isinstance(node, ast.ImportFrom) and node.module == "sys" and any(a.name == "path" for a in node.names):
+            unresolved.append(f"line {node.lineno}: from sys import path")
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
             continue
-        target = node.func.value
-        if not (isinstance(target, ast.Attribute) and target.attr == "path"
-                and isinstance(target.value, ast.Name) and target.value.id == "sys"):
+        if not is_sys_path(node.func.value):
             continue
         method, args = node.func.attr, node.args
         arg = args[1] if method == "insert" and len(args) == 2 else args[0] if method == "append" and args else None

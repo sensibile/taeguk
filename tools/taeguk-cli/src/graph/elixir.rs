@@ -23,7 +23,7 @@ pub(super) fn analyze(root: &Path, tracked: &[String]) -> (Analyzer, Result<Part
 }
 
 fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, String> {
-    let mix = fs::read_to_string(root.join("mix.exs")).map_err(|e| format!("mix.exs: {e}"))?;
+    let (_, mix) = read_source(root, &root.join("mix.exs"))?;
     if mix.contains("apps_path:") {
         return Err("umbrella projects are not supported; build each app separately".into());
     }

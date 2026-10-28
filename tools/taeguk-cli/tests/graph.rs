@@ -232,6 +232,18 @@ fn analyzer_failures_mark_the_graph_failed() {
         git(&w.repo(), &["add", "-A"]);
         git(&w.repo(), &["commit", "-qm", "link"]);
         assert_fails(&w, "python", "resolves outside ROOT");
+        // A FIFO in place of a tracked file must fail instead of blocking on open.
+        let w = work("python");
+        let fifo = w.repo().join("src/app/util.py");
+        fs::remove_file(&fifo).unwrap();
+        assert!(
+            Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert_fails(&w, "python", "not a regular file");
     }
     if available("go", "version") {
         let w = work("go");
@@ -252,6 +264,15 @@ fn analyzer_failures_mark_the_graph_failed() {
         git(&w.repo(), &["add", "-A"]);
         git(&w.repo(), &["commit", "-qm", "break"]);
         assert_fails(&w, "go", "example.com/missing/x");
+        // A tracked source linked to a file outside ROOT is refused before go reads it.
+        let w = work("go");
+        let outside = w.0.join("outside.go");
+        fs::write(&outside, "package b\n\nfunc Outside() {}\n").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, w.repo().join("b/outside.go")).unwrap();
+        git(&w.repo(), &["add", "-A"]);
+        git(&w.repo(), &["commit", "-qm", "link"]);
+        assert_fails(&w, "go", "resolves outside ROOT");
     }
     if available("cargo", "--version") {
         let w = work("rust");
@@ -265,8 +286,34 @@ fn analyzer_failures_mark_the_graph_failed() {
         fs::write(&lib, text + "#[path = \"lib.rs\"]\nmod again;\n").unwrap();
         git(&w.repo(), &["commit", "-qam", "cycle"]);
         assert_fails(&w, "rust", "module cycle");
+        // Two `mod`s per level reusing the next file would visit 2^30 modules without a cap.
+        let w = work("rust");
+        let lib = w.repo().join("core/src/lib.rs");
+        let text = fs::read_to_string(&lib).unwrap();
+        fs::write(&lib, text + "#[path = \"deep/l0.rs\"]\nmod deep;\n").unwrap();
+        fs::create_dir_all(w.repo().join("core/src/deep")).unwrap();
+        for i in 0..30 {
+            let next = format!("l{}.rs", i + 1);
+            fs::write(
+                w.repo().join(format!("core/src/deep/l{i}.rs")),
+                format!("#[path = \"{next}\"]\nmod a;\n#[path = \"{next}\"]\nmod b;\n"),
+            )
+            .unwrap();
+        }
+        fs::write(w.repo().join("core/src/deep/l30.rs"), "").unwrap();
+        git(&w.repo(), &["add", "-A"]);
+        git(&w.repo(), &["commit", "-qm", "wide"]);
+        assert_fails(&w, "rust", "module expansion exceeds");
     }
     if available("mix", "--version") {
+        // mix.exs is read before anything else, so a device link must fail without a build.
+        let w = work("elixir");
+        fs::remove_file(w.repo().join("mix.exs")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("/dev/zero", w.repo().join("mix.exs")).unwrap();
+        git(&w.repo(), &["add", "-A"]);
+        git(&w.repo(), &["commit", "-qm", "link"]);
+        assert_fails(&w, "elixir", "mix.exs resolves outside ROOT");
         let w = work("elixir");
         assert_fails(&w, "elixir", "_build/dev not found");
         // A source newer than the build must fail instead of being compiled by xref.

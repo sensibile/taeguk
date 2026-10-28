@@ -6,3 +6,13 @@ pub mod extra;
 mod missing;
 
 pub use store::Store;
+#[cfg(unix)]
+#[path = "sys/unix.rs"]
+mod imp;
+#[cfg(windows)]
+#[path = "sys/windows.rs"]
+mod imp;
+
+pub fn platform() -> &'static str {
+    imp::NAME
+}
