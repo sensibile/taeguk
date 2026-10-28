@@ -24,12 +24,22 @@
 
 1. 작업 worktree와 브랜치에서 변경하고 AGENTS.md의 검증 명령 중 해당하는 것을 실행한다.
 2. push 전에 PR 누적 범위(`origin/main`과의 merge-base부터 head까지)를 로컬에서 리뷰한다. 코드나 실행 동작에 영향을 주는 변경은 `taeguk_codex_cross_reviewer`와 `taeguk_codex_security_reviewer`를 `taeguk-codex-local-review` 절차(read-only sandbox, `gpt-6-astra`, `medium` effort)로 실행한다. 문서만 바뀐 변경은 보안 리뷰를 NOT_APPLICABLE로 남긴다. 지적은 반영하거나 반영하지 않은 이유를 남긴다. CodeQL이 지원하지 않는 Elixir(`apps/taeguk`) 변경은 이 보안 리뷰로 보완한다.
-3. PR 본문에 검증 결과와 로컬 리뷰 결과(대상 SHA, 모델과 effort, 지적과 처리)를 적는다. 제목, 본문, 댓글에는 `@codex` 문자열을 쓰지 않는다. 코드 표기 안의 것도 Codex 클라우드 작업을 부른다(PR #13~#16).
+3. PR 본문에 검증 결과와 로컬 리뷰 결과(대상 SHA, 모델과 effort, 지적과 처리)를 적는다. 작업 범위 밖이라 하지 않은 정리 거리는 `## 정리 후보` 절에 근거와 함께 적는다. 데일리 정리가 이 절을 읽는다. 제목, 본문, 댓글에는 `@codex` 문자열을 쓰지 않는다. 코드 표기 안의 것도 Codex 클라우드 작업을 부른다(PR #13~#16).
 4. 그 head SHA에 대해 2단계의 필수 로컬 리뷰가 실제로 끝났는지 확인한다. CLI 로그인 실패, timeout, 빈 출력 등으로 NOT_RUN이나 UNKNOWN이면 auto-merge를 켜지 않고 원인을 해소하거나 BOSS에게 보고한다. 확인되면 PR을 만든 세션이 `gh pr merge <번호> --squash --auto --match-head-commit <리뷰한 head SHA>`로 auto-merge를 켠다. 필수 체크가 통과하고 리뷰 thread가 모두 해소되고 PR이 최신 `main`을 포함하면 GitHub가 머지한다. draft PR이나 `no-auto-merge` label이 붙은 PR에는 켜지 않는다. 이 opt-out은 세션이 지키는 운영 규칙이며 GitHub 머지 조건이 아니다.
 5. 새 커밋을 올릴 때는 먼저 `gh pr merge <번호> --disable-auto`로 auto-merge를 끈다. GitHub는 쓰기 권한자가 push해도 auto-merge를 유지하므로, 끄지 않으면 리뷰하지 않은 head가 머지될 수 있다. 그다음 push 전에 2단계의 로컬 리뷰를 새 누적 범위로 하고, 리뷰 반영으로 SHA가 바뀌면 다시 리뷰한다. 리뷰한 SHA를 push한 뒤 4단계로 다시 켠다.
 6. `main`이 앞서 나가 PR이 뒤처지면 세션은 먼저 `gh pr merge <번호> --disable-auto`로 auto-merge를 끄고, `gh pr view <번호> --json autoMergeRequest`가 `null`인지 확인한 뒤 `gh pr update-branch`로 갱신한다. `--match-head-commit`은 켤 때의 head만 확인할 뿐 이후 head 변경을 막지 않기 때문이다. 갱신 뒤에는 PR 누적 diff가 같아도 2단계의 로컬 리뷰를 새 head로 다시 한 뒤 4단계로 켠다. 새 `main`이 PR 코드가 쓰는 함수나 권한 검사를 바꿨다면, diff가 같아도 합친 결과의 동작은 다를 수 있기 때문이다.
 
 GitHub의 Codex 자동 리뷰는 저장소가 아니라 Codex 설정에서 켜져 있어 계속 댓글을 달 수 있다. 머지 조건은 아니지만 ruleset이 리뷰 thread 해소를 요구하므로, 세션은 thread를 판정해 반영하거나 이유를 답한 뒤 해소한다. 리뷰 도구의 결과는 검토 보조 증거이며 요구사항 충족 판정을 대신하지 않는다. 로컬 리뷰 실행 여부는 GitHub가 강제하지 않는다. 세션이 지키는 절차다.
+
+## 데일리 정리
+
+2026-10-29 BOSS가 "정리와 구조개선을 나눠서 진행하자"라고 정했다. 정리는 데일리로 하고, "코덱스와 협의해서 진짜 필요하다고 여겨지는 내용은 진행 후 머지까지" 한다. 구조 개선은 "나에게 보고하고 승인하에 진행"한다. 실행은 이 Mac의 로컬 예약 작업으로 건다. AGENTS.md상 실행 권한 변경은 BOSS 확인 사항이며 이 지시가 그 확인이다.
+
+- 절차는 [`taeguk-daily-cleanup`](../codex/skills/taeguk-daily-cleanup/SKILL.md) 스킬이다. 실행 보고는 main checkout의 `.taeguk/daily-cleanup/`(Git 무시 대상)에 남긴다.
+- 정리 PR에는 `daily-cleanup` label을 붙이고 위 PR 플로우를 그대로 따른다. 열린 정리 PR이 있으면 새 실행은 PR을 더 만들지 않는다.
+- Codex가 필요하지 않다고 보거나 판단이 불분명한 항목은 빼고 머지한다. 동작, 계약, 의존성, workflow, 규칙을 바꾸는 항목은 정리가 아니므로 이 경로로 머지하지 않고 보고한다.
+- 구조 개선 후보는 근거와 대안을 붙여 BOSS에게 보고만 한다. 승인 뒤 일반 작업으로 Phase 0부터 시작한다. 시그널 측정 방법은 [구조 개선 시그널 연구](research/structure-signal.md)에서 다룬다.
+- 범위는 이 저장소뿐이다. 시험 프로젝트에는 프로젝트별 BOSS 승인 없이 적용하지 않는다.
 
 ## GitHub 설정
 
