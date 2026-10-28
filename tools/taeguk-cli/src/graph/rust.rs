@@ -43,11 +43,14 @@ struct Dependency {
 /// One module of a crate: the file holding it, its children and the paths it mentions.
 /// Children map a name to tree keys, because cfg branches can declare one name more than once
 /// (`imp`, `imp#2`, ...).
+/// `exports` holds the module-level `use` bindings, which other modules can reach through it
+/// (`pub use crate::imp as facade;` makes `crate::facade::sub` mean `crate::imp::sub`).
 #[derive(Default)]
 struct Module {
     file: PathBuf,
     children: BTreeMap<String, Vec<String>>,
     paths: Vec<PathRef>,
+    exports: Scope,
 }
 type Tree = BTreeMap<Vec<String>, Module>;
 /// A mentioned path with `use` aliases already expanded, and the glob imports in its scope.
@@ -57,6 +60,9 @@ struct PathRef {
 }
 /// Files one target may expand to; repeated `#[path]` reuse can otherwise grow exponentially.
 const MAX_MODULE_FILES: usize = 10_000;
+/// Bounds on alias chains and on the paths one mention may expand to (cfg branches multiply).
+const MAX_ALIAS_DEPTH: usize = 8;
+const MAX_EXPANSIONS: usize = 16;
 
 pub(super) fn analyze(root: &Path) -> (Analyzer, Result<Partial, String>) {
     let mut a = Analyzer::new("rust", "cargo+syn", &COMMAND);
@@ -146,9 +152,13 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
     }
     for (crate_root, externs) in &crates {
         let tree = &trees[crate_root];
+        let r = Resolver {
+            trees: &trees,
+            externs,
+        };
         for (path, m) in tree {
             for p in &m.paths {
-                for target in resolve(tree, path, p, externs, &trees) {
+                for target in r.resolve(tree, path, p) {
                     if target != m.file {
                         out.edges.push(Edge::new(
                             &format!("rust:{}", rel(&m.file)?),
@@ -167,89 +177,114 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
     Ok(out)
 }
 
-/// Files of the deepest modules a path mentioned in module `here` names. A name declared by
-/// several cfg branches yields each branch. A first segment nothing else binds is tried under
-/// the glob imports in scope, and counts only when it reaches a child of the glob target.
-fn resolve(
-    tree: &Tree,
-    here: &[String],
-    p: &PathRef,
-    externs: &BTreeMap<String, PathBuf>,
-    trees: &BTreeMap<PathBuf, Tree>,
-) -> BTreeSet<PathBuf> {
-    let mut out = BTreeSet::new();
-    if !start(tree, here, &p.segs, externs, trees, &mut out) {
-        for g in &p.globs {
-            let (mut via, mut target) = (BTreeSet::new(), BTreeSet::new());
-            start(
-                tree,
-                here,
-                &[g.as_slice(), &p.segs].concat(),
-                externs,
-                trees,
-                &mut via,
-            );
-            start(tree, here, g, externs, trees, &mut target);
-            out.extend(via.difference(&target).cloned());
-        }
-    }
-    out
+/// Resolves mentioned paths to module files within one target's view of the workspace.
+struct Resolver<'a> {
+    trees: &'a BTreeMap<PathBuf, Tree>,
+    externs: &'a BTreeMap<String, PathBuf>,
 }
 
-/// Resolves the first segment and descends; false when the first segment is not bound here.
-fn start(
-    tree: &Tree,
-    here: &[String],
-    segs: &[String],
-    externs: &BTreeMap<String, PathBuf>,
-    trees: &BTreeMap<PathBuf, Tree>,
-    out: &mut BTreeSet<PathBuf>,
-) -> bool {
-    let Some(first) = segs.first() else {
-        return false;
-    };
-    let (mut tree, mut base, mut rest) = (tree, here.to_vec(), segs);
-    match first.as_str() {
-        "crate" => (base, rest) = (vec![], &segs[1..]),
-        "self" => rest = &segs[1..],
-        "super" => {
-            while rest.first().is_some_and(|s| s == "super") {
-                if base.pop().is_none() {
-                    return false;
+impl Resolver<'_> {
+    /// Files of the deepest modules a path mentioned in module `here` names. A name declared by
+    /// several cfg branches yields each branch. A first segment nothing else binds is tried
+    /// under the glob imports in scope, and counts only when it reaches a child of the glob target.
+    fn resolve(&self, tree: &Tree, here: &[String], p: &PathRef) -> BTreeSet<PathBuf> {
+        let mut out = BTreeSet::new();
+        if !self.start(tree, here, &p.segs, 0, &mut out) {
+            for g in &p.globs {
+                self.through_glob(tree, here, g, &p.segs, 0, &mut out);
+            }
+        }
+        out
+    }
+
+    /// Adds what `rest` reaches below glob target `g` (relative to `here`), not `g` itself.
+    fn through_glob(
+        &self,
+        tree: &Tree,
+        here: &[String],
+        g: &[String],
+        rest: &[String],
+        depth: usize,
+        out: &mut BTreeSet<PathBuf>,
+    ) {
+        let (mut via, mut target) = (BTreeSet::new(), BTreeSet::new());
+        self.start(tree, here, &[g, rest].concat(), depth, &mut via);
+        self.start(tree, here, g, depth, &mut target);
+        out.extend(via.difference(&target).cloned());
+    }
+
+    /// Resolves the first segment and descends; false when the first segment is not bound here.
+    fn start(
+        &self,
+        tree: &Tree,
+        here: &[String],
+        segs: &[String],
+        depth: usize,
+        out: &mut BTreeSet<PathBuf>,
+    ) -> bool {
+        let Some(first) = segs.first() else {
+            return false;
+        };
+        let (mut tree, mut base, mut rest) = (tree, here.to_vec(), segs);
+        match first.as_str() {
+            "crate" => (base, rest) = (vec![], &segs[1..]),
+            "self" => rest = &segs[1..],
+            "super" => {
+                while rest.first().is_some_and(|s| s == "super") {
+                    if base.pop().is_none() {
+                        return false;
+                    }
+                    rest = &rest[1..];
                 }
-                rest = &rest[1..];
             }
+            first
+                if tree
+                    .get(here)
+                    .is_some_and(|m| m.children.contains_key(first)) => {}
+            first => match self.externs.get(first).and_then(|f| self.trees.get(f)) {
+                Some(t) => (tree, base, rest) = (t, vec![], &segs[1..]),
+                None => return false,
+            },
         }
-        first
-            if tree
-                .get(here)
-                .is_some_and(|m| m.children.contains_key(first)) => {}
-        first => match externs.get(first).and_then(|f| trees.get(f)) {
-            Some(t) => (tree, base, rest) = (t, vec![], &segs[1..]),
-            None => return false,
-        },
+        self.descend(tree, base, rest, depth, out);
+        true
     }
-    descend(tree, base, rest, out);
-    true
-}
 
-fn descend(tree: &Tree, base: Vec<String>, rest: &[String], out: &mut BTreeSet<PathBuf>) {
-    let Some(m) = tree.get(&base) else {
-        return;
-    };
-    match rest.first().and_then(|s| m.children.get(s)) {
-        Some(ids) => {
-            for id in ids {
-                descend(
-                    tree,
-                    [base.clone(), vec![id.clone()]].concat(),
-                    &rest[1..],
-                    out,
-                );
-            }
-        }
-        None => {
+    fn descend(
+        &self,
+        tree: &Tree,
+        base: Vec<String>,
+        rest: &[String],
+        depth: usize,
+        out: &mut BTreeSet<PathBuf>,
+    ) {
+        let Some(m) = tree.get(&base) else {
+            return;
+        };
+        let Some(s) = rest.first() else {
             out.insert(m.file.clone());
+            return;
+        };
+        if let Some(ids) = m.children.get(s) {
+            for id in ids {
+                let child = [base.clone(), vec![id.clone()]].concat();
+                self.descend(tree, child, &rest[1..], depth, out);
+            }
+            return;
+        }
+        out.insert(m.file.clone());
+        if depth >= MAX_ALIAS_DEPTH {
+            return;
+        }
+        // A name the module binds with `use` continues at the bound path (re-exports).
+        if let Some(fulls) = m.exports.aliases.get(s) {
+            for f in fulls {
+                self.start(tree, &base, &[f, &rest[1..]].concat(), depth + 1, out);
+            }
+        } else {
+            for g in &m.exports.globs {
+                self.through_glob(tree, &base, g, rest, depth + 1, out);
+            }
         }
     }
 }
@@ -376,16 +411,18 @@ impl Walk<'_> {
         m.file = file.to_path_buf();
         m.children.extend(children);
         m.paths.extend(paths.paths);
+        m.exports = paths.scopes.swap_remove(0);
         Ok(())
     }
 }
 
 /// Names one scope's `use` items bind (`use crate::a as b` binds `b` to `crate::a`) and its
-/// glob imports. Items in a module or block are visible in all of it, so a scope is filled
-/// before its paths are visited.
+/// glob imports. A name can have several bindings when cfg branches bind it differently.
+/// Items in a module or block are visible in all of it, so a scope is filled before its paths
+/// are visited.
 #[derive(Default)]
 struct Scope {
-    aliases: BTreeMap<String, Vec<String>>,
+    aliases: BTreeMap<String, Vec<Vec<String>>>,
     globs: Vec<Vec<String>>,
 }
 impl Scope {
@@ -411,7 +448,7 @@ impl Scope {
                 Some(bound.to_string())
             };
             if let Some(bound) = bound.filter(|b| b != "_") {
-                self.aliases.insert(bound, full);
+                add(self.aliases.entry(bound).or_default(), full);
             }
         };
         match t {
@@ -422,48 +459,101 @@ impl Scope {
             }
             syn::UseTree::Name(n) => leaf(&n.ident, &n.ident),
             syn::UseTree::Rename(r) => leaf(&r.ident, &r.rename),
-            syn::UseTree::Glob(_) => self.globs.push(prefix.clone()),
+            syn::UseTree::Glob(_) => add(&mut self.globs, prefix.clone()),
             syn::UseTree::Group(g) => g.items.iter().for_each(|t| self.bind(prefix, t)),
         }
     }
 }
 
-/// Collects `use` trees and expression/type paths of one module, expanding aliases by the
-/// scopes they appear in; nested modules are walked separately.
+fn add(list: &mut Vec<Vec<String>>, path: Vec<String>) {
+    if list.len() < MAX_EXPANSIONS && !list.contains(&path) {
+        list.push(path);
+    }
+}
+
+/// Collects `use` trees and expression/type paths of one module with aliases expanded;
+/// nested modules are walked separately. Each scope stores bindings already expanded in the
+/// scope that declared them, so a later inner binding of the same name cannot change them.
 struct Paths {
     paths: Vec<PathRef>,
     scopes: Vec<Scope>,
 }
 impl Paths {
     fn new(items: &[syn::Item]) -> Self {
-        Paths {
+        let mut p = Paths {
             paths: vec![],
-            scopes: vec![Scope::of(items.iter())],
-        }
+            scopes: vec![],
+        };
+        p.enter(items.iter());
+        p
     }
-    /// Replaces a leading bound name by its path, innermost scope first. A binding whose path
-    /// starts with its own name (`use fx_core;`) names the outer item, so expansion stops there.
-    fn expand(&self, mut segs: Vec<String>) -> Vec<String> {
-        for _ in 0..8 {
-            let Some(first) = segs.first() else { break };
-            let Some(full) = self.scopes.iter().rev().find_map(|s| s.aliases.get(first)) else {
-                break;
-            };
-            if full.first() == Some(first) {
-                break;
+    fn enter<'a>(&mut self, items: impl Iterator<Item = &'a syn::Item>) {
+        let raw = Scope::of(items);
+        let mut scope = Scope::default();
+        for (name, fulls) in &raw.aliases {
+            let list = scope.aliases.entry(name.clone()).or_default();
+            for f in fulls {
+                let mut out = vec![];
+                self.expand(f.clone(), Some(&raw), 0, &mut out);
+                out.into_iter().for_each(|e| add(list, e));
             }
-            segs = [full.as_slice(), &segs[1..]].concat();
         }
-        segs
+        for g in &raw.globs {
+            let mut out = vec![];
+            self.expand(g.clone(), Some(&raw), 0, &mut out);
+            out.into_iter().for_each(|e| add(&mut scope.globs, e));
+        }
+        self.scopes.push(scope);
+    }
+    /// Expansions of `segs`. Names bound in the declaring scope `raw` are followed (bounded);
+    /// otherwise the innermost enclosing binding replaces the first segment once, its paths
+    /// being expanded already. A binding whose path starts with its own name (`use fx_core;`)
+    /// names the outer item, so expansion stops there.
+    fn expand(
+        &self,
+        segs: Vec<String>,
+        raw: Option<&Scope>,
+        depth: usize,
+        out: &mut Vec<Vec<String>>,
+    ) {
+        let Some(first) = segs.first() else {
+            return add(out, segs);
+        };
+        if let Some(fulls) = raw.and_then(|r| r.aliases.get(first))
+            && depth < MAX_ALIAS_DEPTH
+        {
+            for f in fulls {
+                if f.first() == Some(first) {
+                    add(out, segs.clone());
+                } else {
+                    self.expand([f.as_slice(), &segs[1..]].concat(), raw, depth + 1, out);
+                }
+            }
+            return;
+        }
+        match self.scopes.iter().rev().find_map(|s| s.aliases.get(first)) {
+            Some(fulls) => {
+                for f in fulls {
+                    if f.first() == Some(first) {
+                        add(out, segs.clone());
+                    } else {
+                        add(out, [f.as_slice(), &segs[1..]].concat());
+                    }
+                }
+            }
+            None => add(out, segs),
+        }
     }
     fn push(&mut self, segs: Vec<String>) {
-        let segs = self.expand(segs);
-        let globs = self
-            .scopes
-            .iter()
-            .flat_map(|s| s.globs.iter().map(|g| self.expand(g.clone())))
-            .collect();
-        self.paths.push(PathRef { segs, globs });
+        let mut all = vec![];
+        self.expand(segs, None, 0, &mut all);
+        let globs: Vec<Vec<String>> = self.scopes.iter().flat_map(|s| s.globs.clone()).collect();
+        for segs in all {
+            self.paths.push(PathRef {
+                segs,
+                globs: globs.clone(),
+            });
+        }
     }
     fn use_tree(&mut self, prefix: &mut Vec<String>, t: &syn::UseTree) {
         match t {
@@ -491,11 +581,10 @@ impl<'ast> Visit<'ast> for Paths {
         self.use_tree(&mut vec![], &u.tree);
     }
     fn visit_block(&mut self, b: &'ast syn::Block) {
-        self.scopes
-            .push(Scope::of(b.stmts.iter().filter_map(|s| match s {
-                syn::Stmt::Item(i) => Some(i),
-                _ => None,
-            })));
+        self.enter(b.stmts.iter().filter_map(|s| match s {
+            syn::Stmt::Item(i) => Some(i),
+            _ => None,
+        }));
         visit::visit_block(self, b);
         self.scopes.pop();
     }
@@ -543,5 +632,16 @@ mod tests {
             assert!(got.iter().any(|p| p == want), "{want} not in {got:?}");
         }
         assert!(!got.iter().any(|p| p == "crate::b::f"), "{got:?}");
+    }
+    #[test]
+    fn aliases_keep_declaration_scope_and_cfg_branches() {
+        let got = paths(
+            "use crate::a as x; use x as y; fn f() { use crate::b as x; y::sub::f(); } \
+             #[cfg(unix)] use crate::u as imp; #[cfg(windows)] use crate::w as imp; fn g() { imp::s::h(); }",
+        );
+        for want in ["crate::a::sub::f", "crate::u::s::h", "crate::w::s::h"] {
+            assert!(got.iter().any(|p| p == want), "{want} not in {got:?}");
+        }
+        assert!(!got.iter().any(|p| p == "crate::b::sub::f"), "{got:?}");
     }
 }

@@ -2,3 +2,4 @@ python ambiguous_import scripts/run.py
 python dynamic_import src/app/cli.py
 python sys_path_unresolved tests/test_helper.py
 python sys_path_unresolved tests/test_paths.py
+python sys_path_unresolved tests/test_order.py

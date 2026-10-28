@@ -1,6 +1,9 @@
 mod cli;
+mod declared;
+mod facade_user;
 mod globbed;
 mod ops;
+mod plat;
 mod scoped;
 
 fn main() {
@@ -9,4 +12,7 @@ fn main() {
     scoped::one();
     scoped::two();
     globbed::f();
+    facade_user::g();
+    plat::go();
+    declared::f();
 }

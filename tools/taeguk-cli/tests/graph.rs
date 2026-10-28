@@ -273,6 +273,24 @@ fn analyzer_failures_mark_the_graph_failed() {
         git(&w.repo(), &["add", "-A"]);
         git(&w.repo(), &["commit", "-qm", "link"]);
         assert_fails(&w, "go", "resolves outside ROOT");
+        // go opens every file in a package directory, tracked or not.
+        let w = work("go");
+        assert!(
+            Command::new("mkfifo")
+                .arg(w.repo().join("b/extra.go"))
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert_fails(&w, "go", "b/extra.go is not a regular file");
+        // A local module manifest under testdata is read when go.mod replaces a module with it.
+        let w = work("go");
+        fs::create_dir_all(w.repo().join("testdata/evil")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("/dev/zero", w.repo().join("testdata/evil/go.mod")).unwrap();
+        git(&w.repo(), &["add", "-A"]);
+        git(&w.repo(), &["commit", "-qm", "link"]);
+        assert_fails(&w, "go", "testdata/evil/go.mod resolves outside ROOT");
     }
     if available("cargo", "--version") {
         let w = work("rust");
@@ -304,6 +322,14 @@ fn analyzer_failures_mark_the_graph_failed() {
         git(&w.repo(), &["add", "-A"]);
         git(&w.repo(), &["commit", "-qm", "wide"]);
         assert_fails(&w, "rust", "module expansion exceeds");
+        // cargo reads member manifests itself; a device link must fail before it runs.
+        let w = work("rust");
+        fs::remove_file(w.repo().join("app/Cargo.toml")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("/dev/zero", w.repo().join("app/Cargo.toml")).unwrap();
+        git(&w.repo(), &["add", "-A"]);
+        git(&w.repo(), &["commit", "-qm", "link"]);
+        assert_fails(&w, "rust", "app/Cargo.toml resolves outside ROOT");
     }
     if available("mix", "--version") {
         // mix.exs is read before anything else, so a device link must fail without a build.
@@ -353,6 +379,22 @@ fn analyzer_failures_mark_the_graph_failed() {
         git(&w.repo(), &["rm", "-q", "lib/fx/dyn.ex"]);
         git(&w.repo(), &["commit", "-qm", "delete"]);
         assert_fails(&w, "elixir", "no longer tracked");
+        // The ignored build is copied, not scanned; a FIFO there must fail instead of blocking.
+        let w = work("elixir");
+        let o = Command::new("mix")
+            .arg("compile")
+            .current_dir(w.repo())
+            .output()
+            .unwrap();
+        assert!(o.status.success());
+        assert!(
+            Command::new("mkfifo")
+                .arg(w.repo().join("_build/dev/lib/fx/pipe"))
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert_fails(&w, "elixir", "is not a regular file");
     }
 }
 
@@ -456,6 +498,14 @@ fn impact_follows_reverse_edges_and_reports_limits() {
         serde_json::json!(["working_tree_differs_from_head"])
     );
     git(&w.repo(), &["checkout", "--", "."]);
+    // An untracked source is read by analyzers too, so it also makes the tree differ.
+    fs::write(w.repo().join("scripts/extra.py"), "import helper\n").unwrap();
+    let untracked = impact(&w, &["--changed", "src/app/util.py"]);
+    assert_eq!(
+        untracked["reasons"],
+        serde_json::json!(["working_tree_differs_from_head"])
+    );
+    fs::remove_file(w.repo().join("scripts/extra.py")).unwrap();
 
     let unmapped = impact(&w, &["--changed", "README.md"]);
     assert_eq!(unmapped["status"], "UNKNOWN");
@@ -481,7 +531,8 @@ fn impact_follows_reverse_edges_and_reports_limits() {
         set(&[
             ("python:scripts/helper.py", 0),
             ("python:scripts/run.py", 1),
-            ("python:tests/test_helper.py", 1)
+            ("python:tests/test_helper.py", 1),
+            ("python:tests/test_order.py", 1)
         ])
     );
 

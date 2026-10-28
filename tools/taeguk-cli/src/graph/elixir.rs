@@ -67,7 +67,7 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
         ));
     }
     let tmp = TempDir::new("elixir")?;
-    copy_tree(&build, &tmp.0.join("build"))?;
+    copy_tree(root, &build, &tmp.0.join("build"))?;
     a.command.insert(
         0,
         format!("MIX_ENV={mix_env} MIX_BUILD_PATH=<tmp copy of _build/{mix_env}>"),
@@ -191,7 +191,9 @@ fn parse_dot(text: &str) -> Result<Partial, String> {
 }
 
 /// Copies a build tree; symlinks are recreated as absolute links to their original targets.
-fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
+/// The build is ignored by git, so the ROOT scan does not cover it: links must stay inside ROOT
+/// and point at files or directories, and special files are refused (copying a FIFO blocks).
+fn copy_tree(root: &Path, from: &Path, to: &Path) -> Result<(), String> {
     fs::create_dir_all(to).map_err(|e| e.to_string())?;
     for entry in fs::read_dir(from).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
@@ -204,6 +206,15 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
             } else {
                 from.join(target)
             };
+            let real = target
+                .canonicalize()
+                .map_err(|e| format!("{}: {e}", src.display()))?;
+            if !real.starts_with(root) || !(real.is_file() || real.is_dir()) {
+                return Err(format!(
+                    "build link {} must point to a file or directory inside ROOT",
+                    src.display()
+                ));
+            }
             #[cfg(unix)]
             std::os::unix::fs::symlink(&target, &dst).map_err(|e| e.to_string())?;
             #[cfg(not(unix))]
@@ -212,7 +223,12 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
                 src.display()
             ));
         } else if kind.is_dir() {
-            copy_tree(&src, &dst)?;
+            copy_tree(root, &src, &dst)?;
+        } else if !kind.is_file() {
+            return Err(format!(
+                "build entry {} is not a regular file",
+                src.display()
+            ));
         } else {
             fs::copy(&src, &dst).map_err(|e| format!("{}: {e}", src.display()))?;
         }

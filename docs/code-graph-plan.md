@@ -79,11 +79,11 @@ acropolis/akashic의 `elixir/`처럼 `_build`가 없는 Elixir 프로젝트는 �
 | 언어 | 방법 | 실행 조건과 한계 |
 | --- | --- | --- |
 | Elixir | 기존 `_build/<env>`를 임시 디렉터리로 복사하고 `MIX_BUILD_PATH`로 지정해 `mix xref graph --no-compile --no-deps-check --format dot` 실행 | 대상의 `_build`·`deps`를 만들거나 바꾸지 않고 compile하지 않는다. `_build`가 없거나, 앱 compile manifest보다 새로운 `.ex`·`.exs`(deps·test 제외, Mix와 같이 초 단위 비교)가 있거나, xref 결과에 더 이상 tracked가 아닌 파일이 있으면(compile 후 삭제) FAIL. `mix.exs`는 mix가 읽으므로 실행된다. `apply(`·`Module.concat(`·`String.to_atom(` 등 런타임 dispatch 줄은 `dynamic_call` gap |
-| Go | `go list -e -deps -test -json ./...` | main module 패키지만 노드(test 변형·생성된 test main 제외). test 전용 import를 포함해 패키지 `Error`·`DepsErrors`가 있으면 FAIL. `GOPROXY=off`와 함께 `GOPRIVATE`·`GONOPROXY`·`GONOSUMDB`를 비우고 `GOSUMDB=off`·`GOVCS=*:off`·`GOTOOLCHAIN=local`로 모듈·toolchain 내려받기를 막는다. 실행 전 tracked `.go`·`go.mod`·`go.sum`·`go.work`(`testdata`·`_`·`.` 디렉터리 제외)를, 실행 후 go가 보고한 패키지 파일을 소스 읽기 조건으로 검사한다. build tag·`go:generate` 산출물은 현재 환경 기준 |
-| Rust | `cargo metadata --no-deps --offline`으로 workspace crate·target·path 의존을 얻고, `syn`으로 각 target의 `mod` 선언과 `use crate::`·`super::`·`self::`·workspace crate 경로를 파일 노드로 해석 | `cfg` 분기는 모두 포함, `#[path]` 지원, cfg로 막힌 없는 `mod` 파일은 gap. 매크로 호출 안의 경로와 매크로가 만드는 `mod`·`use`는 분석하지 않는다(결과 limits). glob import는 대상 모듈 파일로의 edge가 된다. 외부 crate 이름은 의존성 rename 또는 library target 이름을 쓴다. `use`가 묶은 이름(`use crate::a as b`, `use crate::a`)은 선언된 모듈·블록 scope 안에서 원래 경로로 펼쳐 `b::sub::f` 같은 경로를 해석한다. glob import 뒤 첫 경로 조각이 다른 곳에서 해석되지 않으면 glob 대상의 하위 모듈로 해석한다. cfg 분기가 같은 이름의 `mod`를 여러 번 선언하면 분기마다 노드와 edge를 따로 둔다. `#[path]`가 현재 `mod` 사슬의 파일로 되돌아오거나 한 target의 모듈 파일 방문이 10,000을 넘으면 FAIL. `RUSTUP_AUTO_INSTALL=0`으로 toolchain 자동 설치를 막는다. CLI에 `syn` 의존을 추가한다 |
-| Python | CLI에 내장한 표준 라이브러리 전용 스크립트를 `python3 -I`로 실행해 `ast`로 import 수집 | tracked `.py`만. 패키지 root는 `pyproject.toml`의 설정, `src/` 배치, 저장소 최상위 순으로 정한다. 상대 import는 패키지 기준으로 해석하고 기준 패키지부터 중간 패키지까지의 `__init__.py`를 edge로 넣으며, 여러 파일에 대응되는 이름은 edge를 만들지 않고 gap으로 기록. `importlib`·`__import__`는 gap. `sys.path` 대입·slice 대입·`from sys import path`는 `sys_path_unresolved` gap. `parents[N]`은 경로 깊이를 먼저 확인한다 |
+| Go | `go list -e -deps -test -json ./...` | main module 패키지만 노드(test 변형·생성된 test main 제외). test 전용 import를 포함해 패키지 `Error`·`DepsErrors`가 있으면 FAIL. `GOPROXY=off`와 함께 `GOPRIVATE`·`GONOPROXY`·`GONOSUMDB`를 비우고 `GOSUMDB=off`·`GOVCS=*:off`·`GOTOOLCHAIN=local`로 모듈·toolchain 내려받기를 막는다. 실행 후 go가 보고한 패키지 파일이 ROOT 안에 있는지 검사한다(실행 전 검사는 아래 ROOT 검사). build tag·`go:generate` 산출물은 현재 환경 기준 |
+| Rust | `cargo metadata --no-deps --offline`으로 workspace crate·target·path 의존을 얻고, `syn`으로 각 target의 `mod` 선언과 `use crate::`·`super::`·`self::`·workspace crate 경로를 파일 노드로 해석 | `cfg` 분기는 모두 포함, `#[path]` 지원, cfg로 막힌 없는 `mod` 파일은 gap. 매크로 호출 안의 경로와 매크로가 만드는 `mod`·`use`는 분석하지 않는다(결과 limits). glob import는 대상 모듈 파일로의 edge가 된다. 외부 crate 이름은 의존성 rename 또는 library target 이름을 쓴다. `use`가 묶은 이름(`use crate::a as b`, `use crate::a`)은 그 이름을 선언한 모듈·블록 scope 기준으로 펼친 경로를 그 scope 안에서 쓰고(cfg 분기마다 다른 바인딩은 모두 보존), `b::sub::f` 같은 경로를 해석한다. glob import 뒤 첫 경로 조각이 다른 곳에서 해석되지 않으면 glob 대상의 하위 모듈로 해석한다. 경로가 모듈의 `use` 바인딩(`pub use crate::imp as facade` 같은 재노출)이나 glob 재노출을 지나면 그 대상까지 따라간다. cfg 분기가 같은 이름의 `mod`를 여러 번 선언하면 분기마다 노드와 edge를 따로 둔다. `#[path]`가 현재 `mod` 사슬의 파일로 되돌아오거나 한 target의 모듈 파일 방문이 10,000을 넘으면 FAIL. `RUSTUP_AUTO_INSTALL=0`으로 toolchain 자동 설치를 막는다. CLI에 `syn` 의존을 추가한다 |
+| Python | CLI에 내장한 표준 라이브러리 전용 스크립트를 `python3 -I`로 실행해 `ast`로 import 수집 | tracked `.py`만. 패키지 root는 `pyproject.toml`의 설정, `src/` 배치, 저장소 최상위 순으로 정한다. 상대 import는 패키지 기준으로 해석하고 기준 패키지부터 중간 패키지까지의 `__init__.py`를 edge로 넣으며, 여러 파일에 대응되는 이름은 edge를 만들지 않고 gap으로 기록. `importlib`·`__import__`는 gap. `sys.path` 대입·slice 대입·`from sys import path`는 `sys_path_unresolved` gap. module 수준 `sys.path` 변경은 문장 순서대로 그 시점의 변수 값으로 평가하고, 함수·클래스 안의 변경이 module 수준에서 두 번 이상 대입된 변수를 쓰면 gap. `parents[N]`은 경로 깊이를 먼저 확인한다 |
 
-모든 분석기는 source(`mix.exs`·`pyproject.toml` 포함)를 읽기 전에 열지 않고 실제 경로가 ROOT 안의 일반 파일이고 8 MiB 이하인지 확인하고(FIFO는 열면 멈추므로), 아니면 FAIL한다. 버전 기록용 `--version` 명령도 ROOT에서 같은 toolchain 차단 환경변수로 실행한다.
+build는 분석기 실행 전에 ROOT를 파일 시스템에서 직접 순회해(git은 특수 파일을 목록에 넣지 않으므로) git이 ignore하지 않는 모든 경로가 일반 파일·디렉터리이거나 ROOT 안의 그런 대상으로 가는 링크인지 확인하고, 아니면 모든 분석기를 FAIL로 둔다. go·cargo·mix가 우리가 나열하지 않는 파일(untracked `.go`, workspace 멤버 `Cargo.toml`, `replace`된 로컬 모듈 등)도 읽기 때문이다. ignore된 Elixir `_build`는 복사할 때 특수 파일과 ROOT 밖 링크를 거부한다. 모든 분석기는 source(`mix.exs`·`pyproject.toml` 포함)를 읽기 전에 열지 않고 실제 경로가 ROOT 안의 일반 파일이고 8 MiB 이하인지 확인하고(FIFO는 열면 멈추므로), 아니면 FAIL한다. 버전 기록용 `--version` 명령도 ROOT에서 같은 toolchain 차단 환경변수로 실행한다.
 
 ### 결과 형식
 
@@ -108,7 +108,7 @@ acropolis/akashic의 `elixir/`처럼 `_build`가 없는 Elixir 프로젝트는 �
 ### 영향 질의
 
 - 역방향 edge 전이 폐쇄를 끝까지 따른다. 기본 깊이 제한은 두지 않고 각 노드에 최단 거리를 붙인다. `--depth N`으로 제한하면 적용 깊이를 결과에 기록한다. 순환은 방문 집합으로 종료한다.
-- 그래프 `status`가 FAIL이거나, 그래프 commit이 현재 `ROOT`의 HEAD와 다르거나, 그래프 생성 때 dirty였거나, 질의 시점의 작업 트리·index가 HEAD와 다르거나, 그래프의 ROOT가 질의 ROOT와 다르거나, 기록된 분석 도구 버전이 현재 버전과 다르거나 확인되지 않거나, 변경 파일이 어느 노드에도 속하지 않으면 결과 `status`를 UNKNOWN으로 하고 이유를 남긴다. 영향 목록은 참고로 함께 낸다.
+- 그래프 `status`가 FAIL이거나, 그래프 commit이 현재 `ROOT`의 HEAD와 다르거나, 그래프 생성 때 dirty였거나, 질의 시점의 작업 트리·index가 HEAD와 다르거나 ignore되지 않은 untracked 파일이 있거나(분석기가 읽으므로, 생성 시 `dirty_paths`에도 기록), 그래프의 ROOT가 질의 ROOT와 다르거나, 기록된 분석 도구 버전이 현재 버전과 다르거나 확인되지 않거나, 변경 파일이 어느 노드에도 속하지 않으면 결과 `status`를 UNKNOWN으로 하고 이유를 남긴다. 영향 목록은 참고로 함께 낸다.
 - 결과에는 항상 `limits`를 넣는다: 정적 의존만 포함, 런타임·설정·데이터 경로 미포함, edge 부재는 영향 없음의 증거가 아님, 해당 언어 gap 목록.
 
 ### 스킬 연결 (CG-R04, CG-R06)
@@ -145,17 +145,17 @@ acropolis/akashic의 `elixir/`처럼 `_build`가 없는 Elixir 프로젝트는 �
 - Rust: 부모 모듈의 `mod` 선언은 사용 관계가 아니므로 edge로 만들지 않는다. `use`, 식·타입 경로, `pub use` 재노출을 파일 edge로 만든다. 매크로 호출 안의 경로는 분석하지 않으며 이는 결과 `limits`와 이 문서의 한계로 남긴다.
 - acropolis/akashic 본체는 bare 저장소라 작업 트리 `akashic-worktrees/personal-knowledge-reset`에서 실측했다.
 
-## 검증 결과 (2026-10-29, 3차 리뷰 수정 반영본 기준)
+## 검증 결과 (2026-10-29, 4차 리뷰 수정 반영본 기준)
 
 | ID | 상태 | 근거 |
 | --- | --- | --- |
-| CG-V01 | PASS | `tools/taeguk-cli/tests/graph.rs`의 언어별 fixture 4개가 수작업 `expected-edges.txt`·`expected-gaps.txt`와 집합 일치. 기대 파일의 한 줄을 지웠을 때 네 언어 모두 테스트가 실패하는 것도 확인(오류 주입). 2차 수정으로 Python 기준 패키지 `__init__`(`src/app/sub/deep.py`)과 Rust `use` 별칭(`app/src/ops.rs`) 사례를 추가했고, 수정 전 코드에서는 두 fixture 테스트가 실패함을 확인. 3차 수정으로 Rust cfg 동명 모듈(`core/src/sys/`), scope별 별칭(`app/src/scoped.rs`), glob 하위 모듈(`app/src/globbed.rs`), Python `sys.path` 대입·거대 `parents` 인덱스(`tests/test_paths.py`)를 추가. 2차 반영본(`4114601`) 바이너리는 Rust 기대 edge 3개를 놓쳤고 `sys.path` 대입 gap을 내지 않았다 |
-| CG-V02 | PASS | 구문 오류 Python, 없는 모듈을 import하는 Go, mod 파일이 없는 Rust, `_build` 없는 Elixir에서 `status: FAIL`, 원인 문자열, 노드 0개. 2차 수정 사례: `/dev/zero` 링크 `.py`, test 전용 missing import Go, `#[path]` 순환 Rust, compile 후 삭제한 Elixir 소스가 FAIL. 수정 전 바이너리에서 각각 메모리 약 14 GB까지 읽기 지속, PASS, 다른 오류, PASS였다. compile과 같은 초에 저장된 소스는 PASS(밀리초 비교로 되돌리면 실패). 3차 수정 사례: `/dev/zero` 링크 `mix.exs`, FIFO로 바꾼 tracked `.py`, ROOT 밖 파일 링크 `.go`, 단계마다 형제 `mod` 2개가 다음 파일을 가리키는 30단계 Rust가 FAIL. `4114601` 바이너리는 FIFO와 30단계 Rust에서 15초 안에 끝나지 않았고 ROOT 밖 `.go`는 PASS였다 |
-| CG-V03 | PASS | 3차 수정본 재실측(2차 수정본과 edge 집합 동일): hoplites(Python) 노드 49·edge 73, thesmothetai(Go+Python) 13·23, axiom(Elixir+Python) 10·10, akashic 작업 트리(Rust+Python) 328·178, taeguk 최상위(Python) 11·1, `tools/taeguk-cli` 3·4 모두 PASS, 실행 전후 대상 `git status` 동일. akashic의 늘어난 4개는 `personal/akashic/{server,service,storage,workflow}.py`의 `from .core import`가 기준 패키지 `__init__.py`로 가는 edge로 원본과 대조해 확인. taeguk `apps/taeguk`는 main checkout `_build/dev`가 소스보다 오래되어 FAIL(정상 동작). 1차 때 무작위 edge 25개 수동 대조 |
+| CG-V01 | PASS | `tools/taeguk-cli/tests/graph.rs`의 언어별 fixture 4개가 수작업 `expected-edges.txt`·`expected-gaps.txt`와 집합 일치. 기대 파일의 한 줄을 지웠을 때 네 언어 모두 테스트가 실패하는 것도 확인(오류 주입). 2차 수정으로 Python 기준 패키지 `__init__`(`src/app/sub/deep.py`)과 Rust `use` 별칭(`app/src/ops.rs`) 사례를 추가했고, 수정 전 코드에서는 두 fixture 테스트가 실패함을 확인. 3차 수정으로 Rust cfg 동명 모듈(`core/src/sys/`), scope별 별칭(`app/src/scoped.rs`), glob 하위 모듈(`app/src/globbed.rs`), Python `sys.path` 대입·거대 `parents` 인덱스(`tests/test_paths.py`)를 추가. 2차 반영본(`4114601`) 바이너리는 Rust 기대 edge 3개를 놓쳤고 `sys.path` 대입 gap을 내지 않았다. 4차 수정으로 Rust 재노출(`facade_user.rs`), cfg 분기 별칭(`plat.rs`), 선언 scope 별칭(`declared.rs`), Python 문장 순서(`tests/test_order.py`)를 추가. 3차 반영본(`2cdb901`) 바이너리는 Rust 기대 edge 4개, Python edge 1개·gap 1개를 놓쳤다 |
+| CG-V02 | PASS | 구문 오류 Python, 없는 모듈을 import하는 Go, mod 파일이 없는 Rust, `_build` 없는 Elixir에서 `status: FAIL`, 원인 문자열, 노드 0개. 2차 수정 사례: `/dev/zero` 링크 `.py`, test 전용 missing import Go, `#[path]` 순환 Rust, compile 후 삭제한 Elixir 소스가 FAIL. 수정 전 바이너리에서 각각 메모리 약 14 GB까지 읽기 지속, PASS, 다른 오류, PASS였다. compile과 같은 초에 저장된 소스는 PASS(밀리초 비교로 되돌리면 실패). 3차 수정 사례: `/dev/zero` 링크 `mix.exs`, FIFO로 바꾼 tracked `.py`, ROOT 밖 파일 링크 `.go`, 단계마다 형제 `mod` 2개가 다음 파일을 가리키는 30단계 Rust가 FAIL. `4114601` 바이너리는 FIFO와 30단계 Rust에서 15초 안에 끝나지 않았고 ROOT 밖 `.go`는 PASS였다. 4차 수정 사례: Go 디렉터리의 untracked FIFO, `testdata/evil/go.mod`의 `/dev/zero` 링크, workspace 멤버 `Cargo.toml`의 `/dev/zero` 링크, Elixir `_build`의 FIFO가 FAIL. git 목록 기반이던 첫 구현은 untracked FIFO에서 `go list`가 멈춰 직접 순회로 바꿨다. `2cdb901` 바이너리는 `_build` FIFO에서 15초 안에 끝나지 않았다 |
+| CG-V03 | PASS | 4차 수정본 재실측(3차 수정본과 edge 집합 동일, axiom은 기존 untracked 파일 9개로 `dirty: true` 기록): hoplites(Python) 노드 49·edge 73, thesmothetai(Go+Python) 13·23, axiom(Elixir+Python) 10·10, akashic 작업 트리(Rust+Python) 328·178, taeguk 최상위(Python) 11·1, `tools/taeguk-cli` 3·4 모두 PASS, 실행 전후 대상 `git status` 동일. akashic의 늘어난 4개는 `personal/akashic/{server,service,storage,workflow}.py`의 `from .core import`가 기준 패키지 `__init__.py`로 가는 edge로 원본과 대조해 확인. taeguk `apps/taeguk`는 main checkout `_build/dev`가 소스보다 오래되어 FAIL(정상 동작). 1차 때 무작위 edge 25개 수동 대조 |
 | CG-V04 | PASS | 같은 commit 재실행 digest 동일, 파일 수정 후 `dirty: true`와 경로 기록·digest 변경, 기록된 python 버전이 `python3 --version` 출력과 일치 |
-| CG-V05 | PASS | 수작업 영향 집합(Python 5개 노드·거리 0~3, Go test import 포함 4개 노드)과 일치, `--depth 1` 기록, stale·dirty·FAIL 그래프, 질의 시점 미커밋 변경, 미대응 파일에서 UNKNOWN과 이유, digest 변조 그래프 거부 |
+| CG-V05 | PASS | 수작업 영향 집합(Python 5개 노드·거리 0~3, Go test import 포함 4개 노드)과 일치, `--depth 1` 기록, stale·dirty·FAIL 그래프, 질의 시점 미커밋 변경·untracked 파일, 미대응 파일에서 UNKNOWN과 이유, digest 변조 그래프 거부 |
 | CG-V06 | PASS | 변경 스킬 2개 skill-creator validator 통과, 한계 문구 포함, project 설치 dry-run에 변경 파일 포함(apply는 하지 않음) |
-| CG-V07 | PASS | `check_rules.py` PASS, Python 110개 OK, `cargo test --locked`(`TAEGUK_REQUIRE_GRAPH_TOOLS=1`) 34개 OK, `cargo clippy --all-targets` 경고 0, `mix format --check-formatted` OK, DB 연결 `mix test` 21개 OK |
+| CG-V07 | PASS | `check_rules.py` PASS, Python 110개 OK, `cargo test --locked`(`TAEGUK_REQUIRE_GRAPH_TOOLS=1`) 35개 OK, `cargo clippy --all-targets` 경고 0, `mix format --check-formatted` OK, DB 연결 `mix test` 21개 OK |
 | CG-V08 | 진행 중 | 아래 리뷰 기록 참고 |
 
 ## 로컬 Codex 리뷰 기록
@@ -194,6 +194,11 @@ acropolis/akashic의 `elixir/`처럼 `_build`가 없는 Elixir 프로젝트는 �
 
 - 안전·자원: `mix.exs` 안전 읽기, Python FIFO는 열기 전 파일 종류 확인과 nonblocking open, Go 입력 파일 ROOT 검사, Python `parents[N]` 인덱스 선검사, Rust 모듈 파일 방문 상한 10,000.
 - 정확도: Rust cfg 동명 모듈 분기별 보존, `use` 별칭을 모듈·블록 scope로 한정, glob import를 통한 하위 모듈 해석(1차 7번의 “누락 없음” 판단이 틀렸음을 정정), Python `sys.path` 대입 gap.
+
+4차 대상 `b630b14...2cdb901`, 같은 설정, 2026-10-28T22:19~22:21Z. 교차·보안 모두 exit 0, fingerprint 동일. P0·P1 0건, P2 8건(교차 6, 보안 2). 같은 부류 지적이 계속 새로 나와 멈추고 보고했고, BOSS가 “모두 수정 후 5차”로 답했다. 모두 타당으로 판정하고 처리했다.
+
+- 안전·현재성: 개별 입력 나열 대신 ROOT 전체 직접 순회 검사, `_build` 복사 검사, untracked 파일을 dirty에 포함.
+- 정확도: Rust 별칭을 선언 scope 기준으로 펼치고 cfg 분기별 바인딩 보존, 모듈 재노출·glob 재노출 추적, Python `sys.path` 변경의 문장 순서 평가.
 
 같은 구현자가 fixture와 기대값을 함께 만들었으므로 CG-V01·V05는 같은 가정을 공유한다. 시험 프로젝트 수동 대조(CG-V03)가 다른 관측 층이다. CI에서 Go·Elixir·Python toolchain으로 같은 테스트가 도는지는 PR 실행 후 확인한다.
 

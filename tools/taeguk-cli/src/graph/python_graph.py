@@ -147,42 +147,74 @@ def is_sys_path(node):
 
 
 def sys_path_changes(tree, path):
-    """Directories added to sys.path, evaluated from module-level path variables."""
+    """Directories added to sys.path. Module-level statements are evaluated in order, so a
+    change sees the path variables as they are at that point. Changes inside functions and
+    classes run later; they use the final values, unless a variable they use is assigned more
+    than once at module level, which leaves the value unknown."""
     env, front, back, unresolved = {}, [], [], []
+    assigned = {}
     for stmt in tree.body:
+        for node in ast.walk(stmt):
+            if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+                for t in node.targets if isinstance(node, ast.Assign) else [node.target]:
+                    if isinstance(t, ast.Name):
+                        assigned[t.id] = assigned.get(t.id, 0) + 1
+
+    def changes(scope, current, deferred):
+        for node in ast.walk(scope):
+            # Assignments to sys.path or its slices, and `from sys import path`, are not evaluated.
+            targets = []
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+            elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+                targets = [node.target]
+            if any(is_sys_path(t.value if isinstance(t, ast.Subscript) else t) for t in targets):
+                unresolved.append(f"line {node.lineno}: sys.path assignment")
+            if isinstance(node, ast.ImportFrom) and node.module == "sys" and any(a.name == "path" for a in node.names):
+                unresolved.append(f"line {node.lineno}: from sys import path")
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+                continue
+            if not is_sys_path(node.func.value):
+                continue
+            method, args = node.func.attr, node.args
+            arg = args[1] if method == "insert" and len(args) == 2 else args[0] if method == "append" and args else None
+            try:
+                if arg is None:
+                    raise Unresolved(f"sys.path.{method}")
+                if deferred:
+                    names = [n.id for n in ast.walk(arg) if isinstance(n, ast.Name) and assigned.get(n.id, 0) > 1]
+                    if names:
+                        raise Unresolved(f"{names[0]} is reassigned at module level")
+                value = eval_path(arg, path, current)
+                if not isinstance(value, list):
+                    raise Unresolved(ast.unparse(arg))
+                (front if method == "insert" else back).append("/".join(value))
+            except Unresolved as e:
+                unresolved.append(f"line {node.lineno}: {e}")
+
+    later = []
+    for stmt in tree.body:
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            later.append(stmt)
+            continue
+        changes(stmt, env, False)
         if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+            name = stmt.targets[0].id
             try:
                 value = eval_path(stmt.value, path, env)
-                if isinstance(value, list):
-                    env[stmt.targets[0].id] = value
             except Unresolved:
-                pass
-    for node in ast.walk(tree):
-        # Assignments to sys.path or its slices, and `from sys import path`, are not evaluated.
-        targets = []
-        if isinstance(node, ast.Assign):
-            targets = node.targets
-        elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
-            targets = [node.target]
-        if any(is_sys_path(t.value if isinstance(t, ast.Subscript) else t) for t in targets):
-            unresolved.append(f"line {node.lineno}: sys.path assignment")
-        if isinstance(node, ast.ImportFrom) and node.module == "sys" and any(a.name == "path" for a in node.names):
-            unresolved.append(f"line {node.lineno}: from sys import path")
-        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
-            continue
-        if not is_sys_path(node.func.value):
-            continue
-        method, args = node.func.attr, node.args
-        arg = args[1] if method == "insert" and len(args) == 2 else args[0] if method == "append" and args else None
-        try:
-            if arg is None:
-                raise Unresolved(f"sys.path.{method}")
-            value = eval_path(arg, path, env)
-            if not isinstance(value, list):
-                raise Unresolved(ast.unparse(arg))
-            (front if method == "insert" else back).append("/".join(value))
-        except Unresolved as e:
-            unresolved.append(f"line {node.lineno}: {e}")
+                value = None
+            if isinstance(value, list):
+                env[name] = value
+            else:
+                env.pop(name, None)
+        else:
+            for node in ast.walk(stmt):
+                for t in getattr(node, "targets", None) or [getattr(node, "target", None)]:
+                    if isinstance(t, ast.Name):
+                        env.pop(t.id, None)
+    for stmt in later:
+        changes(stmt, env, True)
     return front, back, unresolved
 
 

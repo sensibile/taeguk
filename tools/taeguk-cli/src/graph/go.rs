@@ -34,30 +34,14 @@ struct PackageError {
 
 const COMMAND: [&str; 7] = ["go", "list", "-e", "-deps", "-test", "-json", "./..."];
 
-pub(super) fn analyze(root: &Path, tracked: &[String]) -> (Analyzer, Result<Partial, String>) {
+pub(super) fn analyze(root: &Path) -> (Analyzer, Result<Partial, String>) {
     let mut a = Analyzer::new("go", "go", &COMMAND);
     a.version = tool_version(root, "go");
-    let result = run(root, tracked, &mut a);
+    let result = run(root, &mut a);
     (a, result)
 }
 
-/// Files go reads for the module: sources and module files.
-/// go skips `testdata` and `_`/`.`-prefixed directories, so files there are not checked.
-fn is_go_input(f: &str) -> bool {
-    let mut parts: Vec<&str> = f.split('/').collect();
-    let name = parts.pop().unwrap_or(f);
-    let skipped = parts
-        .iter()
-        .any(|d| *d == "testdata" || d.starts_with('_') || d.starts_with('.'));
-    !skipped
-        && (name.ends_with(".go") || ["go.mod", "go.sum", "go.work", "go.work.sum"].contains(&name))
-}
-
-fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, String> {
-    // go reads these itself, so links out of ROOT and special files are refused before it runs.
-    for f in tracked.iter().filter(|f| is_go_input(f)) {
-        check_source(root, &root.join(f))?;
-    }
+fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
     // -test also loads test-only imports, so a missing one fails like any other import.
     // No network or toolchain download: missing modules must fail instead of being fetched.
     // GOPRIVATE/GONOPROXY would otherwise send matching modules straight to their VCS hosts.

@@ -182,12 +182,70 @@ fn head(root: &Path) -> Result<String, String> {
 pub(crate) fn tracked(root: &Path) -> Result<Vec<String>, String> {
     nul_list(git(root, &["ls-files", "-z"])?)
 }
-/// Paths that differ from HEAD in the index or working tree.
+/// Paths that differ from HEAD in the index or working tree, plus untracked files that are
+/// not ignored: analyzers such as `go list` read those too.
 fn dirty_paths(root: &Path) -> Result<Vec<String>, String> {
-    nul_list(git(
+    let mut paths = nul_list(git(
         root,
         &["diff", "HEAD", "--name-only", "--relative", "-z", "--"],
+    )?)?;
+    paths.extend(untracked(root)?);
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+fn untracked(root: &Path) -> Result<Vec<String>, String> {
+    nul_list(git(
+        root,
+        &["ls-files", "-z", "--others", "--exclude-standard"],
     )?)
+}
+
+/// Every path under ROOT that git does not ignore must be a regular file, a directory, or a
+/// link to one inside ROOT. External analyzers (go, cargo, mix) read files we do not list, so a
+/// FIFO, device or outside link could block them or exhaust memory. The file system is walked
+/// directly because git does not list special files at all.
+fn scan_root(root: &Path) -> Result<(), String> {
+    let ignored: BTreeSet<String> = nul_list(git(
+        root,
+        &[
+            "ls-files",
+            "-z",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--directory",
+        ],
+    )?)?
+    .into_iter()
+    .map(|p| p.trim_end_matches('/').to_string())
+    .collect();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let path = entry.path();
+            let rel = relative(root, &path).ok_or("non-UTF-8 path under ROOT")?;
+            if rel == ".git" || ignored.contains(&rel) {
+                continue;
+            }
+            let kind = entry.file_type().map_err(|e| format!("{rel}: {e}"))?;
+            if kind.is_dir() {
+                stack.push(path);
+            } else if kind.is_symlink() {
+                let real = path.canonicalize().map_err(|e| format!("{rel}: {e}"))?;
+                if !real.starts_with(root) {
+                    return Err(format!("{rel} resolves outside ROOT"));
+                }
+                if !(real.is_file() || real.is_dir()) {
+                    return Err(format!("{rel} is not a regular file"));
+                }
+            } else if !kind.is_file() {
+                return Err(format!("{rel} is not a regular file"));
+            }
+        }
+    }
+    Ok(())
 }
 fn changed_since(root: &Path, base: &str) -> Result<Vec<String>, String> {
     nul_list(git(
@@ -316,10 +374,18 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
         return Err("no supported language detected; pass --lang".into());
     }
     let (mut analyzers, mut nodes, mut edges, mut gaps) = (vec![], vec![], vec![], vec![]);
+    let scanned = scan_root(&root);
     for lang in &langs {
+        if let Err(e) = &scanned {
+            let mut a = Analyzer::new(lang, "-", &[]);
+            a.version = tool_version(&root, lang);
+            a.error = Some(format!("ROOT scan: {e}"));
+            analyzers.push(a);
+            continue;
+        }
         let (a, result) = match lang.as_str() {
             "elixir" => elixir::analyze(&root, &files),
-            "go" => go::analyze(&root, &files),
+            "go" => go::analyze(&root),
             "python" => python::analyze(&root, &files),
             "rust" => rust::analyze(&root),
             other => return Err(format!("unsupported language: {other}")),

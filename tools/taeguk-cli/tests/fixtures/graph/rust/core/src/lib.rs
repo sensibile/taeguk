@@ -16,3 +16,5 @@ mod imp;
 pub fn platform() -> &'static str {
     imp::NAME
 }
+pub mod implementation;
+pub use crate::implementation as facade;
