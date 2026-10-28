@@ -8,6 +8,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::atomic::{AtomicUsize, Ordering},
+    time::{Duration, UNIX_EPOCH},
 };
 
 static SEQ: AtomicUsize = AtomicUsize::new(0);
@@ -224,6 +225,13 @@ fn analyzer_failures_mark_the_graph_failed() {
         fs::write(w.repo().join("src/app/util.py"), "def broken(:\n").unwrap();
         git(&w.repo(), &["commit", "-qam", "break"]);
         assert_fails(&w, "python", "python parse errors");
+        // A tracked link to a device or outside ROOT is refused instead of read.
+        let w = work("python");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("/dev/zero", w.repo().join("src/app/zero.py")).unwrap();
+        git(&w.repo(), &["add", "-A"]);
+        git(&w.repo(), &["commit", "-qm", "link"]);
+        assert_fails(&w, "python", "resolves outside ROOT");
     }
     if available("go", "version") {
         let w = work("go");
@@ -234,12 +242,29 @@ fn analyzer_failures_mark_the_graph_failed() {
         .unwrap();
         git(&w.repo(), &["commit", "-qam", "break"]);
         assert_fails(&w, "go", "go list failed");
+        // A missing import used only by tests fails too.
+        let w = work("go");
+        fs::write(
+            w.repo().join("c/m_test.go"),
+            "package c\n\nimport _ \"example.com/missing/x\"\n",
+        )
+        .unwrap();
+        git(&w.repo(), &["add", "-A"]);
+        git(&w.repo(), &["commit", "-qm", "break"]);
+        assert_fails(&w, "go", "example.com/missing/x");
     }
     if available("cargo", "--version") {
         let w = work("rust");
         fs::remove_file(w.repo().join("core/src/store.rs")).unwrap();
         git(&w.repo(), &["commit", "-qam", "break"]);
         assert_fails(&w, "rust", "file for mod store not found");
+        // `#[path]` back to a file on the current module chain must fail, not recurse forever.
+        let w = work("rust");
+        let lib = w.repo().join("core/src/lib.rs");
+        let text = fs::read_to_string(&lib).unwrap();
+        fs::write(&lib, text + "#[path = \"lib.rs\"]\nmod again;\n").unwrap();
+        git(&w.repo(), &["commit", "-qam", "cycle"]);
+        assert_fails(&w, "rust", "module cycle");
     }
     if available("mix", "--version") {
         let w = work("elixir");
@@ -253,6 +278,15 @@ fn analyzer_failures_mark_the_graph_failed() {
         assert!(o.status.success());
         let manifest = w.repo().join("_build/dev/lib/fx/.mix/compile.elixir");
         let before = fs::metadata(&manifest).unwrap().modified().unwrap();
+        // Mix stores the manifest time in whole seconds; a source saved within that second is not newer.
+        let second = before.duration_since(UNIX_EPOCH).unwrap().as_secs();
+        fs::File::options()
+            .write(true)
+            .open(w.repo().join("lib/fx/a.ex"))
+            .unwrap()
+            .set_modified(UNIX_EPOCH + Duration::from_millis(second * 1000 + 900))
+            .unwrap();
+        assert_eq!(build(&w, "elixir")["status"], "PASS");
         let touched = Command::new("touch")
             .args(["-t", "209901010000"])
             .arg(w.repo().join("lib/fx/a.ex"))
@@ -261,6 +295,17 @@ fn analyzer_failures_mark_the_graph_failed() {
         assert!(touched.success());
         assert_fails(&w, "elixir", "older than 1 source file");
         assert_eq!(fs::metadata(&manifest).unwrap().modified().unwrap(), before);
+        // A source deleted after the last compile is still in the manifest, so the build is stale.
+        let w = work("elixir");
+        let o = Command::new("mix")
+            .arg("compile")
+            .current_dir(w.repo())
+            .output()
+            .unwrap();
+        assert!(o.status.success());
+        git(&w.repo(), &["rm", "-q", "lib/fx/dyn.ex"]);
+        git(&w.repo(), &["commit", "-qm", "delete"]);
+        assert_fails(&w, "elixir", "no longer tracked");
     }
 }
 
@@ -337,6 +382,7 @@ fn impact_follows_reverse_edges_and_reports_limits() {
             ("python:src/app/util.py", 0),
             ("python:src/app/core.py", 1),
             ("python:src/app/cli.py", 2),
+            ("python:src/app/sub/deep.py", 2),
             ("python:scripts/run.py", 3)
         ])
     );
@@ -353,6 +399,16 @@ fn impact_follows_reverse_edges_and_reports_limits() {
         distances(&shallow),
         set(&[("python:src/app/util.py", 0), ("python:src/app/core.py", 1)])
     );
+
+    // Uncommitted edits can change imports the graph of HEAD does not show.
+    fs::write(w.repo().join("common.py"), "import scripts\n").unwrap();
+    let edited = impact(&w, &["--changed", "src/app/util.py"]);
+    assert_eq!(edited["status"], "UNKNOWN");
+    assert_eq!(
+        edited["reasons"],
+        serde_json::json!(["working_tree_differs_from_head"])
+    );
+    git(&w.repo(), &["checkout", "--", "."]);
 
     let unmapped = impact(&w, &["--changed", "README.md"]);
     assert_eq!(unmapped["status"], "UNKNOWN");

@@ -1,3 +1,5 @@
+pub mod widgets;
+
 use fx_core::model::Item;
 
 pub fn run() {

@@ -1,5 +1,5 @@
-use super::{Analyzer, Edge, Gap, Node, Partial, TempDir, exec, tool_version};
-use std::{collections::BTreeSet, env, fs, path::Path, process::Command, time::SystemTime};
+use super::{Analyzer, Edge, Gap, Node, Partial, TempDir, exec, read_source, tool_version};
+use std::{collections::BTreeSet, env, fs, path::Path, process::Command, time::UNIX_EPOCH};
 
 pub(super) fn analyze(root: &Path, tracked: &[String]) -> (Analyzer, Result<Partial, String>) {
     let mut a = Analyzer::new(
@@ -17,7 +17,7 @@ pub(super) fn analyze(root: &Path, tracked: &[String]) -> (Analyzer, Result<Part
             "<tmp>/xref.dot",
         ],
     );
-    a.version = tool_version("elixir");
+    a.version = tool_version(root, "elixir");
     let result = run(root, tracked, &mut a);
     (a, result)
 }
@@ -104,11 +104,24 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
     }
     let text = fs::read_to_string(&dot).map_err(|e| format!("xref output: {e}"))?;
     let mut out = parse_dot(&text)?;
+    // The manifest still lists sources deleted since the last compile; their edges are stale.
+    let current: BTreeSet<&str> = tracked.iter().map(String::as_str).collect();
+    let gone: Vec<&str> = out
+        .nodes
+        .iter()
+        .map(|n| n.files[0].as_str())
+        .filter(|f| !current.contains(f) || !root.join(f).is_file())
+        .collect();
+    if !gone.is_empty() {
+        return Err(format!(
+            "_build/{mix_env} lists {} source file(s) that are no longer tracked, e.g. {}; compile the project first",
+            gone.len(),
+            gone[0]
+        ));
+    }
     for n in &out.nodes {
         let file = &n.files[0];
-        let Ok(source) = fs::read_to_string(root.join(file)) else {
-            continue;
-        };
+        let (_, source) = read_source(root, &root.join(file))?;
         for (i, line) in source.lines().enumerate() {
             if DYNAMIC.iter().any(|d| line.contains(d)) {
                 out.gaps.push(Gap::new(
@@ -131,8 +144,11 @@ const DYNAMIC: [&str; 4] = [
     "String.to_existing_atom(",
 ];
 
-fn modified(path: &Path) -> Option<SystemTime> {
-    fs::metadata(path).and_then(|m| m.modified()).ok()
+/// Modification time in whole seconds; Mix writes the manifest time at that resolution,
+/// so a source saved earlier in the same second must not look newer.
+fn modified(path: &Path) -> Option<u64> {
+    let t = fs::metadata(path).and_then(|m| m.modified()).ok()?;
+    t.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs())
 }
 
 /// Parses `mix xref graph --format dot`: `"a"` node lines and `"a" -> "b" [label="(compile)"]` edges.

@@ -6,6 +6,7 @@ use std::{collections::BTreeSet, path::Path, process::Command};
 #[serde(rename_all = "PascalCase", default)]
 struct Package {
     import_path: String,
+    for_test: String,
     dir: String,
     standard: bool,
     module: Option<Module>,
@@ -31,22 +32,29 @@ struct PackageError {
     err: String,
 }
 
-const COMMAND: [&str; 6] = ["go", "list", "-e", "-deps", "-json", "./..."];
+const COMMAND: [&str; 7] = ["go", "list", "-e", "-deps", "-test", "-json", "./..."];
 
 pub(super) fn analyze(root: &Path) -> (Analyzer, Result<Partial, String>) {
     let mut a = Analyzer::new("go", "go", &COMMAND);
-    a.version = tool_version("go");
+    a.version = tool_version(root, "go");
     let result = run(root, &mut a);
     (a, result)
 }
 
 fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
+    // -test also loads test-only imports, so a missing one fails like any other import.
     // No network or toolchain download: missing modules must fail instead of being fetched.
+    // GOPRIVATE/GONOPROXY would otherwise send matching modules straight to their VCS hosts.
     let o = exec(
         Command::new("go")
             .args(&COMMAND[1..])
             .current_dir(root)
             .env("GOPROXY", "off")
+            .env("GOPRIVATE", "")
+            .env("GONOPROXY", "")
+            .env("GONOSUMDB", "")
+            .env("GOSUMDB", "off")
+            .env("GOVCS", "*:off")
             .env("GOTOOLCHAIN", "local")
             .env("GOFLAGS", "-mod=readonly"),
     )?;
@@ -73,7 +81,9 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
     }
     let main: Vec<&Package> = packages
         .iter()
+        // Test variants ("p [p.test]") and generated test mains repeat the packages listed plainly.
         .filter(|p| !p.standard && p.module.as_ref().is_some_and(|m| m.main))
+        .filter(|p| p.for_test.is_empty() && !p.import_path.ends_with(".test"))
         .collect();
     let ids: BTreeSet<&str> = main.iter().map(|p| p.import_path.as_str()).collect();
     let mut out = Partial::default();

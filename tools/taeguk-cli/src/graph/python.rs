@@ -28,7 +28,7 @@ pub(super) fn analyze(root: &Path, tracked: &[String]) -> (Analyzer, Result<Part
         "python3",
         &["python3", "-I", "-c", "<embedded python_graph.py>"],
     );
-    a.version = tool_version("python");
+    a.version = tool_version(root, "python");
     let result = run(root, tracked, &mut a);
     (a, result)
 }

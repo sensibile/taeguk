@@ -1,8 +1,9 @@
-use super::{Analyzer, Edge, Gap, Node, Partial, exec, normalize, relative, tool_version};
+use super::{
+    Analyzer, Edge, Gap, Node, Partial, exec, normalize, read_source, relative, tool_version,
+};
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -39,18 +40,20 @@ struct Dependency {
     path: Option<PathBuf>,
 }
 
-/// One module of a crate: the file holding it, child module names and the paths it mentions.
+/// One module of a crate: the file holding it, child module names, the paths it mentions
+/// and the names its `use` items bind (`use crate::a as b` binds `b` to `crate::a`).
 #[derive(Default)]
 struct Module {
     file: PathBuf,
     children: BTreeSet<String>,
     paths: Vec<Vec<String>>,
+    aliases: BTreeMap<String, Vec<String>>,
 }
 type Tree = BTreeMap<Vec<String>, Module>;
 
 pub(super) fn analyze(root: &Path) -> (Analyzer, Result<Partial, String>) {
     let mut a = Analyzer::new("rust", "cargo+syn", &COMMAND);
-    a.version = tool_version("rust");
+    a.version = tool_version(root, "rust");
     let result = run(root, &mut a);
     (a, result)
 }
@@ -60,7 +63,9 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
         Command::new("cargo")
             .args(&COMMAND[1..])
             .current_dir(root)
-            .env("CARGO_NET_OFFLINE", "true"),
+            .env("CARGO_NET_OFFLINE", "true")
+            // A rust-toolchain file must not make rustup download a toolchain.
+            .env("RUSTUP_AUTO_INSTALL", "0"),
     )?;
     a.exit_code = o.code;
     if o.code != Some(0) {
@@ -109,11 +114,16 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
                 externs.insert(name.clone(), lib.clone());
             }
             if !trees.contains_key(&t.src_path) {
-                let mut tree = Tree::new();
+                let mut w = Walk {
+                    root,
+                    tree: Tree::new(),
+                    gaps: &mut out.gaps,
+                    active: vec![],
+                };
                 let dir = t.src_path.parent().unwrap_or(root).to_path_buf();
-                walk_file(&t.src_path, vec![], &dir, &mut tree, &mut out.gaps, root)
+                w.file(&t.src_path, vec![], &dir)
                     .map_err(|e| format!("target {}: {e}", t.name))?;
-                trees.insert(t.src_path.clone(), tree);
+                trees.insert(t.src_path.clone(), w.tree);
             }
             crates.push((t.src_path.clone(), externs));
         }
@@ -130,7 +140,7 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
         let tree = &trees[crate_root];
         for (path, m) in tree {
             for segs in &m.paths {
-                if let Some(target) = resolve(tree, path, segs, externs, &trees)
+                if let Some(target) = resolve(tree, path, segs, externs, &trees, 0)
                     && target != m.file
                 {
                     out.edges.push(Edge::new(
@@ -156,9 +166,20 @@ fn resolve(
     segs: &[String],
     externs: &BTreeMap<String, PathBuf>,
     trees: &BTreeMap<PathBuf, Tree>,
+    expanded: usize,
 ) -> Option<PathBuf> {
+    let first = segs.first()?;
+    // A name bound by `use` stands for its full path; the bound limit stops `use a::b as a` loops.
+    let alias = tree
+        .get(here)
+        .and_then(|m| m.aliases.get(first))
+        .filter(|full| expanded < 8 && full.as_slice() != std::slice::from_ref(first));
+    if let Some(full) = alias {
+        let segs = [full.as_slice(), &segs[1..]].concat();
+        return resolve(tree, here, &segs, externs, trees, expanded + 1);
+    }
     let (mut tree, mut base, mut rest) = (tree, here.to_vec(), segs);
-    match segs.first()?.as_str() {
+    match first.as_str() {
         "crate" => (base, rest) = (vec![], &segs[1..]),
         "self" => rest = &segs[1..],
         "super" => {
@@ -182,113 +203,145 @@ fn resolve(
     Some(tree.get(&base)?.file.clone())
 }
 
-fn walk_file(
-    file: &Path,
-    path: Vec<String>,
-    mod_dir: &Path,
-    tree: &mut Tree,
-    gaps: &mut Vec<Gap>,
-    root: &Path,
-) -> Result<(), String> {
-    let text = fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
-    let ast = syn::parse_file(&text).map_err(|e| format!("{}: {e}", file.display()))?;
-    let file_dir = file.parent().unwrap_or(root).to_path_buf();
-    items(
-        &ast.items, path, file, &file_dir, mod_dir, true, tree, gaps, root,
-    )
+/// Module-tree walk of one crate; `active` holds the files on the current `mod` chain.
+struct Walk<'a> {
+    root: &'a Path,
+    tree: Tree,
+    gaps: &'a mut Vec<Gap>,
+    active: Vec<PathBuf>,
 }
 
-#[allow(clippy::too_many_arguments)]
-fn items(
-    list: &[syn::Item],
-    path: Vec<String>,
-    file: &Path,
-    file_dir: &Path,
-    mod_dir: &Path,
-    file_level: bool,
-    tree: &mut Tree,
-    gaps: &mut Vec<Gap>,
-    root: &Path,
-) -> Result<(), String> {
-    let mut paths = Paths::default();
-    let mut children = BTreeSet::new();
-    for item in list {
-        let syn::Item::Mod(m) = item else {
-            paths.visit_item(item);
-            continue;
-        };
-        let name = m.ident.to_string();
-        let child_path = [path.clone(), vec![name.clone()]].concat();
-        children.insert(name.clone());
-        let attr_path = m
-            .attrs
-            .iter()
-            .find(|a| a.path().is_ident("path"))
-            .and_then(|a| match &a.meta {
-                syn::Meta::NameValue(nv) => match &nv.value {
-                    syn::Expr::Lit(syn::ExprLit {
-                        lit: syn::Lit::Str(s),
-                        ..
-                    }) => Some(s.value()),
-                    _ => None,
-                },
-                _ => None,
-            });
-        if let Some((_, content)) = &m.content {
-            let dir = match &attr_path {
-                Some(p) => mod_dir.join(p),
-                None => mod_dir.join(&name),
-            };
-            items(
-                content, child_path, file, file_dir, &dir, false, tree, gaps, root,
-            )?;
-            continue;
+impl Walk<'_> {
+    fn shown(&self, file: &Path) -> String {
+        relative(self.root, file).unwrap_or_else(|| file.display().to_string())
+    }
+
+    fn file(&mut self, file: &Path, path: Vec<String>, mod_dir: &Path) -> Result<(), String> {
+        let (real, text) = read_source(self.root, file)?;
+        // `#[path]` can point a module back at a file on its own chain, which would never end.
+        if self.active.contains(&real) {
+            return Err(format!(
+                "{}: module cycle through #[path]",
+                self.shown(file)
+            ));
         }
-        let found = match &attr_path {
-            Some(p) => Some(normalize(&if file_level {
-                file_dir.join(p)
-            } else {
-                mod_dir.join(p)
-            }))
-            .filter(|f| f.is_file()),
-            None => [
-                mod_dir.join(format!("{name}.rs")),
-                mod_dir.join(&name).join("mod.rs"),
-            ]
-            .into_iter()
-            .find(|f| f.is_file()),
-        };
-        let Some(child) = found else {
-            let shown = relative(root, file).unwrap_or_else(|| file.display().to_string());
-            if m.attrs.iter().any(|a| a.path().is_ident("cfg")) {
-                gaps.push(Gap::new(
-                    "rust",
-                    "cfg_module_missing",
-                    Some(&shown),
-                    format!("mod {name} is cfg-gated and its file was not found"),
-                ));
+        let ast = syn::parse_file(&text).map_err(|e| format!("{}: {e}", self.shown(file)))?;
+        let file_dir = file.parent().unwrap_or(self.root).to_path_buf();
+        self.active.push(real);
+        let result = self.items(&ast.items, path, file, &file_dir, mod_dir, true);
+        self.active.pop();
+        result
+    }
+
+    fn items(
+        &mut self,
+        list: &[syn::Item],
+        path: Vec<String>,
+        file: &Path,
+        file_dir: &Path,
+        mod_dir: &Path,
+        file_level: bool,
+    ) -> Result<(), String> {
+        let mut paths = Paths::default();
+        let mut children = BTreeSet::new();
+        for item in list {
+            let syn::Item::Mod(m) = item else {
+                paths.visit_item(item);
+                continue;
+            };
+            let name = m.ident.to_string();
+            let child_path = [path.clone(), vec![name.clone()]].concat();
+            children.insert(name.clone());
+            let attr_path =
+                m.attrs
+                    .iter()
+                    .find(|a| a.path().is_ident("path"))
+                    .and_then(|a| match &a.meta {
+                        syn::Meta::NameValue(nv) => match &nv.value {
+                            syn::Expr::Lit(syn::ExprLit {
+                                lit: syn::Lit::Str(s),
+                                ..
+                            }) => Some(s.value()),
+                            _ => None,
+                        },
+                        _ => None,
+                    });
+            if let Some((_, content)) = &m.content {
+                let dir = match &attr_path {
+                    Some(p) => mod_dir.join(p),
+                    None => mod_dir.join(&name),
+                };
+                self.items(content, child_path, file, file_dir, &dir, false)?;
                 continue;
             }
-            return Err(format!("{shown}: file for mod {name} not found"));
-        };
-        let child_dir = if child.file_name().is_some_and(|n| n == "mod.rs") {
-            child.parent().unwrap_or(root).to_path_buf()
-        } else {
-            child.with_extension("")
-        };
-        walk_file(&child, child_path, &child_dir, tree, gaps, root)?;
+            let found = match &attr_path {
+                Some(p) => Some(normalize(&if file_level {
+                    file_dir.join(p)
+                } else {
+                    mod_dir.join(p)
+                }))
+                .filter(|f| f.is_file()),
+                None => [
+                    mod_dir.join(format!("{name}.rs")),
+                    mod_dir.join(&name).join("mod.rs"),
+                ]
+                .into_iter()
+                .find(|f| f.is_file()),
+            };
+            let Some(child) = found else {
+                let shown = self.shown(file);
+                if m.attrs.iter().any(|a| a.path().is_ident("cfg")) {
+                    self.gaps.push(Gap::new(
+                        "rust",
+                        "cfg_module_missing",
+                        Some(&shown),
+                        format!("mod {name} is cfg-gated and its file was not found"),
+                    ));
+                    continue;
+                }
+                return Err(format!("{shown}: file for mod {name} not found"));
+            };
+            let child_dir = if child.file_name().is_some_and(|n| n == "mod.rs") {
+                child.parent().unwrap_or(self.root).to_path_buf()
+            } else {
+                child.with_extension("")
+            };
+            self.file(&child, child_path, &child_dir)?;
+        }
+        let m = self.tree.entry(path).or_default();
+        m.file = file.to_path_buf();
+        m.children.extend(children);
+        m.paths.extend(paths.paths);
+        m.aliases.extend(paths.aliases);
+        Ok(())
     }
-    let m = tree.entry(path).or_default();
-    m.file = file.to_path_buf();
-    m.children.extend(children);
-    m.paths.extend(paths.0);
-    Ok(())
 }
 
 /// Collects `use` trees and expression/type paths; nested modules are walked separately.
 #[derive(Default)]
-struct Paths(Vec<Vec<String>>);
+struct Paths {
+    paths: Vec<Vec<String>>,
+    aliases: BTreeMap<String, Vec<String>>,
+}
 impl Paths {
+    /// Records a `use` leaf: `ident` is the imported name (`self` for the prefix itself),
+    /// `bound` the name it is bound to in this module.
+    fn leaf(&mut self, prefix: &[String], ident: &syn::Ident, bound: &syn::Ident) {
+        let full = if ident == "self" {
+            prefix.to_vec()
+        } else {
+            [prefix, &[ident.to_string()]].concat()
+        };
+        let bound = if bound == "self" {
+            prefix.last().cloned()
+        } else {
+            Some(bound.to_string())
+        };
+        if let Some(bound) = bound.filter(|b| b != "_") {
+            self.aliases.insert(bound, full.clone());
+        }
+        self.paths.push(full);
+    }
     fn use_tree(&mut self, prefix: &mut Vec<String>, t: &syn::UseTree) {
         match t {
             syn::UseTree::Path(p) => {
@@ -296,14 +349,9 @@ impl Paths {
                 self.use_tree(prefix, &p.tree);
                 prefix.pop();
             }
-            syn::UseTree::Name(n) if n.ident == "self" => self.0.push(prefix.clone()),
-            syn::UseTree::Name(n) => self
-                .0
-                .push([prefix.clone(), vec![n.ident.to_string()]].concat()),
-            syn::UseTree::Rename(r) => self
-                .0
-                .push([prefix.clone(), vec![r.ident.to_string()]].concat()),
-            syn::UseTree::Glob(_) => self.0.push(prefix.clone()),
+            syn::UseTree::Name(n) => self.leaf(prefix, &n.ident, &n.ident),
+            syn::UseTree::Rename(r) => self.leaf(prefix, &r.ident, &r.rename),
+            syn::UseTree::Glob(_) => self.paths.push(prefix.clone()),
             syn::UseTree::Group(g) => g.items.iter().for_each(|t| self.use_tree(prefix, t)),
         }
     }
@@ -314,7 +362,7 @@ impl<'ast> Visit<'ast> for Paths {
         self.use_tree(&mut vec![], &u.tree);
     }
     fn visit_path(&mut self, p: &'ast syn::Path) {
-        self.0
+        self.paths
             .push(p.segments.iter().map(|s| s.ident.to_string()).collect());
         visit::visit_path(self, p);
     }
@@ -331,10 +379,16 @@ mod tests {
         .unwrap();
         let mut p = Paths::default();
         f.items.iter().for_each(|i| p.visit_item(i));
-        let got: Vec<String> = p.0.iter().map(|s| s.join("::")).collect();
+        let got: Vec<String> = p.paths.iter().map(|s| s.join("::")).collect();
         assert_eq!(
             got,
             ["crate::a", "crate::a::B", "crate::c", "super::d", "x::y"]
         );
+        let aliases: Vec<String> = p
+            .aliases
+            .iter()
+            .map(|(k, v)| format!("{k}={}", v.join("::")))
+            .collect();
+        assert_eq!(aliases, ["B=crate::a::B", "a=crate::a", "e=super::d"]);
     }
 }

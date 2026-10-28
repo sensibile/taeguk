@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     env, fs,
+    io::Read,
     path::{Component, Path, PathBuf},
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
@@ -125,9 +126,17 @@ pub(crate) fn exec(cmd: &mut Command) -> Result<Output, String> {
         stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
     })
 }
-/// First non-empty line of `<tool> <arg>`; tools print versions on stdout or stderr.
-pub(crate) fn version(tool: &str, args: &[&str]) -> Option<String> {
-    let o = exec(Command::new(tool).args(args)).ok()?;
+/// Last non-empty line of `<tool> <arg>` run in ROOT, where toolchain files select the version.
+/// Toolchain auto-install and download stay off, as in the analyzers.
+pub(crate) fn version(root: &Path, tool: &str, args: &[&str]) -> Option<String> {
+    let o = exec(
+        Command::new(tool)
+            .args(args)
+            .current_dir(root)
+            .env("RUSTUP_AUTO_INSTALL", "0")
+            .env("GOTOOLCHAIN", "local"),
+    )
+    .ok()?;
     let text = String::from_utf8_lossy(&o.stdout).into_owned() + &o.stderr;
     text.lines()
         .map(str::trim)
@@ -135,12 +144,12 @@ pub(crate) fn version(tool: &str, args: &[&str]) -> Option<String> {
         .map(Into::into)
 }
 /// Version of the tool an analyzer runs; impact compares it with the version in the graph.
-pub(crate) fn tool_version(lang: &str) -> Option<String> {
+pub(crate) fn tool_version(root: &Path, lang: &str) -> Option<String> {
     match lang {
-        "elixir" => version("mix", &["--version"]),
-        "go" => version("go", &["version"]),
-        "python" => version("python3", &["--version"]),
-        "rust" => version("cargo", &["--version"])
+        "elixir" => version(root, "mix", &["--version"]),
+        "go" => version(root, "go", &["version"]),
+        "python" => version(root, "python3", &["--version"]),
+        "rust" => version(root, "cargo", &["--version"])
             .map(|c| format!("{c}; taeguk-cli {} syn 3", env!("CARGO_PKG_VERSION"))),
         _ => None,
     }
@@ -173,6 +182,13 @@ fn head(root: &Path) -> Result<String, String> {
 pub(crate) fn tracked(root: &Path) -> Result<Vec<String>, String> {
     nul_list(git(root, &["ls-files", "-z"])?)
 }
+/// Paths that differ from HEAD in the index or working tree.
+fn dirty_paths(root: &Path) -> Result<Vec<String>, String> {
+    nul_list(git(
+        root,
+        &["diff", "HEAD", "--name-only", "--relative", "-z", "--"],
+    )?)
+}
 fn changed_since(root: &Path, base: &str) -> Result<Vec<String>, String> {
     nul_list(git(
         root,
@@ -202,6 +218,32 @@ pub(crate) fn normalize(path: &Path) -> PathBuf {
         }
     }
     out
+}
+
+/// Largest source file an analyzer reads.
+const MAX_SOURCE: u64 = 8 << 20;
+/// Reads a source file that resolves to a regular file inside ROOT (canonical), within MAX_SOURCE.
+/// Returns its canonical path with the text, so links cannot pull in files outside ROOT or devices.
+pub(crate) fn read_source(root: &Path, path: &Path) -> Result<(PathBuf, String), String> {
+    let shown = || relative(root, path).unwrap_or_else(|| path.display().to_string());
+    let real = path
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", shown()))?;
+    if !real.starts_with(root) {
+        return Err(format!("{} resolves outside ROOT", shown()));
+    }
+    let meta = fs::metadata(&real).map_err(|e| format!("{}: {e}", shown()))?;
+    if !meta.is_file() {
+        return Err(format!("{} is not a regular file", shown()));
+    }
+    let mut text = String::new();
+    fs::File::open(&real)
+        .and_then(|f| f.take(MAX_SOURCE + 1).read_to_string(&mut text))
+        .map_err(|e| format!("{}: {e}", shown()))?;
+    if text.len() as u64 > MAX_SOURCE {
+        return Err(format!("{} is larger than {MAX_SOURCE} bytes", shown()));
+    }
+    Ok((real, text))
 }
 
 pub(crate) struct TempDir(pub(crate) PathBuf);
@@ -254,10 +296,7 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
         .map_err(|e| format!("{}: {e}", root.display()))?;
     let commit = head(&root)?;
     let files = tracked(&root)?;
-    let dirty_paths = nul_list(git(
-        &root,
-        &["diff", "HEAD", "--name-only", "--relative", "-z", "--"],
-    )?)?;
+    let dirty_paths = dirty_paths(&root)?;
     let langs = if langs.is_empty() {
         detect(&root, &files)
     } else {
@@ -343,7 +382,14 @@ fn read_graph(path: &Path) -> Result<Graph, String> {
     Ok(g)
 }
 
-fn impact(g: &Graph, root: &Path, head: &str, changed: &[String], depth: Option<usize>) -> Value {
+fn impact(
+    g: &Graph,
+    root: &Path,
+    head: &str,
+    worktree_dirty: bool,
+    changed: &[String],
+    depth: Option<usize>,
+) -> Value {
     let mut reasons = Vec::new();
     // Paths are ROOT-relative, so a graph of another directory must not be reused.
     if root.display().to_string() != g.root {
@@ -351,7 +397,7 @@ fn impact(g: &Graph, root: &Path, head: &str, changed: &[String], depth: Option<
     }
     if g.analyzers
         .iter()
-        .any(|a| a.version.is_none() || tool_version(&a.lang) != a.version)
+        .any(|a| a.version.is_none() || tool_version(root, &a.lang) != a.version)
     {
         reasons.push("analyzer_version_changed_or_unknown");
     }
@@ -363,6 +409,10 @@ fn impact(g: &Graph, root: &Path, head: &str, changed: &[String], depth: Option<
     }
     if g.dirty {
         reasons.push("graph_built_from_dirty_tree");
+    }
+    // Uncommitted edits can add or drop imports the graph of HEAD does not have.
+    if worktree_dirty {
+        reasons.push("working_tree_differs_from_head");
     }
     let mut owner: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for n in &g.nodes {
@@ -479,7 +529,8 @@ pub(crate) fn run(args: &[String]) -> Result<Value, String> {
             }
             changed.sort();
             changed.dedup();
-            Ok(impact(&g, root, &head(root)?, &changed, depth))
+            let dirty = !dirty_paths(root)?.is_empty();
+            Ok(impact(&g, root, &head(root)?, dirty, &changed, depth))
         }
         _ => Err(usage()),
     }

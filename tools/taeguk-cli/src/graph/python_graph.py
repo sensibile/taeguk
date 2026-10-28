@@ -2,16 +2,34 @@
 
 import ast
 import json
+import os
+import stat
 import sys
 import tomllib
 from pathlib import PurePosixPath
 
 
+MAX_SOURCE = 8 << 20
+
+
+def read_source(root, path):
+    """Bytes of a file that resolves to a regular file inside ROOT, at most MAX_SOURCE."""
+    real = os.path.realpath(os.path.join(root, path))
+    if os.path.commonpath([root, real]) != root:
+        raise ValueError("resolves outside ROOT")
+    with open(real, "rb") as f:
+        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+            raise ValueError("not a regular file")
+        data = f.read(MAX_SOURCE + 1)
+    if len(data) > MAX_SOURCE:
+        raise ValueError(f"larger than {MAX_SOURCE} bytes")
+    return data
+
+
 def configured_roots(root, files):
     roots = []
     try:
-        with open(f"{root}/pyproject.toml", "rb") as f:
-            tool = tomllib.load(f).get("tool", {})
+        tool = tomllib.loads(read_source(root, "pyproject.toml").decode()).get("tool", {})
         setuptools = tool.get("setuptools", {})
         found = setuptools.get("packages", {})
         if isinstance(found, dict):
@@ -155,9 +173,8 @@ def main():
     edges, gaps, errors = set(), [], []
     for path in sorted(files):
         try:
-            with open(f"{root}/{path}", "rb") as f:
-                tree = ast.parse(f.read(), path)
-        except (SyntaxError, ValueError) as e:
+            tree = ast.parse(read_source(root, path), path)
+        except (OSError, SyntaxError, ValueError) as e:
             errors.append(f"{path}: {e}")
             continue
         here = str(PurePosixPath(path).parent)
@@ -182,8 +199,8 @@ def main():
                     pkg = "" if str(base) == "." else str(base)
                     parts = node.module.split(".") if node.module else []
                     mod = join(pkg, *parts)
-                    # Importing pkg.sub.util also runs pkg/sub/__init__.py.
-                    inits = [join(pkg, *parts[:i], "__init__.py") for i in range(1, len(parts))]
+                    # Importing pkg.sub.util also runs pkg/__init__.py and pkg/sub/__init__.py.
+                    inits = [join(pkg, *parts[:i], "__init__.py") for i in range(len(parts))]
                     for f in inits:
                         if f in files and f != path:
                             edges.add((path, f))
