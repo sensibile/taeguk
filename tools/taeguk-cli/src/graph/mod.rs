@@ -201,11 +201,15 @@ fn untracked(root: &Path) -> Result<Vec<String>, String> {
     )?)
 }
 
-/// Every path under ROOT that git does not ignore must be a regular file, a directory, or a
-/// link to one inside ROOT. External analyzers (go, cargo, mix) read files we do not list, so a
-/// FIFO, device or outside link could block them or exhaust memory. The file system is walked
-/// directly because git does not list special files at all.
-fn scan_root(root: &Path) -> Result<(), String> {
+/// Paths under ROOT that external analyzers (go, cargo, mix) may read without our listing them
+/// must not block them or exhaust memory. Tracked and untracked (not ignored) paths must be
+/// regular files, directories, or links to those inside ROOT. Ignored paths are read too
+/// (`go list` does not follow .gitignore) but hold local environments such as `.venv` whose links
+/// leave ROOT, so there only special files (FIFO, device, socket) and links to them are refused.
+/// The file system is walked directly because git does not list special files. `.git` and
+/// ignored `_build`/`target` outputs are skipped: cargo metadata does not read `target`, and
+/// the Elixir build is checked while it is copied. Tracked paths are checked even there.
+fn scan_root(root: &Path, tracked: &[String]) -> Result<(), String> {
     let ignored: BTreeSet<String> = nul_list(git(
         root,
         &[
@@ -220,21 +224,19 @@ fn scan_root(root: &Path) -> Result<(), String> {
     .into_iter()
     .map(|p| p.trim_end_matches('/').to_string())
     .collect();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        for entry in fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            let path = entry.path();
-            let rel = relative(root, &path).ok_or("non-UTF-8 path under ROOT")?;
-            if rel == ".git" || ignored.contains(&rel) {
-                continue;
-            }
-            let kind = entry.file_type().map_err(|e| format!("{rel}: {e}"))?;
+    let check =
+        |rel: &str, path: &Path, kind: fs::FileType, strict: bool| -> Result<bool, String> {
             if kind.is_dir() {
-                stack.push(path);
-            } else if kind.is_symlink() {
-                let real = path.canonicalize().map_err(|e| format!("{rel}: {e}"))?;
-                if !real.starts_with(root) {
+                return Ok(true);
+            }
+            if kind.is_symlink() {
+                let real = match path.canonicalize() {
+                    Ok(real) => real,
+                    // A dangling link in an ignored environment cannot be opened by anyone.
+                    Err(_) if !strict => return Ok(false),
+                    Err(e) => return Err(format!("{rel}: {e}")),
+                };
+                if strict && !real.starts_with(root) {
                     return Err(format!("{rel} resolves outside ROOT"));
                 }
                 if !(real.is_file() || real.is_dir()) {
@@ -243,9 +245,64 @@ fn scan_root(root: &Path) -> Result<(), String> {
             } else if !kind.is_file() {
                 return Err(format!("{rel} is not a regular file"));
             }
+            Ok(false)
+        };
+    for f in tracked {
+        if let Ok(meta) = fs::symlink_metadata(root.join(f)) {
+            check(f, &root.join(f), meta.file_type(), true)?;
+        }
+    }
+    let mut stack = vec![(root.to_path_buf(), false)];
+    while let Some((dir, in_ignored)) = stack.pop() {
+        for entry in fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let path = entry.path();
+            let rel = relative(root, &path).ok_or("non-UTF-8 path under ROOT")?;
+            let name = entry.file_name();
+            let is_ignored = in_ignored || ignored.contains(&rel);
+            if rel == ".git" || (is_ignored && (name == "_build" || name == "target")) {
+                continue;
+            }
+            let kind = entry.file_type().map_err(|e| format!("{rel}: {e}"))?;
+            if check(&rel, &path, kind, !is_ignored)? {
+                stack.push((path, is_ignored));
+            }
         }
     }
     Ok(())
+}
+
+/// Resolves `--out` so that writing it cannot follow a link: an existing link is refused, and
+/// a path written inside ROOT must not leave ROOT through a linked directory.
+fn output_path(root: &Path, out: &Path) -> Result<PathBuf, String> {
+    let name = out
+        .file_name()
+        .ok_or_else(|| format!("{}: not a file path", out.display()))?;
+    let parent = match out.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    let real = parent
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", parent.display()))?
+        .join(name);
+    if fs::symlink_metadata(&real).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(format!(
+            "{} is a link; refusing to write through it",
+            out.display()
+        ));
+    }
+    let lexical = normalize(&env::current_dir().map_err(|e| e.to_string())?.join(out));
+    let lexical_root = lexical.ancestors().find_map(|a| {
+        a.canonicalize()
+            .ok()
+            .filter(|c| c == root)
+            .map(|_| a.to_path_buf())
+    });
+    if lexical_root.is_some() && !real.starts_with(root) {
+        return Err(format!("{} leaves ROOT through a link", out.display()));
+    }
+    Ok(real)
 }
 fn changed_since(root: &Path, base: &str) -> Result<Vec<String>, String> {
     nul_list(git(
@@ -374,7 +431,8 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
         return Err("no supported language detected; pass --lang".into());
     }
     let (mut analyzers, mut nodes, mut edges, mut gaps) = (vec![], vec![], vec![], vec![]);
-    let scanned = scan_root(&root);
+    let out = output_path(&root, out)?;
+    let scanned = scan_root(&root, &files);
     for lang in &langs {
         if let Err(e) = &scanned {
             let mut a = Analyzer::new(lang, "-", &[]);
@@ -438,7 +496,7 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
     };
     g.digest = digest(&g);
     let text = serde_json::to_string_pretty(&g).map_err(|e| e.to_string())?;
-    fs::write(out, text + "\n").map_err(|e| format!("{}: {e}", out.display()))?;
+    fs::write(&out, text + "\n").map_err(|e| format!("{}: {e}", out.display()))?;
     Ok(
         json!({"status": g.status, "out": out.display().to_string(), "digest": g.digest,
         "commit": g.commit, "dirty": g.dirty, "nodes": g.nodes.len(), "edges": g.edges.len(),
@@ -531,6 +589,26 @@ fn impact(
         }
     }
     let by_id: BTreeMap<_, _> = g.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+    // A gap marks a file whose dependencies static analysis could not fully resolve, so it may
+    // depend on an impacted file without an edge. Gaps outside the impacted set are handed to LLM
+    // review; until that review is recorded the static result alone is not complete.
+    let impacted_files: BTreeSet<&str> = dist
+        .keys()
+        .flat_map(|id| by_id[id].files.iter().map(String::as_str))
+        .chain(unmapped.iter().map(String::as_str))
+        .collect();
+    let llm_review: Vec<&Gap> = g
+        .gaps
+        .iter()
+        .filter(|gap| {
+            gap.file
+                .as_deref()
+                .is_none_or(|f| !impacted_files.contains(f))
+        })
+        .collect();
+    if !llm_review.is_empty() {
+        reasons.push("gaps_need_llm_review");
+    }
     let mut impacted: Vec<_> = dist.iter().map(|(id, d)| (*d, *id)).collect();
     impacted.sort();
     let impacted: Vec<Value> = impacted
@@ -544,8 +622,9 @@ fn impact(
     };
     json!({"status": status, "reasons": reasons, "graph_digest": g.digest, "graph_commit": g.commit,
         "head": head, "changed": changed, "unmapped": unmapped, "depth_limit": depth,
-        "impacted": impacted, "gaps": g.gaps,
+        "impacted": impacted, "llm_review": llm_review, "gaps": g.gaps,
         "limits": ["static source dependencies only",
+            "llm_review lists gaps outside the impacted files: an LLM reviewer must read each site and record whether it reaches an impacted file before the result is used as complete",
             "runtime, configuration, data and dynamic dispatch paths are not included",
             "a missing edge is not evidence of no impact",
             "PASS means the graph was current and every changed file was mapped, not that unlisted code is unaffected"]})

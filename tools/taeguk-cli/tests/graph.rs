@@ -291,6 +291,19 @@ fn analyzer_failures_mark_the_graph_failed() {
         git(&w.repo(), &["add", "-A"]);
         git(&w.repo(), &["commit", "-qm", "link"]);
         assert_fails(&w, "go", "testdata/evil/go.mod resolves outside ROOT");
+        // go list does not follow .gitignore, so ignored directories are checked too.
+        let w = work("go");
+        fs::write(w.repo().join(".gitignore"), "/generated/\n").unwrap();
+        fs::create_dir_all(w.repo().join("generated")).unwrap();
+        fs::write(w.repo().join("generated/g.go"), "package generated\n").unwrap();
+        assert!(
+            Command::new("mkfifo")
+                .arg(w.repo().join("generated/extra.go"))
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert_fails(&w, "go", "generated/extra.go is not a regular file");
     }
     if available("cargo", "--version") {
         let w = work("rust");
@@ -395,7 +408,59 @@ fn analyzer_failures_mark_the_graph_failed() {
                 .success()
         );
         assert_fails(&w, "elixir", "is not a regular file");
+        // The build directory itself must not be a link out of ROOT.
+        let w = work("elixir");
+        let o = Command::new("mix")
+            .arg("compile")
+            .current_dir(w.repo())
+            .output()
+            .unwrap();
+        assert!(o.status.success());
+        let outside = w.0.join("outside-build");
+        fs::rename(w.repo().join("_build/dev"), &outside).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, w.repo().join("_build/dev")).unwrap();
+        assert_fails(&w, "elixir", "_build/dev resolves outside ROOT");
     }
+}
+
+#[test]
+fn output_links_are_not_followed() {
+    if !available("python3", "--version") {
+        return;
+    }
+    let w = work("python");
+    let victim = w.0.join("victim.txt");
+    fs::write(&victim, "keep\n").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&victim, w.repo().join("graph.json")).unwrap();
+    let out = w.repo().join("graph.json");
+    let (ok, v) = taeguk(&[
+        "graph",
+        "build",
+        w.repo().to_str().unwrap(),
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    assert!(!ok, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("is a link"), "{v}");
+    assert_eq!(fs::read_to_string(&victim).unwrap(), "keep\n");
+    // A linked directory inside ROOT that leads outside is refused as well.
+    fs::remove_file(&out).unwrap();
+    fs::create_dir_all(w.0.join("elsewhere")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(w.0.join("elsewhere"), w.repo().join("outdir")).unwrap();
+    let out = w.repo().join("outdir/graph.json");
+    let (ok, v) = taeguk(&[
+        "graph",
+        "build",
+        w.repo().to_str().unwrap(),
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    assert!(!ok, "{v}");
+    assert!(v["error"].as_str().unwrap().contains("leaves ROOT"), "{v}");
+    assert!(!w.0.join("elsewhere/graph.json").exists());
 }
 
 #[test]
@@ -404,7 +469,14 @@ fn rebuild_is_stable_and_dirty_trees_are_recorded() {
         return;
     }
     let w = work("python");
+    // Ignored local environments may link outside ROOT; only special files are refused there.
+    fs::write(w.repo().join(".gitignore"), "/.venv/\n").unwrap();
+    git(&w.repo(), &["commit", "-qam", "ignore venv"]);
+    fs::create_dir_all(w.repo().join(".venv/bin")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("/bin/sh", w.repo().join(".venv/bin/python")).unwrap();
     let first = build(&w, "python");
+    assert_eq!(first["status"], "PASS", "{first}");
     let second = build(&w, "python");
     assert_eq!(first["digest"], second["digest"]);
     assert_eq!(first["dirty"], false);
@@ -452,6 +524,24 @@ fn distances(v: &Value) -> BTreeSet<(String, u64)> {
         })
         .collect()
 }
+fn review_files(v: &Value) -> Vec<String> {
+    let files: BTreeSet<String> = v["llm_review"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["file"].as_str().unwrap().to_string())
+        .collect();
+    files.into_iter().collect()
+}
+fn other_reasons(v: &Value) -> Vec<String> {
+    v["reasons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r.as_str().unwrap().to_string())
+        .filter(|r| r != "gaps_need_llm_review")
+        .collect()
+}
 fn set(items: &[(&str, u64)]) -> BTreeSet<(String, u64)> {
     items.iter().map(|(i, d)| (i.to_string(), *d)).collect()
 }
@@ -464,7 +554,18 @@ fn impact_follows_reverse_edges_and_reports_limits() {
     let w = work("python");
     build(&w, "python");
     let v = impact(&w, &["--changed", "src/app/util.py"]);
-    assert_eq!(v["status"], "PASS", "{v}");
+    // Gaps outside the impacted files may hide dependents, so they go to LLM review.
+    assert_eq!(v["status"], "UNKNOWN", "{v}");
+    assert_eq!(v["reasons"], serde_json::json!(["gaps_need_llm_review"]));
+    assert_eq!(
+        review_files(&v),
+        [
+            "tests/test_aliases.py",
+            "tests/test_helper.py",
+            "tests/test_order.py",
+            "tests/test_paths.py"
+        ]
+    );
     assert_eq!(
         distances(&v),
         set(&[
@@ -493,17 +594,14 @@ fn impact_follows_reverse_edges_and_reports_limits() {
     fs::write(w.repo().join("common.py"), "import scripts\n").unwrap();
     let edited = impact(&w, &["--changed", "src/app/util.py"]);
     assert_eq!(edited["status"], "UNKNOWN");
-    assert_eq!(
-        edited["reasons"],
-        serde_json::json!(["working_tree_differs_from_head"])
-    );
+    assert_eq!(other_reasons(&edited), ["working_tree_differs_from_head"]);
     git(&w.repo(), &["checkout", "--", "."]);
     // An untracked source is read by analyzers too, so it also makes the tree differ.
     fs::write(w.repo().join("scripts/extra.py"), "import helper\n").unwrap();
     let untracked = impact(&w, &["--changed", "src/app/util.py"]);
     assert_eq!(
-        untracked["reasons"],
-        serde_json::json!(["working_tree_differs_from_head"])
+        other_reasons(&untracked),
+        ["working_tree_differs_from_head"]
     );
     fs::remove_file(w.repo().join("scripts/extra.py")).unwrap();
 
@@ -573,16 +671,23 @@ fn go_impact_includes_test_imports() {
     let w = work("go");
     build(&w, "go");
     let v = impact(&w, &["--changed", "a/a.go"]);
+    let expected = set(&[
+        ("go:example.com/fx/a", 0),
+        ("go:example.com/fx/cmd", 1),
+        ("go:example.com/fx/c", 1),
+        ("go:example.com/fx/b", 2),
+    ]);
+    assert_eq!(v["status"], "UNKNOWN", "{v}");
+    assert_eq!(review_files(&v), ["d/d_tool.go"]);
+    assert_eq!(distances(&v), expected);
+    // Without gaps the static result is complete for the graph's scope.
+    git(&w.repo(), &["rm", "-q", "d/d_tool.go"]);
+    git(&w.repo(), &["commit", "-qm", "drop"]);
+    build(&w, "go");
+    let v = impact(&w, &["--changed", "a/a.go"]);
     assert_eq!(v["status"], "PASS", "{v}");
-    assert_eq!(
-        distances(&v),
-        set(&[
-            ("go:example.com/fx/a", 0),
-            ("go:example.com/fx/cmd", 1),
-            ("go:example.com/fx/c", 1),
-            ("go:example.com/fx/b", 2)
-        ])
-    );
+    assert_eq!(v["llm_review"], serde_json::json!([]));
+    assert_eq!(distances(&v), expected);
 }
 
 /// Rewrites one analyzer version and recomputes the digest the way the CLI defines it.
@@ -630,10 +735,7 @@ fn impact_rejects_other_roots_and_tool_versions() {
     with_version(&w.graph(), "Python 0.0.0");
     let v = impact(&w, &["--changed", "scripts/helper.py"]);
     assert_eq!(v["status"], "UNKNOWN");
-    assert_eq!(
-        v["reasons"],
-        serde_json::json!(["analyzer_version_changed_or_unknown"])
-    );
+    assert_eq!(other_reasons(&v), ["analyzer_version_changed_or_unknown"]);
 }
 
 #[test]

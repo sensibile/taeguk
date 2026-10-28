@@ -141,12 +141,34 @@ def eval_path(node, path, env):
     raise Unresolved(ast.unparse(node))
 
 
-def is_sys_path(node):
+DYNAMIC = ("import_module", "__import__", "spec_from_file_location", "run_path")
+
+
+def bindings(tree):
+    """Names bound to the sys module (`import sys as s`) and to dynamic import functions
+    (`from importlib import import_module as load`, `load = importlib.import_module`)."""
+    sys_names, dynamic = {"sys"}, set(DYNAMIC)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            sys_names |= {a.asname for a in node.names if a.name == "sys" and a.asname}
+        elif isinstance(node, ast.ImportFrom):
+            dynamic |= {a.asname for a in node.names if a.name in DYNAMIC and a.asname}
+        elif isinstance(node, ast.Assign):
+            value = node.value
+            name = getattr(value, "attr", None) or getattr(value, "id", None)
+            if isinstance(value, (ast.Name, ast.Attribute)) and name in DYNAMIC:
+                dynamic |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+            if isinstance(value, ast.Name) and value.id in sys_names:
+                sys_names |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+    return sys_names, dynamic
+
+
+def is_sys_path(node, sys_names):
     return (isinstance(node, ast.Attribute) and node.attr == "path"
-            and isinstance(node.value, ast.Name) and node.value.id == "sys")
+            and isinstance(node.value, ast.Name) and node.value.id in sys_names)
 
 
-def sys_path_changes(tree, path):
+def sys_path_changes(tree, path, sys_names):
     """Directories added to sys.path. Module-level statements are evaluated in order, so a
     change sees the path variables as they are at that point. Changes inside functions and
     classes run later; they use the final values, unless a variable they use is assigned more
@@ -162,19 +184,22 @@ def sys_path_changes(tree, path):
 
     def changes(scope, current, deferred):
         for node in ast.walk(scope):
-            # Assignments to sys.path or its slices, and `from sys import path`, are not evaluated.
+            # Assignments to sys.path or its slices, other names for it, and `from sys import path`
+            # are not evaluated.
             targets = []
             if isinstance(node, ast.Assign):
                 targets = node.targets
             elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
                 targets = [node.target]
-            if any(is_sys_path(t.value if isinstance(t, ast.Subscript) else t) for t in targets):
+            if any(is_sys_path(t.value if isinstance(t, ast.Subscript) else t, sys_names) for t in targets):
                 unresolved.append(f"line {node.lineno}: sys.path assignment")
             if isinstance(node, ast.ImportFrom) and node.module == "sys" and any(a.name == "path" for a in node.names):
                 unresolved.append(f"line {node.lineno}: from sys import path")
+            if isinstance(node, ast.Assign) and is_sys_path(node.value, sys_names):
+                unresolved.append(f"line {node.lineno}: sys.path bound to another name")
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
                 continue
-            if not is_sys_path(node.func.value):
+            if not is_sys_path(node.func.value, sys_names):
                 continue
             method, args = node.func.attr, node.args
             arg = args[1] if method == "insert" and len(args) == 2 else args[0] if method == "append" and args else None
@@ -234,7 +259,8 @@ def main():
         is_package = join(here, "__init__.py") in files
         # A script directory without __init__.py is sys.path[0] when the script runs.
         search = roots if is_package else [here] + [r for r in roots if r != here]
-        front, back, unresolved = sys_path_changes(tree, path)
+        sys_names, dynamic = bindings(tree)
+        front, back, unresolved = sys_path_changes(tree, path, sys_names)
         search = list(dict.fromkeys(front + search + back))
         for detail in unresolved:
             gaps.append({"kind": "sys_path_unresolved", "file": path,
@@ -265,7 +291,7 @@ def main():
             elif isinstance(node, ast.Call):
                 func = node.func
                 called = getattr(func, "attr", None) or getattr(func, "id", None)
-                if called in ("import_module", "__import__", "spec_from_file_location", "run_path"):
+                if called in dynamic:
                     gaps.append({"kind": "dynamic_import", "file": path,
                                  "detail": f"line {node.lineno}: {called}() target is not resolved statically"})
             for name in names:

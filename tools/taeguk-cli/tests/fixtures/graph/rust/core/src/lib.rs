@@ -18,3 +18,4 @@ pub fn platform() -> &'static str {
 }
 pub mod implementation;
 pub use crate::implementation as facade;
+pub use fx_base::imp as based;

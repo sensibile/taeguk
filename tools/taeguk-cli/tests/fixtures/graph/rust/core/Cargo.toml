@@ -5,3 +5,6 @@ edition = "2021"
 
 [lib]
 name = "fx_core"
+
+[dependencies]
+fx-base = { path = "../base" }

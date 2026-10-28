@@ -29,6 +29,12 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
     }
     let mix_env = env::var("MIX_ENV").unwrap_or_else(|_| "dev".into());
     let build = root.join("_build").join(&mix_env);
+    // The build is copied, so it must be the project's own directory, not a link out of ROOT.
+    if let Ok(real) = build.canonicalize()
+        && !real.starts_with(root)
+    {
+        return Err(format!("_build/{mix_env} resolves outside ROOT"));
+    }
     if !build.is_dir() {
         // Compiling here would create _build/deps in the target repository, so require an existing build.
         return Err(format!(
@@ -123,7 +129,7 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
         let file = &n.files[0];
         let (_, source) = read_source(root, &root.join(file))?;
         for (i, line) in source.lines().enumerate() {
-            if DYNAMIC.iter().any(|d| line.contains(d)) {
+            if DYNAMIC.iter().any(|d| calls(line, d)) {
                 out.gaps.push(Gap::new(
                     "elixir",
                     "dynamic_call",
@@ -138,11 +144,30 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
 
 /// Calls whose target module is chosen at runtime, so xref records no edge for them.
 const DYNAMIC: [&str; 4] = [
-    "apply(",
-    "Module.concat(",
-    "String.to_atom(",
-    "String.to_existing_atom(",
+    "apply",
+    "Module.concat",
+    "String.to_atom",
+    "String.to_existing_atom",
 ];
+
+/// Whether `line` calls `name`, with or without parentheses (`apply(m, f, a)`, `apply m, f, a`,
+/// `Kernel.apply ...`, `|> apply(...)`): the name is not part of a longer identifier and is
+/// followed by `(` or by whitespace and an argument.
+fn calls(line: &str, name: &str) -> bool {
+    let ident = |c: char| c.is_alphanumeric() || c == '_' || c == '?' || c == '!';
+    line.match_indices(name).any(|(i, _)| {
+        let before = line[..i].chars().next_back();
+        let after = line[i + name.len()..].trim_start_matches([' ', '\t']);
+        let spaced = line[i + name.len()..].starts_with([' ', '\t']);
+        before.is_none_or(|c| !ident(c))
+            && (line[i + name.len()..].starts_with('(')
+                || (spaced
+                    && after
+                        .chars()
+                        .next()
+                        .is_some_and(|c| !matches!(c, '=' | '|' | '-' | '<' | '>' | ')' | ','))))
+    })
+}
 
 /// Modification time in whole seconds; Mix writes the manifest time at that resolution,
 /// so a source saved earlier in the same second must not look newer.
@@ -246,5 +271,26 @@ mod tests {
         assert_eq!(kinds, ["compile", "runtime", "export"]);
         assert_eq!(p.nodes.len(), 3);
         assert!(parse_dot("\"a\" -> \"b\" [label=\"(weird)\"]").is_err());
+    }
+    #[test]
+    fn dynamic_calls_with_or_without_parentheses() {
+        for line in [
+            "apply(m, :run, [])",
+            "def call(m), do: apply m, :run, []",
+            "Kernel.apply m, :run, []",
+            "m |> Module.concat(Sub)",
+            "String.to_atom name",
+        ] {
+            assert!(DYNAMIC.iter().any(|d| calls(line, d)), "{line}");
+        }
+        for line in [
+            "applyx(m)",
+            "reapply(m)",
+            "apply = 1",
+            "x.apply_all(m)",
+            "# applies",
+        ] {
+            assert!(!DYNAMIC.iter().any(|d| calls(line, d)), "{line}");
+        }
     }
 }

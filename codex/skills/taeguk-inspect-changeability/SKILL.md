@@ -7,7 +7,7 @@ description: "Assess a concrete change burden and choose bounded tidying; use fo
 
 Start from an actual change need or repeated cost. Compare maintain, move responsibilities and narrow contract. Choose first, after, later or no tidying. Keep behavior changes separate from structural intent. State minimum scope, preservation evidence and stopping condition. Avoid numeric complexity gates and speculative future options.
 
-When a dependency question matters, `taeguk graph build` and `taeguk graph impact` give static dependency direction, cycles and dependents with their gaps. Use them as observations beside history and the actual change need, not as a numeric gate or proof that unlisted code is unaffected. Symbol-level exploration tools only help discovery.
+When a dependency question matters, `taeguk graph build` and `taeguk graph impact` give static dependency direction, cycles and dependents with their gaps. Use them as observations beside history and the actual change need, not as a numeric gate or proof that unlisted code is unaffected. Gaps mark where static analysis stopped; read those sites (LLM review) before concluding a dependency is absent. Symbol-level exploration tools only help discovery.
 
 Read [evidence packet](references/evidence-packet.md) when exchanging results or resuming work. Apply within the user's existing scope and authority; this skill does not authorize external effects or criteria changes.
 
