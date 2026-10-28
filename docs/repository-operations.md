@@ -27,7 +27,7 @@
 3. PR 본문에 검증 결과와 로컬 리뷰 결과(대상 SHA, 모델과 effort, 지적과 처리)를 적는다. 제목, 본문, 댓글에는 `@codex` 문자열을 쓰지 않는다. 코드 표기 안의 것도 Codex 클라우드 작업을 부른다(PR #13~#16).
 4. PR을 만든 세션이 바로 `gh pr merge <번호> --squash --auto --match-head-commit <리뷰한 head SHA>`로 auto-merge를 켠다. 필수 체크가 통과하고 리뷰 thread가 모두 해소되고 PR이 최신 `main`을 포함하면 GitHub가 머지한다. draft PR이나 `no-auto-merge` label이 붙은 PR에는 켜지 않는다. 이 opt-out은 세션이 지키는 운영 규칙이며 GitHub 머지 조건이 아니다.
 5. 새 커밋을 올릴 때는 먼저 `gh pr merge <번호> --disable-auto`로 auto-merge를 끈다. GitHub는 쓰기 권한자가 push해도 auto-merge를 유지하므로, 끄지 않으면 리뷰하지 않은 head가 머지될 수 있다. push한 뒤 2단계의 로컬 리뷰를 새 범위로 다시 하고 4단계로 다시 켠다.
-6. `main`이 앞서 나가 PR이 뒤처지면 세션은 먼저 `gh pr merge <번호> --disable-auto`로 auto-merge를 끄고, `gh pr view <번호> --json autoMergeRequest`가 `null`인지 확인한 뒤 `gh pr update-branch`로 갱신한다. `--match-head-commit`은 켤 때의 head만 확인할 뿐 이후 head 변경을 막지 않기 때문이다. 갱신 뒤 PR 누적 diff가 리뷰한 diff와 같으면 새 head로 auto-merge를 다시 켠다. 충돌 해소 등으로 diff가 바뀌었으면 2단계의 로컬 리뷰를 새 범위로 다시 한 뒤 켠다.
+6. `main`이 앞서 나가 PR이 뒤처지면 세션은 먼저 `gh pr merge <번호> --disable-auto`로 auto-merge를 끄고, `gh pr view <번호> --json autoMergeRequest`가 `null`인지 확인한 뒤 `gh pr update-branch`로 갱신한다. `--match-head-commit`은 켤 때의 head만 확인할 뿐 이후 head 변경을 막지 않기 때문이다. 갱신 뒤에는 PR 누적 diff가 같아도 2단계의 로컬 리뷰를 새 head로 다시 한 뒤 4단계로 켠다. 새 `main`이 PR 코드가 쓰는 함수나 권한 검사를 바꿨다면, diff가 같아도 합친 결과의 동작은 다를 수 있기 때문이다.
 
 GitHub의 Codex 자동 리뷰는 저장소가 아니라 Codex 설정에서 켜져 있어 계속 댓글을 달 수 있다. 머지 조건은 아니지만 ruleset이 리뷰 thread 해소를 요구하므로, 세션은 thread를 판정해 반영하거나 이유를 답한 뒤 해소한다. 리뷰 도구의 결과는 검토 보조 증거이며 요구사항 충족 판정을 대신하지 않는다. 로컬 리뷰 실행 여부는 GitHub가 강제하지 않는다. 세션이 지키는 절차다.
 
