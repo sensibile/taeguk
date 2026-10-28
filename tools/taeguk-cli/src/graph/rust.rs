@@ -3,7 +3,7 @@ use super::{
 };
 use serde::Deserialize;
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     process::Command,
@@ -64,6 +64,8 @@ const MAX_MODULE_FILES: usize = 10_000;
 /// Bounds on alias chains and on the paths one mention may expand to (cfg branches multiply).
 const MAX_ALIAS_DEPTH: usize = 8;
 const MAX_EXPANSIONS: usize = 16;
+/// Module states one mention may visit while following re-exports.
+const MAX_RESOLVE_STEPS: usize = 4_096;
 
 pub(super) fn analyze(root: &Path) -> (Analyzer, Result<Partial, String>) {
     let mut a = Analyzer::new("rust", "cargo+syn", &COMMAND);
@@ -162,6 +164,8 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
         trees: &trees,
         externs_of: &externs_of,
         truncated: Cell::new(false),
+        budget: Cell::new(0),
+        seen: RefCell::new(BTreeSet::new()),
     };
     for crate_root in externs_of.keys() {
         for (path, m) in &trees[crate_root] {
@@ -182,7 +186,9 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
                     "rust",
                     "resolution_truncated",
                     Some(&rel(&m.file)?),
-                    format!("re-export chains deeper than {MAX_ALIAS_DEPTH} were not followed"),
+                    format!(
+                        "re-export chains deeper than {MAX_ALIAS_DEPTH} levels or {MAX_RESOLVE_STEPS} steps were not followed"
+                    ),
                 ));
             }
         }
@@ -194,6 +200,9 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
     Ok(out)
 }
 
+/// A resolution state: crate root, module key and the path segments still to resolve.
+type State = (PathBuf, Vec<String>, Vec<String>);
+
 /// Resolves mentioned paths to module files. Trees and dependency names are keyed by crate
 /// root, so following a path into another crate also switches to that crate's dependencies.
 /// `truncated` records that a depth bound cut a resolution short.
@@ -201,6 +210,10 @@ struct Resolver<'a> {
     trees: &'a BTreeMap<PathBuf, Tree>,
     externs_of: &'a BTreeMap<PathBuf, BTreeMap<String, PathBuf>>,
     truncated: Cell<bool>,
+    /// Steps left for the current mention and the states it already visited: glob re-exports
+    /// between modules can otherwise revisit the same state exponentially often.
+    budget: Cell<usize>,
+    seen: RefCell<BTreeSet<State>>,
 }
 
 impl Resolver<'_> {
@@ -208,6 +221,8 @@ impl Resolver<'_> {
     /// several cfg branches yields each branch. A first segment nothing else binds is tried
     /// under the glob imports in scope, and counts only when it reaches a child of the glob target.
     fn resolve(&self, krate: &Path, here: &[String], p: &PathRef) -> BTreeSet<PathBuf> {
+        self.budget.set(MAX_RESOLVE_STEPS);
+        self.seen.borrow_mut().clear();
         let mut out = BTreeSet::new();
         if !self.start(krate, here, &p.segs, 0, &mut out) {
             for g in &p.globs {
@@ -286,6 +301,15 @@ impl Resolver<'_> {
         let Some(m) = self.trees.get(krate).and_then(|t| t.get(&base)) else {
             return;
         };
+        let state = (krate.to_path_buf(), base.clone(), rest.to_vec());
+        if !self.seen.borrow_mut().insert(state) {
+            return;
+        }
+        if self.budget.get() == 0 {
+            self.truncated.set(true);
+            return;
+        }
+        self.budget.set(self.budget.get() - 1);
         let Some(s) = rest.first() else {
             out.insert(m.file.clone());
             return;
@@ -394,6 +418,25 @@ impl Walk<'_> {
                         },
                         _ => None,
                     });
+            // `cfg_attr(..., path = "...")` picks another file under some configurations.
+            let conditional_path = m.attrs.iter().any(|a| {
+                a.path().is_ident("cfg_attr")
+                    && a.meta.require_list().is_ok_and(|l| {
+                        l.tokens
+                            .clone()
+                            .into_iter()
+                            .any(|t| t.to_string() == "path")
+                    })
+            });
+            if conditional_path {
+                let shown = self.shown(file);
+                self.gaps.push(Gap::new(
+                    "rust",
+                    "cfg_attr_path",
+                    Some(&shown),
+                    format!("mod {name} has a cfg_attr path; only its default file was analyzed"),
+                ));
+            }
             if let Some((_, content)) = &m.content {
                 let dir = match &attr_path {
                     Some(p) => mod_dir.join(p),
@@ -441,6 +484,20 @@ impl Walk<'_> {
         m.children.extend(children);
         m.paths.extend(paths.paths);
         m.exports = paths.scopes.swap_remove(0);
+        if !paths.opaque_macros.is_empty() {
+            let shown = self.shown(file);
+            let names: Vec<String> = paths
+                .opaque_macros
+                .iter()
+                .map(|n| format!("{n}!"))
+                .collect();
+            self.gaps.push(Gap::new(
+                "rust",
+                "macro_body_not_analyzed",
+                Some(&shown),
+                format!("paths inside {} are not resolved", names.join(", ")),
+            ));
+        }
         if paths.dropped.get() {
             let shown = self.shown(file);
             self.gaps.push(Gap::new(
@@ -520,11 +577,36 @@ fn add(list: &mut Vec<Vec<String>>, path: Vec<String>, dropped: &Cell<bool>) {
 /// Collects `use` trees and expression/type paths of one module with aliases expanded;
 /// nested modules are walked separately. Each scope stores bindings already expanded in the
 /// scope that declared them, so a later inner binding of the same name cannot change them.
-/// `dropped` records that a bound discarded an alias expansion, which becomes a gap.
+/// `dropped` records that a bound discarded an alias expansion, and `opaque_macros` the macros
+/// whose bodies mention paths that were not analyzed; both become gaps.
 struct Paths {
     paths: Vec<PathRef>,
     scopes: Vec<Scope>,
     dropped: Cell<bool>,
+    opaque_macros: BTreeSet<String>,
+}
+
+/// Whether a token stream contains `::` at any depth.
+fn has_path(tokens: proc_macro2::TokenStream) -> bool {
+    let mut colon = false;
+    for t in tokens {
+        match t {
+            proc_macro2::TokenTree::Punct(p) if p.as_char() == ':' => {
+                if colon {
+                    return true;
+                }
+                colon = p.spacing() == proc_macro2::Spacing::Joint;
+            }
+            proc_macro2::TokenTree::Group(g) => {
+                if has_path(g.stream()) {
+                    return true;
+                }
+                colon = false;
+            }
+            _ => colon = false,
+        }
+    }
+    false
 }
 impl Paths {
     fn new(items: &[syn::Item]) -> Self {
@@ -532,6 +614,7 @@ impl Paths {
             paths: vec![],
             scopes: vec![],
             dropped: Cell::new(false),
+            opaque_macros: BTreeSet::new(),
         };
         p.enter(items.iter());
         p
@@ -641,6 +724,23 @@ impl<'ast> Visit<'ast> for Paths {
         }));
         visit::visit_block(self, b);
         self.scopes.pop();
+    }
+    /// Macro arguments are token streams. Those that parse as comma-separated expressions
+    /// (`println!`, `vec!`, `assert!` ...) are visited like code; any other body that mentions a
+    /// path (`a::b`) is recorded so the call site becomes a gap.
+    fn visit_macro(&mut self, m: &'ast syn::Macro) {
+        visit::visit_macro(self, m);
+        let parsed = m.parse_body_with(
+            syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated,
+        );
+        match parsed {
+            Ok(args) => args.iter().for_each(|e| self.visit_expr(e)),
+            Err(_) if has_path(m.tokens.clone()) => {
+                let name = m.path.segments.last().map(|s| s.ident.to_string());
+                self.opaque_macros.insert(name.unwrap_or_default());
+            }
+            Err(_) => {}
+        }
     }
     fn visit_path(&mut self, p: &'ast syn::Path) {
         self.push(p.segments.iter().map(|s| s.ident.to_string()).collect());

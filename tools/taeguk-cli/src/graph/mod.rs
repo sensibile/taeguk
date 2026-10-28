@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     env, fs,
-    io::Read,
+    io::{Read, Write},
     path::{Component, Path, PathBuf},
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
@@ -60,6 +60,7 @@ struct Graph {
     commit: String,
     dirty: bool,
     dirty_paths: Vec<String>,
+    inputs: String,
     generated_at: u64,
     status: String,
     analyzers: Vec<Analyzer>,
@@ -201,15 +202,16 @@ fn untracked(root: &Path) -> Result<Vec<String>, String> {
     )?)
 }
 
-/// Paths under ROOT that external analyzers (go, cargo, mix) may read without our listing them
-/// must not block them or exhaust memory. Tracked and untracked (not ignored) paths must be
-/// regular files, directories, or links to those inside ROOT. Ignored paths are read too
-/// (`go list` does not follow .gitignore) but hold local environments such as `.venv` whose links
-/// leave ROOT, so there only special files (FIFO, device, socket) and links to them are refused.
-/// The file system is walked directly because git does not list special files. `.git` and
-/// ignored `_build`/`target` outputs are skipped: cargo metadata does not read `target`, and
-/// the Elixir build is checked while it is copied. Tracked paths are checked even there.
-fn scan_root(root: &Path, tracked: &[String]) -> Result<(), String> {
+/// Walks ROOT on disk (git does not list special files), calling `visit(rel, path, kind,
+/// ignored)` for each entry; a directory is entered when `visit` returns true. `.git` is
+/// skipped, and so are ignored directories no selected analyzer reads: `_build` (go skips
+/// `_`-prefixed directories, cargo and our Python script do not read it, and the Elixir build is
+/// checked while it is copied) and `target` unless go is selected (`go list ./...` reads it).
+fn walk(
+    root: &Path,
+    langs: &[String],
+    mut visit: impl FnMut(&str, &Path, fs::FileType, bool) -> Result<bool, String>,
+) -> Result<(), String> {
     let ignored: BTreeSet<String> = nul_list(git(
         root,
         &[
@@ -224,6 +226,38 @@ fn scan_root(root: &Path, tracked: &[String]) -> Result<(), String> {
     .into_iter()
     .map(|p| p.trim_end_matches('/').to_string())
     .collect();
+    let go = langs.iter().any(|l| l == "go");
+    let mut stack = vec![(root.to_path_buf(), false)];
+    while let Some((dir, in_ignored)) = stack.pop() {
+        let mut entries: Vec<_> = fs::read_dir(&dir)
+            .map_err(|e| format!("{}: {e}", dir.display()))?
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string())?;
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            let path = entry.path();
+            let rel = relative(root, &path).ok_or("non-UTF-8 path under ROOT")?;
+            let name = entry.file_name();
+            let is_ignored = in_ignored || ignored.contains(&rel);
+            if rel == ".git" || (is_ignored && (name == "_build" || (name == "target" && !go))) {
+                continue;
+            }
+            let kind = entry.file_type().map_err(|e| format!("{rel}: {e}"))?;
+            if visit(&rel, &path, kind, is_ignored)? {
+                stack.push((path, is_ignored));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Paths under ROOT that external analyzers (go, cargo, mix) may read without our listing them
+/// must not block them or exhaust memory. Tracked and untracked (not ignored) paths must be
+/// regular files, directories, or links to those inside ROOT. Ignored paths are read too
+/// (`go list` does not follow .gitignore) but hold local environments such as `.venv` whose links
+/// leave ROOT, so there only special files (FIFO, device, socket) and links to them are refused.
+/// Tracked paths are checked even inside skipped directories.
+fn scan_root(root: &Path, tracked: &[String], langs: &[String]) -> Result<(), String> {
     let check =
         |rel: &str, path: &Path, kind: fs::FileType, strict: bool| -> Result<bool, String> {
             if kind.is_dir() {
@@ -252,22 +286,93 @@ fn scan_root(root: &Path, tracked: &[String]) -> Result<(), String> {
             check(f, &root.join(f), meta.file_type(), true)?;
         }
     }
-    let mut stack = vec![(root.to_path_buf(), false)];
-    while let Some((dir, in_ignored)) = stack.pop() {
-        for entry in fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            let path = entry.path();
-            let rel = relative(root, &path).ok_or("non-UTF-8 path under ROOT")?;
-            let name = entry.file_name();
-            let is_ignored = in_ignored || ignored.contains(&rel);
-            if rel == ".git" || (is_ignored && (name == "_build" || name == "target")) {
-                continue;
-            }
-            let kind = entry.file_type().map_err(|e| format!("{rel}: {e}"))?;
-            if check(&rel, &path, kind, !is_ignored)? {
-                stack.push((path, is_ignored));
-            }
+    walk(root, langs, |rel, path, kind, ignored| {
+        check(rel, path, kind, !ignored)
+    })
+}
+
+/// Whether a file is an input some selected analyzer reads. Go reads every source and module
+/// file it finds (ignored ones too), cargo and syn read manifests and `.rs` files, mix the
+/// project's Elixir sources; our Python script reads only tracked `.py` files and pyproject.
+fn is_input(rel: &str, ignored: bool, langs: &[String]) -> bool {
+    let name = rel.rsplit('/').next().unwrap_or(rel);
+    let ext = name.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
+    let under = |dir: &str| rel.split('/').any(|c| c == dir);
+    langs.iter().any(|l| match l.as_str() {
+        "go" => {
+            ["go", "s", "c", "h"].contains(&ext)
+                || ["go.mod", "go.sum", "go.work", "go.work.sum"].contains(&name)
         }
+        "rust" => !under("target") && (ext == "rs" || name == "Cargo.toml" || name == "Cargo.lock"),
+        "elixir" => !under("deps") && (ext == "ex" || ext == "exs" || name == "mix.lock"),
+        "python" => !ignored && (ext == "py" || name == "pyproject.toml"),
+        _ => false,
+    })
+}
+
+/// Hash of every analyzer input under ROOT, so impact can tell when files the graph was built
+/// from (untracked and ignored ones included) have changed since. Files over MAX_SOURCE are
+/// hashed by size and modification time.
+fn input_fingerprint(root: &Path, langs: &[String]) -> Result<String, String> {
+    let mut h = Sha256::new();
+    walk(root, langs, |rel, path, kind, ignored| {
+        if kind.is_dir() {
+            return Ok(true);
+        }
+        if !is_input(rel, ignored, langs) {
+            return Ok(false);
+        }
+        // Links are followed; the ROOT scan already limited where they may point.
+        let Ok(meta) = fs::metadata(path) else {
+            return Ok(false);
+        };
+        if !meta.is_file() {
+            return Ok(false);
+        }
+        h.update(rel.as_bytes());
+        h.update([0]);
+        if meta.len() > MAX_SOURCE {
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            h.update(format!("size={} mtime={mtime}", meta.len()).as_bytes());
+        } else {
+            h.update(Sha256::digest(
+                fs::read(path).map_err(|e| format!("{rel}: {e}"))?,
+            ));
+        }
+        h.update([0]);
+        Ok(false)
+    })?;
+    Ok(format!("sha256:{:x}", h.finalize()))
+}
+
+/// Writes a new file next to `out` and renames it over `out`: the rename replaces whatever `out`
+/// is (a link, a FIFO) instead of following or opening it, so a link swapped in after the checks
+/// in `output_path` is not written through.
+fn write_replacing(out: &Path, text: &str) -> Result<(), String> {
+    let dir = out.parent().unwrap_or(Path::new("."));
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let name = out
+        .file_name()
+        .map(|n| n.to_string_lossy())
+        .unwrap_or_default();
+    let tmp = dir.join(format!(".{name}.{}.{nanos}.tmp", std::process::id()));
+    let written = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+        .and_then(|mut f| f.write_all(text.as_bytes()))
+        .and_then(|()| fs::rename(&tmp, out));
+    if let Err(e) = written {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("{}: {e}", out.display()));
     }
     Ok(())
 }
@@ -410,7 +515,7 @@ fn detect(root: &Path, files: &[String]) -> Vec<String> {
 
 fn digest(g: &Graph) -> String {
     let body = json!({"schema": g.schema, "commit": g.commit, "dirty": g.dirty,
-        "dirty_paths": g.dirty_paths, "status": g.status, "analyzers": g.analyzers,
+        "dirty_paths": g.dirty_paths, "inputs": g.inputs, "status": g.status, "analyzers": g.analyzers,
         "nodes": g.nodes, "edges": g.edges, "gaps": g.gaps});
     format!("sha256:{:x}", Sha256::digest(body.to_string().as_bytes()))
 }
@@ -432,7 +537,7 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
     }
     let (mut analyzers, mut nodes, mut edges, mut gaps) = (vec![], vec![], vec![], vec![]);
     let out = output_path(&root, out)?;
-    let scanned = scan_root(&root, &files);
+    let scanned = scan_root(&root, &files, &langs);
     for lang in &langs {
         if let Err(e) = &scanned {
             let mut a = Analyzer::new(lang, "-", &[]);
@@ -483,6 +588,11 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
         commit,
         dirty: !dirty_paths.is_empty(),
         dirty_paths,
+        inputs: if scanned.is_ok() {
+            input_fingerprint(&root, &langs)?
+        } else {
+            String::new()
+        },
         generated_at: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -496,7 +606,7 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
     };
     g.digest = digest(&g);
     let text = serde_json::to_string_pretty(&g).map_err(|e| e.to_string())?;
-    fs::write(&out, text + "\n").map_err(|e| format!("{}: {e}", out.display()))?;
+    write_replacing(&out, &(text + "\n"))?;
     Ok(
         json!({"status": g.status, "out": out.display().to_string(), "digest": g.digest,
         "commit": g.commit, "dirty": g.dirty, "nodes": g.nodes.len(), "edges": g.edges.len(),
@@ -521,6 +631,7 @@ fn impact(
     root: &Path,
     head: &str,
     worktree_dirty: bool,
+    inputs: &str,
     changed: &[String],
     depth: Option<usize>,
 ) -> Value {
@@ -547,6 +658,10 @@ fn impact(
     // Uncommitted edits can add or drop imports the graph of HEAD does not have.
     if worktree_dirty {
         reasons.push("working_tree_differs_from_head");
+    }
+    // Files the analyzers read but git does not track (ignored sources) can change too.
+    if g.inputs != inputs {
+        reasons.push("analyzer_inputs_changed");
     }
     let mut owner: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for n in &g.nodes {
@@ -685,7 +800,17 @@ pub(crate) fn run(args: &[String]) -> Result<Value, String> {
             changed.sort();
             changed.dedup();
             let dirty = !dirty_paths(root)?.is_empty();
-            Ok(impact(&g, root, &head(root)?, dirty, &changed, depth))
+            let langs: Vec<String> = g.analyzers.iter().map(|a| a.lang.clone()).collect();
+            let inputs = input_fingerprint(root, &langs).unwrap_or_default();
+            Ok(impact(
+                &g,
+                root,
+                &head(root)?,
+                dirty,
+                &inputs,
+                &changed,
+                depth,
+            ))
         }
         _ => Err(usage()),
     }

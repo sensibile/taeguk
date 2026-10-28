@@ -5,3 +5,4 @@ python sys_path_unresolved tests/test_paths.py
 python sys_path_unresolved tests/test_order.py
 python dynamic_import tests/test_aliases.py
 python sys_path_unresolved tests/test_aliases.py
+python dynamic_import tests/test_reload.py

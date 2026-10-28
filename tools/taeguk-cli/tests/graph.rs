@@ -304,6 +304,17 @@ fn analyzer_failures_mark_the_graph_failed() {
                 .success()
         );
         assert_fails(&w, "go", "generated/extra.go is not a regular file");
+        // An ignored `target` is skipped only when no selected analyzer reads it; go does.
+        let w = work("go");
+        fs::create_dir_all(w.repo().join("target")).unwrap();
+        assert!(
+            Command::new("mkfifo")
+                .arg(w.repo().join("target/blocked.go"))
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert_fails(&w, "go", "target/blocked.go is not a regular file");
     }
     if available("cargo", "--version") {
         let w = work("rust");
@@ -461,6 +472,72 @@ fn output_links_are_not_followed() {
     assert!(!ok, "{v}");
     assert!(v["error"].as_str().unwrap().contains("leaves ROOT"), "{v}");
     assert!(!w.0.join("elsewhere/graph.json").exists());
+    // An existing FIFO is replaced by the new file instead of being opened.
+    let out = w.0.join("fifo.json");
+    assert!(Command::new("mkfifo").arg(&out).status().unwrap().success());
+    let (ok, v) = taeguk(&[
+        "graph",
+        "build",
+        w.repo().to_str().unwrap(),
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    assert!(ok, "{v}");
+    assert!(fs::symlink_metadata(&out).unwrap().is_file());
+}
+
+#[test]
+fn ignored_inputs_make_impact_unknown() {
+    if !available("go", "version") {
+        return;
+    }
+    // go list reads ignored sources, so a change there must not leave an old graph current.
+    let w = work("go");
+    fs::write(w.repo().join(".gitignore"), "/a/generated.go\n").unwrap();
+    git(&w.repo(), &["commit", "-qam", "ignore generated"]);
+    build(&w, "go");
+    let v = impact(&w, &["--changed", "b/b.go"]);
+    assert_eq!(other_reasons(&v), Vec::<String>::new());
+    fs::write(
+        w.repo().join("a/generated.go"),
+        "package a\n\nimport _ \"example.com/fx/b\"\n",
+    )
+    .unwrap();
+    let v = impact(&w, &["--changed", "b/b.go"]);
+    assert_eq!(v["status"], "UNKNOWN");
+    assert_eq!(other_reasons(&v), ["analyzer_inputs_changed"]);
+}
+
+#[test]
+fn glob_reexport_cycles_finish() {
+    if !available("cargo", "--version") {
+        return;
+    }
+    // 17 modules glob re-exporting each other: without state dedupe this takes 16^8 steps.
+    let w = work("rust");
+    let dir = w.repo().join("core/src/web");
+    fs::create_dir_all(&dir).unwrap();
+    let mods: String = (0..17).map(|i| format!("pub mod m{i};\n")).collect();
+    fs::write(w.repo().join("core/src/web.rs"), mods).unwrap();
+    for i in 0..17 {
+        let mut text: String = (0..17)
+            .filter(|j| *j != i)
+            .map(|j| format!("pub use super::m{j}::*;\n"))
+            .collect();
+        if i == 0 {
+            text += "pub fn f() {\n    crate::web::m0::missing::g();\n}\n";
+        }
+        fs::write(dir.join(format!("m{i}.rs")), text).unwrap();
+    }
+    let lib = w.repo().join("core/src/lib.rs");
+    let text = fs::read_to_string(&lib).unwrap() + "pub mod web;\n";
+    fs::write(&lib, text).unwrap();
+    git(&w.repo(), &["add", "-A"]);
+    git(&w.repo(), &["commit", "-qm", "web"]);
+    let started = std::time::Instant::now();
+    let g = build(&w, "rust");
+    assert_eq!(g["status"], "PASS", "{g}");
+    assert!(started.elapsed() < Duration::from_secs(60));
 }
 
 #[test]
@@ -563,7 +640,8 @@ fn impact_follows_reverse_edges_and_reports_limits() {
             "tests/test_aliases.py",
             "tests/test_helper.py",
             "tests/test_order.py",
-            "tests/test_paths.py"
+            "tests/test_paths.py",
+            "tests/test_reload.py"
         ]
     );
     assert_eq!(
@@ -594,14 +672,17 @@ fn impact_follows_reverse_edges_and_reports_limits() {
     fs::write(w.repo().join("common.py"), "import scripts\n").unwrap();
     let edited = impact(&w, &["--changed", "src/app/util.py"]);
     assert_eq!(edited["status"], "UNKNOWN");
-    assert_eq!(other_reasons(&edited), ["working_tree_differs_from_head"]);
+    assert_eq!(
+        other_reasons(&edited),
+        ["working_tree_differs_from_head", "analyzer_inputs_changed"]
+    );
     git(&w.repo(), &["checkout", "--", "."]);
     // An untracked source is read by analyzers too, so it also makes the tree differ.
     fs::write(w.repo().join("scripts/extra.py"), "import helper\n").unwrap();
     let untracked = impact(&w, &["--changed", "src/app/util.py"]);
     assert_eq!(
         other_reasons(&untracked),
-        ["working_tree_differs_from_head"]
+        ["working_tree_differs_from_head", "analyzer_inputs_changed"]
     );
     fs::remove_file(w.repo().join("scripts/extra.py")).unwrap();
 
@@ -695,7 +776,7 @@ fn with_version(graph: &Path, version: &str) {
     let mut g: Value = serde_json::from_slice(&fs::read(graph).unwrap()).unwrap();
     g["analyzers"][0]["version"] = version.into();
     let body = serde_json::json!({"schema": g["schema"], "commit": g["commit"], "dirty": g["dirty"],
-        "dirty_paths": g["dirty_paths"], "status": g["status"], "analyzers": g["analyzers"],
+        "dirty_paths": g["dirty_paths"], "inputs": g["inputs"], "status": g["status"], "analyzers": g["analyzers"],
         "nodes": g["nodes"], "edges": g["edges"], "gaps": g["gaps"]});
     use sha2::Digest;
     g["digest"] = format!(

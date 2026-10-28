@@ -142,6 +142,7 @@ def eval_path(node, path, env):
 
 
 DYNAMIC = ("import_module", "__import__", "spec_from_file_location", "run_path")
+DYNAMIC_MODULES = ("importlib", "runpy")
 
 
 def bindings(tree):
@@ -294,6 +295,18 @@ def main():
                 if called in dynamic:
                     gaps.append({"kind": "dynamic_import", "file": path,
                                  "detail": f"line {node.lineno}: {called}() target is not resolved statically"})
+            # Any reference to the dynamic import machinery marks the file, however the function is
+            # later renamed or passed on: the call itself may not be recognizable.
+            machinery = None
+            if isinstance(node, ast.Import):
+                machinery = next((a.name for a in node.names if a.name.split(".")[0] in DYNAMIC_MODULES), None)
+            elif isinstance(node, ast.ImportFrom) and node.module and node.module.split(".")[0] in DYNAMIC_MODULES:
+                machinery = node.module
+            elif isinstance(node, ast.Name) and node.id == "__import__":
+                machinery = "__import__"
+            if machinery:
+                gaps.append({"kind": "dynamic_import", "file": path,
+                             "detail": f"line {node.lineno}: uses {machinery}; modules it loads are not resolved statically"})
             for name in names:
                 hits = candidates(name, search, files)
                 if len(hits) > 1:

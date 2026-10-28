@@ -129,7 +129,7 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
         let file = &n.files[0];
         let (_, source) = read_source(root, &root.join(file))?;
         for (i, line) in source.lines().enumerate() {
-            if DYNAMIC.iter().any(|d| calls(line, d)) {
+            if DYNAMIC.iter().any(|d| calls(line, d)) || variable_call(line) {
                 out.gaps.push(Gap::new(
                     "elixir",
                     "dynamic_call",
@@ -149,6 +149,38 @@ const DYNAMIC: [&str; 4] = [
     "String.to_atom",
     "String.to_existing_atom",
 ];
+
+/// Whether `line` calls a function on a variable (`mod.execute()`, `state.mod.run(x)`): the
+/// module is a runtime value, so xref cannot record the edge. Map field access without
+/// parentheses is not a call and is not matched; neither is an anonymous call `fun.(x)`.
+fn variable_call(line: &str) -> bool {
+    let code = line.split('#').next().unwrap_or(line);
+    let b = code.as_bytes();
+    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    (0..b.len()).any(|i| {
+        if b[i] != b'.' || i == 0 || !ident(b[i - 1]) {
+            return false;
+        }
+        // The receiver starts with a lowercase letter or `_` and is not an atom (`:ets.new`).
+        let mut start = i;
+        while start > 0 && ident(b[start - 1]) {
+            start -= 1;
+        }
+        let head = b[start];
+        let atom = start > 0 && b[start - 1] == b':';
+        if !(head.is_ascii_lowercase() || head == b'_') || atom {
+            return false;
+        }
+        let mut end = i + 1;
+        if end >= b.len() || !(b[end].is_ascii_lowercase() || b[end] == b'_') {
+            return false;
+        }
+        while end < b.len() && (ident(b[end]) || b[end] == b'?' || b[end] == b'!') {
+            end += 1;
+        }
+        end < b.len() && b[end] == b'('
+    })
+}
 
 /// Whether `line` calls `name`, with or without parentheses (`apply(m, f, a)`, `apply m, f, a`,
 /// `Kernel.apply ...`, `|> apply(...)`): the name is not part of a longer identifier and is
@@ -291,6 +323,23 @@ mod tests {
             "# applies",
         ] {
             assert!(!DYNAMIC.iter().any(|d| calls(line, d)), "{line}");
+        }
+        for line in [
+            "def run(mod), do: mod.execute()",
+            "state.mod.run(x)",
+            "_m.f(1)",
+        ] {
+            assert!(variable_call(line), "{line}");
+        }
+        for line in [
+            "Enum.map(xs, f)",
+            ":ets.new(:t, [])",
+            "fun.(x)",
+            "state.count + 1",
+            "# mod.run()",
+            "Fx.B.b()",
+        ] {
+            assert!(!variable_call(line), "{line}");
         }
     }
 }

@@ -39,3 +39,10 @@ rust:app/src/declared.rs rust:core/src/lib.rs use
 rust:app/src/declared.rs rust:core/src/model.rs use
 rust:core/src/lib.rs rust:base/src/imp.rs use
 rust:app/src/facade_user.rs rust:base/src/imp/sub.rs use
+rust:app/src/macros.rs rust:app/src/cli/widgets.rs use
+rust:app/src/loop_/m0.rs rust:app/src/loop_/m1.rs use
+rust:app/src/loop_/m0.rs rust:app/src/loop_/m2.rs use
+rust:app/src/loop_/m1.rs rust:app/src/loop_/m0.rs use
+rust:app/src/loop_/m1.rs rust:app/src/loop_/m2.rs use
+rust:app/src/loop_/m2.rs rust:app/src/loop_/m0.rs use
+rust:app/src/loop_/m2.rs rust:app/src/loop_/m1.rs use
