@@ -1,6 +1,6 @@
 # 리뷰 반복 종료·상향 기준 개정안
 
-상태: 제안. BOSS 확인 전에는 현행 규칙을 유지한다. 이 문서는 실행 권한을 부여하지 않는다.
+상태: 2026-10-28 BOSS 확인으로 승인. 현행 본문은 [검증과 측정](../verification.md#ver-005)의 VER-005 1.0이며 승인 범위는 [승인 기록](../approvals.md#approval-2026-10-28)을 따른다. 이 문서는 개정 근거로 보존하며 실행 권한을 부여하지 않는다.
 
 작성: 2026-10-28. 근거: 같은 날 BOSS가 Phase 2 종료 조건과 상향 조건을 공통 기준으로 확정했다. 이어서 이 기준을 `docs/rules`의 정식 규칙으로 등록하기로 결정하면서, 등록은 별도 개정안으로 하라고 지시했다. 확정 내용은 [작업 단계](https://github.com/sensibile/taeguk/blob/main/codex/skills/taeguk-work-contract/references/phases.md)에 운영 기준으로 반영되어 있다. 이 개정안은 그 기준을 규칙 ID와 버전으로 고정하기 위한 것이다.
 

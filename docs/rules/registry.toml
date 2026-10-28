@@ -109,8 +109,9 @@ enforcement = "guidance"
 
 [[rules]]
 id = "VER-005"
-version = "0.1"
-status = "proposed"
+version = "1.0"
+status = "approved"
 scope = "Taeguk and explicitly assigned workflows"
-document = "proposals/index.md#ver-005"
+document = "verification.md#ver-005"
 enforcement = "guidance"
+approval = "approvals.md#approval-2026-10-28"
