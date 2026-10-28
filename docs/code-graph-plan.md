@@ -78,9 +78,9 @@ acropolis/akashic의 `elixir/`처럼 `_build`가 없는 Elixir 프로젝트는 �
 
 | 언어 | 방법 | 실행 조건과 한계 |
 | --- | --- | --- |
-| Elixir | 기존 `_build/<env>`를 임시 디렉터리로 복사하고 `MIX_BUILD_PATH`로 지정해 `mix xref graph --format dot` 실행 | 대상의 `_build`·`deps`를 만들거나 바꾸지 않는다. `_build`가 없으면 compile·deps.get을 하지 않고 FAIL. 매크로가 런타임에 만드는 호출은 누락 가능 |
+| Elixir | 기존 `_build/<env>`를 임시 디렉터리로 복사하고 `MIX_BUILD_PATH`로 지정해 `mix xref graph --no-compile --no-deps-check --format dot` 실행 | 대상의 `_build`·`deps`를 만들거나 바꾸지 않고 compile하지 않는다. `_build`가 없거나 앱 compile manifest보다 새로운 `.ex`·`.exs`(deps·test 제외)가 있으면 FAIL. `mix.exs`는 mix가 읽으므로 실행된다. `apply(`·`Module.concat(`·`String.to_atom(` 등 런타임 dispatch 줄은 `dynamic_call` gap |
 | Go | `go list -e -deps -json ./...` | main module 패키지만 노드. 패키지 `Error`·`DepsErrors`가 있으면 FAIL. build tag·`go:generate` 산출물은 현재 환경 기준 |
-| Rust | `cargo metadata --no-deps --offline`으로 workspace crate·target·path 의존을 얻고, `syn`으로 각 target의 `mod` 선언과 `use crate::`·`super::`·`self::`·workspace crate 경로를 파일 노드로 해석 | `cfg` 분기는 모두 포함, `#[path]` 지원, 매크로가 만드는 `mod`·`use`와 glob import의 세부 대상은 gap으로 기록. CLI에 `syn` 의존을 추가한다 |
+| Rust | `cargo metadata --no-deps --offline`으로 workspace crate·target·path 의존을 얻고, `syn`으로 각 target의 `mod` 선언과 `use crate::`·`super::`·`self::`·workspace crate 경로를 파일 노드로 해석 | `cfg` 분기는 모두 포함, `#[path]` 지원, cfg로 막힌 없는 `mod` 파일은 gap. 매크로 호출 안의 경로와 매크로가 만드는 `mod`·`use`는 분석하지 않는다(결과 limits). glob import는 대상 모듈 파일로의 edge가 된다. 그 모듈이 다시 내보내는 항목은 그 모듈의 `pub use` edge로 이어지므로 파일 단위에서는 별도 gap을 두지 않는다. 외부 crate 이름은 의존성 rename 또는 library target 이름을 쓴다. CLI에 `syn` 의존을 추가한다 |
 | Python | CLI에 내장한 표준 라이브러리 전용 스크립트를 `python3 -I`로 실행해 `ast`로 import 수집 | tracked `.py`만. 패키지 root는 `pyproject.toml`의 설정, `src/` 배치, 저장소 최상위 순으로 정한다. 상대 import는 패키지 기준으로 해석하고, 여러 파일에 대응되는 이름은 edge를 만들지 않고 gap으로 기록. `importlib`·`__import__`는 gap |
 
 ### 결과 형식
@@ -106,7 +106,7 @@ acropolis/akashic의 `elixir/`처럼 `_build`가 없는 Elixir 프로젝트는 �
 ### 영향 질의
 
 - 역방향 edge 전이 폐쇄를 끝까지 따른다. 기본 깊이 제한은 두지 않고 각 노드에 최단 거리를 붙인다. `--depth N`으로 제한하면 적용 깊이를 결과에 기록한다. 순환은 방문 집합으로 종료한다.
-- 그래프 `status`가 FAIL이거나, 그래프 commit이 현재 `ROOT`의 HEAD와 다르거나, 그래프 생성 때 dirty였거나, 변경 파일이 어느 노드에도 속하지 않으면 결과 `status`를 UNKNOWN으로 하고 이유를 남긴다. 영향 목록은 참고로 함께 낸다.
+- 그래프 `status`가 FAIL이거나, 그래프 commit이 현재 `ROOT`의 HEAD와 다르거나, 그래프 생성 때 dirty였거나, 그래프의 ROOT가 질의 ROOT와 다르거나, 기록된 분석 도구 버전이 현재 버전과 다르거나 확인되지 않거나, 변경 파일이 어느 노드에도 속하지 않으면 결과 `status`를 UNKNOWN으로 하고 이유를 남긴다. 영향 목록은 참고로 함께 낸다.
 - 결과에는 항상 `limits`를 넣는다: 정적 의존만 포함, 런타임·설정·데이터 경로 미포함, edge 부재는 영향 없음의 증거가 아님, 해당 언어 gap 목록.
 
 ### 스킬 연결 (CG-R04, CG-R06)
@@ -154,7 +154,24 @@ acropolis/akashic의 `elixir/`처럼 `_build`가 없는 Elixir 프로젝트는 �
 | CG-V05 | PASS | 수작업 영향 집합(Python 4개 노드·거리 0~3, Go test import 포함 4개 노드)과 일치, `--depth 1` 기록, stale·dirty·FAIL 그래프와 미대응 파일에서 UNKNOWN과 이유, digest 변조 그래프 거부 |
 | CG-V06 | PASS | 변경 스킬 2개 skill-creator validator 통과, 한계 문구 포함, project 설치 dry-run에 변경 파일 포함(apply는 하지 않음) |
 | CG-V07 | PASS | `check_rules.py` PASS, Python 110개 OK, `cargo test --locked`(`TAEGUK_REQUIRE_GRAPH_TOOLS=1`) 32개 OK, `cargo clippy --all-targets` 경고 0, `mix format --check-formatted` OK, DB 연결 `mix test` 21개 OK |
-| CG-V08 | NOT_RUN | push 전 로컬 Codex 교차·보안 리뷰 예정 |
+| CG-V08 | 진행 중 | 아래 리뷰 기록 참고 |
+
+## 로컬 Codex 리뷰 기록
+
+1차 대상 `b630b14...b9e6f61`, `codex exec review`(codex-cli 0.164.0, `gpt-6-astra`, `medium`, read-only, ephemeral), 2026-10-28T14:19~14:23Z. 실행 전후 HEAD·status·fingerprint 동일.
+
+- 교차 리뷰: exit 0, 지적 8건(P1 1, P2 7). 판정과 처리:
+  1. P1 Elixir xref가 오래된 빌드에서 자동 compile: 재현 가능(Mix `xref`는 `--no-compile`이 없으면 compile 실행). `--no-compile --no-deps-check`와 manifest 대비 stale 검사로 수정, 테스트 추가.
+  2. P2 impact가 도구 버전 변경을 확인하지 않음: CG-R02 위반으로 판단. 현재 버전과 비교해 다르거나 확인 불가면 UNKNOWN, 테스트 추가.
+  3. P2 다른 ROOT의 그래프 재사용: 타당. ROOT 불일치 시 UNKNOWN, 테스트 추가.
+  4. P2 `os.path.join("logs", ...)` 같은 문자열 경로에서 TypeError로 Python 분석 전체 FAIL: 재현. 디렉터리 값만 받도록 수정, fixture에 해당 줄 추가.
+  5. P2 상대 import가 중간 패키지 `__init__.py`를 빠뜨림: 타당. 수정, fixture에 `from .sub.leaf import` 추가.
+  6. P2 Rust 외부 crate를 package 이름으로만 등록: 타당. library target 이름 사용, fixture를 package 이름과 lib 이름이 다르게 바꿈.
+  7. P2 Rust glob import gap 미기록: 설계 문구와 구현이 달랐다. 파일 단위 그래프에서는 glob이 대상 모듈 파일 edge가 되고 재노출은 그 모듈의 edge로 이어져 누락이 생기지 않으므로 설계 문구를 바로잡았다.
+  8. P2 Elixir 동적 호출 gap 없음: CG-R01 대비 타당. `dynamic_call` gap 추가, fixture 기대 gap 갱신.
+- 보안 리뷰: exit 1, “Selected model is at capacity”로 결과 없음 → NOT_RUN. 수정한 새 head로 재실행한다.
+
+수정 후 시험 프로젝트 재실측: taeguk `apps/taeguk`는 main checkout의 `_build/dev`가 최근 소스보다 오래되어 FAIL로 바뀌었다. 이전 PASS는 xref가 임시 사본에서 몰래 compile한 결과였다. 나머지 5곳은 수치가 이전과 같고 PASS다.
 
 같은 구현자가 fixture와 기대값을 함께 만들었으므로 CG-V01·V05는 같은 가정을 공유한다. 시험 프로젝트 수동 대조(CG-V03)가 다른 관측 층이다. CI에서 Go·Elixir·Python toolchain으로 같은 테스트가 도는지는 PR 실행 후 확인한다.
 

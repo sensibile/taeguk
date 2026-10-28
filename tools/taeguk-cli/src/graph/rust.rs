@@ -1,4 +1,4 @@
-use super::{Analyzer, Edge, Gap, Node, Partial, exec, normalize, relative, version};
+use super::{Analyzer, Edge, Gap, Node, Partial, exec, normalize, relative, tool_version};
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -23,7 +23,6 @@ struct Metadata {
 }
 #[derive(Deserialize)]
 struct Package {
-    name: String,
     manifest_path: PathBuf,
     targets: Vec<Target>,
     dependencies: Vec<Dependency>,
@@ -36,7 +35,6 @@ struct Target {
 }
 #[derive(Deserialize)]
 struct Dependency {
-    name: String,
     rename: Option<String>,
     path: Option<PathBuf>,
 }
@@ -52,8 +50,7 @@ type Tree = BTreeMap<Vec<String>, Module>;
 
 pub(super) fn analyze(root: &Path) -> (Analyzer, Result<Partial, String>) {
     let mut a = Analyzer::new("rust", "cargo+syn", &COMMAND);
-    a.version = version("cargo", &["--version"])
-        .map(|c| format!("{c}; taeguk-cli {} syn 3", env!("CARGO_PKG_VERSION")));
+    a.version = tool_version("rust");
     let result = run(root, &mut a);
     (a, result)
 }
@@ -71,6 +68,7 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
     }
     let meta: Metadata = serde_json::from_slice(&o.stdout)
         .map_err(|e| format!("cannot parse cargo metadata: {e}"))?;
+    // Code names a library by its target name (or a dependency rename), not the package name.
     let lib_of = |p: &Package| {
         p.targets
             .iter()
@@ -79,7 +77,7 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
                     .iter()
                     .any(|k| k.contains("lib") || k == "proc-macro")
             })
-            .map(|t| t.src_path.clone())
+            .map(|t| (t.name.replace('-', "_"), t.src_path.clone()))
     };
     let by_dir: BTreeMap<PathBuf, &Package> = meta
         .packages
@@ -98,18 +96,17 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
                 let Some(dep) = d.path.as_ref().and_then(|dir| by_dir.get(dir)) else {
                     continue;
                 };
-                if let Some(lib) = lib_of(dep) {
-                    externs.insert(
-                        d.rename
-                            .clone()
-                            .unwrap_or_else(|| d.name.clone())
-                            .replace('-', "_"),
-                        lib,
-                    );
+                if let Some((name, lib)) = lib_of(dep) {
+                    let name = d
+                        .rename
+                        .as_ref()
+                        .map(|r| r.replace('-', "_"))
+                        .unwrap_or(name);
+                    externs.insert(name, lib);
                 }
             }
-            if let Some(lib) = own_lib.as_ref().filter(|l| **l != t.src_path) {
-                externs.insert(p.name.replace('-', "_"), lib.clone());
+            if let Some((name, lib)) = own_lib.as_ref().filter(|(_, l)| *l != t.src_path) {
+                externs.insert(name.clone(), lib.clone());
             }
             if !trees.contains_key(&t.src_path) {
                 let mut tree = Tree::new();

@@ -134,6 +134,17 @@ pub(crate) fn version(tool: &str, args: &[&str]) -> Option<String> {
         .rfind(|l| !l.is_empty())
         .map(Into::into)
 }
+/// Version of the tool an analyzer runs; impact compares it with the version in the graph.
+pub(crate) fn tool_version(lang: &str) -> Option<String> {
+    match lang {
+        "elixir" => version("mix", &["--version"]),
+        "go" => version("go", &["version"]),
+        "python" => version("python3", &["--version"]),
+        "rust" => version("cargo", &["--version"])
+            .map(|c| format!("{c}; taeguk-cli {} syn 3", env!("CARGO_PKG_VERSION"))),
+        _ => None,
+    }
+}
 fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let o = exec(Command::new("git").arg("-C").arg(root).args(args))?;
     if o.code != Some(0) {
@@ -258,7 +269,7 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
     let (mut analyzers, mut nodes, mut edges, mut gaps) = (vec![], vec![], vec![], vec![]);
     for lang in &langs {
         let (a, result) = match lang.as_str() {
-            "elixir" => elixir::analyze(&root),
+            "elixir" => elixir::analyze(&root, &files),
             "go" => go::analyze(&root),
             "python" => python::analyze(&root, &files),
             "rust" => rust::analyze(&root),
@@ -332,8 +343,18 @@ fn read_graph(path: &Path) -> Result<Graph, String> {
     Ok(g)
 }
 
-fn impact(g: &Graph, head: &str, changed: &[String], depth: Option<usize>) -> Value {
+fn impact(g: &Graph, root: &Path, head: &str, changed: &[String], depth: Option<usize>) -> Value {
     let mut reasons = Vec::new();
+    // Paths are ROOT-relative, so a graph of another directory must not be reused.
+    if root.display().to_string() != g.root {
+        reasons.push("graph_root_differs");
+    }
+    if g.analyzers
+        .iter()
+        .any(|a| a.version.is_none() || tool_version(&a.lang) != a.version)
+    {
+        reasons.push("analyzer_version_changed_or_unknown");
+    }
     if g.status != "PASS" {
         reasons.push("graph_status_not_pass");
     }
@@ -427,7 +448,10 @@ pub(crate) fn run(args: &[String]) -> Result<Value, String> {
         }
         [cmd, graph, root, rest @ ..] if cmd == "impact" => {
             let g = read_graph(Path::new(graph))?;
-            let root = Path::new(root);
+            let root = Path::new(root)
+                .canonicalize()
+                .map_err(|e| format!("{root}: {e}"))?;
+            let root = root.as_path();
             let (mut changed, mut base, mut depth) = (vec![], None, None);
             let mut it = rest.iter().peekable();
             while let Some(flag) = it.next() {
@@ -455,7 +479,7 @@ pub(crate) fn run(args: &[String]) -> Result<Value, String> {
             }
             changed.sort();
             changed.dedup();
-            Ok(impact(&g, &head(root)?, &changed, depth))
+            Ok(impact(&g, root, &head(root)?, &changed, depth))
         }
         _ => Err(usage()),
     }

@@ -1,4 +1,4 @@
-use super::{Analyzer, Edge, Gap, Node, Partial, exec, relative, version};
+use super::{Analyzer, Edge, Gap, Node, Partial, exec, relative, tool_version};
 use serde::Deserialize;
 use std::{collections::BTreeSet, path::Path, process::Command};
 
@@ -35,7 +35,7 @@ const COMMAND: [&str; 6] = ["go", "list", "-e", "-deps", "-json", "./..."];
 
 pub(super) fn analyze(root: &Path) -> (Analyzer, Result<Partial, String>) {
     let mut a = Analyzer::new("go", "go", &COMMAND);
-    a.version = version("go", &["version"]);
+    a.version = tool_version("go");
     let result = run(root, &mut a);
     (a, result)
 }

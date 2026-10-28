@@ -244,6 +244,23 @@ fn analyzer_failures_mark_the_graph_failed() {
     if available("mix", "--version") {
         let w = work("elixir");
         assert_fails(&w, "elixir", "_build/dev not found");
+        // A source newer than the build must fail instead of being compiled by xref.
+        let o = Command::new("mix")
+            .arg("compile")
+            .current_dir(w.repo())
+            .output()
+            .unwrap();
+        assert!(o.status.success());
+        let manifest = w.repo().join("_build/dev/lib/fx/.mix/compile.elixir");
+        let before = fs::metadata(&manifest).unwrap().modified().unwrap();
+        let touched = Command::new("touch")
+            .args(["-t", "209901010000"])
+            .arg(w.repo().join("lib/fx/a.ex"))
+            .status()
+            .unwrap();
+        assert!(touched.success());
+        assert_fails(&w, "elixir", "older than 1 source file");
+        assert_eq!(fs::metadata(&manifest).unwrap().modified().unwrap(), before);
     }
 }
 
@@ -411,6 +428,57 @@ fn go_impact_includes_test_imports() {
             ("go:example.com/fx/c", 1),
             ("go:example.com/fx/b", 2)
         ])
+    );
+}
+
+/// Rewrites one analyzer version and recomputes the digest the way the CLI defines it.
+fn with_version(graph: &Path, version: &str) {
+    let mut g: Value = serde_json::from_slice(&fs::read(graph).unwrap()).unwrap();
+    g["analyzers"][0]["version"] = version.into();
+    let body = serde_json::json!({"schema": g["schema"], "commit": g["commit"], "dirty": g["dirty"],
+        "dirty_paths": g["dirty_paths"], "status": g["status"], "analyzers": g["analyzers"],
+        "nodes": g["nodes"], "edges": g["edges"], "gaps": g["gaps"]});
+    use sha2::Digest;
+    g["digest"] = format!(
+        "sha256:{:x}",
+        sha2::Sha256::digest(body.to_string().as_bytes())
+    )
+    .into();
+    fs::write(graph, serde_json::to_string(&g).unwrap()).unwrap();
+}
+
+#[test]
+fn impact_rejects_other_roots_and_tool_versions() {
+    if !available("python3", "--version") {
+        return;
+    }
+    let w = work("python");
+    build(&w, "python");
+    let (graph, sub) = (w.graph(), w.repo().join("scripts"));
+    let (ok, v) = taeguk(&[
+        "graph",
+        "impact",
+        graph.to_str().unwrap(),
+        sub.to_str().unwrap(),
+        "--changed",
+        "helper.py",
+    ]);
+    assert!(ok, "{v}");
+    assert_eq!(v["status"], "UNKNOWN");
+    assert!(
+        v["reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r == "graph_root_differs")
+    );
+
+    with_version(&w.graph(), "Python 0.0.0");
+    let v = impact(&w, &["--changed", "scripts/helper.py"]);
+    assert_eq!(v["status"], "UNKNOWN");
+    assert_eq!(
+        v["reasons"],
+        serde_json::json!(["analyzer_version_changed_or_unknown"])
     );
 }
 

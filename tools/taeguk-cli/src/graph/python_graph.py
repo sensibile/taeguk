@@ -67,6 +67,14 @@ def norm(parts):
     return out
 
 
+def dir_value(node, path, env):
+    """Like eval_path, but only a ROOT-relative directory; bare strings depend on the working directory."""
+    value = eval_path(node, path, env)
+    if not isinstance(value, list):
+        raise Unresolved(ast.unparse(node))
+    return value
+
+
 def eval_path(node, path, env):
     """Repository-relative path parts for common `__file__`-based path expressions."""
     if isinstance(node, ast.Name):
@@ -77,15 +85,15 @@ def eval_path(node, path, env):
     elif isinstance(node, ast.Constant) and isinstance(node.value, str) and not node.value.startswith("/"):
         return ("rel", node.value)
     elif isinstance(node, ast.Attribute) and node.attr == "parent":
-        return norm(eval_path(node.value, path, env) + [".."])
+        return norm(dir_value(node.value, path, env) + [".."])
     elif isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute) and node.value.attr == "parents":
         index = node.slice
         if isinstance(index, ast.Constant) and isinstance(index.value, int):
-            return norm(eval_path(node.value.value, path, env) + [".."] * (index.value + 1))
+            return norm(dir_value(node.value.value, path, env) + [".."] * (index.value + 1))
     elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
         right = eval_path(node.right, path, env)
         if isinstance(right, tuple):
-            return norm(eval_path(node.left, path, env) + right[1].split("/"))
+            return norm(dir_value(node.left, path, env) + right[1].split("/"))
     elif isinstance(node, ast.Call):
         func = node.func
         name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
@@ -96,9 +104,9 @@ def eval_path(node, path, env):
             if isinstance(value, list):
                 return value
         if name == "dirname" and len(node.args) == 1:
-            return norm(eval_path(node.args[0], path, env) + [".."])
+            return norm(dir_value(node.args[0], path, env) + [".."])
         if name == "join" and node.args:
-            parts = eval_path(node.args[0], path, env)
+            parts = dir_value(node.args[0], path, env)
             for arg in node.args[1:]:
                 more = eval_path(arg, path, env)
                 if not isinstance(more, tuple):
@@ -172,7 +180,13 @@ def main():
                     for _ in range(node.level - 1):
                         base = base.parent
                     pkg = "" if str(base) == "." else str(base)
-                    mod = join(pkg, *(node.module or "").split(".")) if node.module else pkg
+                    parts = node.module.split(".") if node.module else []
+                    mod = join(pkg, *parts)
+                    # Importing pkg.sub.util also runs pkg/sub/__init__.py.
+                    inits = [join(pkg, *parts[:i], "__init__.py") for i in range(1, len(parts))]
+                    for f in inits:
+                        if f in files and f != path:
+                            edges.add((path, f))
                     for target in ([mod] + [join(mod, a.name) for a in node.names]):
                         for f in (target + ".py", join(target, "__init__.py")):
                             if f in files and f != path:

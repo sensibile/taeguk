@@ -1,0 +1,1 @@
+elixir dynamic_call lib/fx/dyn.ex

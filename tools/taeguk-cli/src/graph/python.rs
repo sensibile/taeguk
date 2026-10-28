@@ -1,4 +1,4 @@
-use super::{Analyzer, Edge, Gap, Node, Output, Partial, version};
+use super::{Analyzer, Edge, Gap, Node, Output, Partial, tool_version};
 use serde::Deserialize;
 use std::{
     io::Write,
@@ -28,7 +28,7 @@ pub(super) fn analyze(root: &Path, tracked: &[String]) -> (Analyzer, Result<Part
         "python3",
         &["python3", "-I", "-c", "<embedded python_graph.py>"],
     );
-    a.version = version("python3", &["--version"]);
+    a.version = tool_version("python");
     let result = run(root, tracked, &mut a);
     (a, result)
 }

@@ -1,7 +1,7 @@
-use super::{Analyzer, Edge, Node, Partial, TempDir, exec, version};
-use std::{collections::BTreeSet, env, fs, path::Path, process::Command};
+use super::{Analyzer, Edge, Gap, Node, Partial, TempDir, exec, tool_version};
+use std::{collections::BTreeSet, env, fs, path::Path, process::Command, time::SystemTime};
 
-pub(super) fn analyze(root: &Path) -> (Analyzer, Result<Partial, String>) {
+pub(super) fn analyze(root: &Path, tracked: &[String]) -> (Analyzer, Result<Partial, String>) {
     let mut a = Analyzer::new(
         "elixir",
         "mix",
@@ -9,18 +9,20 @@ pub(super) fn analyze(root: &Path) -> (Analyzer, Result<Partial, String>) {
             "mix",
             "xref",
             "graph",
+            "--no-compile",
+            "--no-deps-check",
             "--format",
             "dot",
             "--output",
             "<tmp>/xref.dot",
         ],
     );
-    a.version = version("mix", &["--version"]);
-    let result = run(root, &mut a);
+    a.version = tool_version("elixir");
+    let result = run(root, tracked, &mut a);
     (a, result)
 }
 
-fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
+fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, String> {
     let mix = fs::read_to_string(root.join("mix.exs")).map_err(|e| format!("mix.exs: {e}"))?;
     if mix.contains("apps_path:") {
         return Err("umbrella projects are not supported; build each app separately".into());
@@ -33,6 +35,37 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
             "_build/{mix_env} not found; compile the project before building the graph"
         ));
     }
+    // xref reads the existing manifest without compiling, so a build older than the sources is stale.
+    let app = mix
+        .split("app:")
+        .nth(1)
+        .and_then(|r| r.trim_start().strip_prefix(':'))
+        .map(|r| {
+            r.chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect::<String>()
+        })
+        .filter(|a| !a.is_empty())
+        .ok_or("cannot find app name in mix.exs")?;
+    let manifest = build.join("lib").join(&app).join(".mix/compile.elixir");
+    let built = modified(&manifest).ok_or_else(|| {
+        format!(
+            "_build/{mix_env}/lib/{app}/.mix/compile.elixir not found; compile the project first"
+        )
+    })?;
+    let newer: Vec<&String> = tracked
+        .iter()
+        .filter(|f| f.ends_with(".ex") || f.ends_with(".exs"))
+        .filter(|f| !f.starts_with("deps/") && !f.starts_with("test/"))
+        .filter(|f| modified(&root.join(f)).is_some_and(|m| m > built))
+        .collect();
+    if !newer.is_empty() {
+        return Err(format!(
+            "_build/{mix_env} is older than {} source file(s), e.g. {}; compile the project first",
+            newer.len(),
+            newer[0]
+        ));
+    }
     let tmp = TempDir::new("elixir")?;
     copy_tree(&build, &tmp.0.join("build"))?;
     a.command.insert(
@@ -42,7 +75,15 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
     let dot = tmp.0.join("xref.dot");
     let o = exec(
         Command::new("mix")
-            .args(["xref", "graph", "--format", "dot", "--output"])
+            .args([
+                "xref",
+                "graph",
+                "--no-compile",
+                "--no-deps-check",
+                "--format",
+                "dot",
+                "--output",
+            ])
             .arg(&dot)
             .current_dir(root)
             .env("MIX_ENV", &mix_env)
@@ -62,7 +103,36 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
         ));
     }
     let text = fs::read_to_string(&dot).map_err(|e| format!("xref output: {e}"))?;
-    parse_dot(&text)
+    let mut out = parse_dot(&text)?;
+    for n in &out.nodes {
+        let file = &n.files[0];
+        let Ok(source) = fs::read_to_string(root.join(file)) else {
+            continue;
+        };
+        for (i, line) in source.lines().enumerate() {
+            if DYNAMIC.iter().any(|d| line.contains(d)) {
+                out.gaps.push(Gap::new(
+                    "elixir",
+                    "dynamic_call",
+                    Some(file),
+                    format!("line {}: runtime dispatch is not observed by xref", i + 1),
+                ));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Calls whose target module is chosen at runtime, so xref records no edge for them.
+const DYNAMIC: [&str; 4] = [
+    "apply(",
+    "Module.concat(",
+    "String.to_atom(",
+    "String.to_existing_atom(",
+];
+
+fn modified(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
 /// Parses `mix xref graph --format dot`: `"a"` node lines and `"a" -> "b" [label="(compile)"]` edges.
