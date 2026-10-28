@@ -7,6 +7,8 @@ defmodule Taeguk.MixProject do
       version: "0.1.0",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
+      # Coverage locates untested code; it is never a pass threshold (taeguk-test-gap).
+      test_coverage: [summary: [threshold: 0]],
       deps: deps()
     ]
 
