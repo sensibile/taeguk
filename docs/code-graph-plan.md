@@ -1,6 +1,6 @@
 # 코드 그래프 도구 작업 계약
 
-2026-10-28. 상태: Phase 0 확정, Phase 1 1계층 설계·검증 계획 작성. 목적 가설과 CG-R01~R06의 의미는 같은 날 BOSS가 “권장안대로 확정”으로 확인했다. 외부 도구 설치와 시험 프로젝트 적용은 각각 별도 확인을 받는다.
+2026-10-28. 상태: 1계층 구현과 Phase 2 검증 진행. 목적 가설과 CG-R01~R06의 의미는 같은 날 BOSS가 “권장안대로 확정”으로 확인했다. 외부 도구 설치와 시험 프로젝트 적용은 각각 별도 확인을 받는다.
 
 ## 요청과 결정 경과
 
@@ -136,6 +136,27 @@ acropolis/akashic의 `elixir/`처럼 `_build`가 없는 Elixir 프로젝트는 �
 | CG-V08 | 리뷰 | push 전 로컬 Codex 교차·보안 리뷰(`syn` 의존 추가, 외부 명령 실행 인자 처리 포함) | P0·P1 0건 |
 
 2계층(CG-R05~R06)의 검증 계획은 1계층 전달 후 별도로 작성한다.
+
+## 1계층 구현 중 설계 보완
+
+- Python: hoplites 실측에서 `tests/*.py`가 `sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))` 뒤에 `scripts`를 import하는 관계 33건을 gap 없이 놓쳤다. CG-R01의 “해석되지 않는 관계는 누락 가능으로 표시” 위반이므로, module 수준 경로 변수와 `__file__`·`Path`·`parent(s)`·`/`·`os.path` 조합으로 된 `sys.path.insert/append`를 정적으로 평가해 검색 경로에 넣는다. 평가하지 못한 변경(`Path.cwd()` 등)은 `sys_path_unresolved` gap으로 남긴다. `spec_from_file_location`·`runpy.run_path`도 `dynamic_import` gap으로 기록한다.
+- Rust: 부모 모듈의 `mod` 선언은 사용 관계가 아니므로 edge로 만들지 않는다. `use`, 식·타입 경로, `pub use` 재노출을 파일 edge로 만든다. 매크로 호출 안의 경로는 분석하지 않으며 이는 결과 `limits`와 이 문서의 한계로 남긴다.
+- acropolis/akashic 본체는 bare 저장소라 작업 트리 `akashic-worktrees/personal-knowledge-reset`에서 실측했다.
+
+## 검증 결과 (2026-10-28, 구현 commit 기준)
+
+| ID | 상태 | 근거 |
+| --- | --- | --- |
+| CG-V01 | PASS | `tools/taeguk-cli/tests/graph.rs`의 언어별 fixture 4개가 수작업 `expected-edges.txt`·`expected-gaps.txt`와 집합 일치. 기대 파일의 한 줄을 지웠을 때 네 언어 모두 테스트가 실패하는 것도 확인(오류 주입) |
+| CG-V02 | PASS | 구문 오류 Python, 없는 모듈을 import하는 Go, mod 파일이 없는 Rust, `_build` 없는 Elixir에서 `status: FAIL`, 원인 문자열, 노드 0개 |
+| CG-V03 | PASS | hoplites(Python) 노드 49·edge 73, thesmothetai(Go+Python) 13·23, axiom(Elixir+Python) 10·10, akashic 작업 트리(Rust+Python) 328·174, taeguk `apps/taeguk` 11·13, `tools/taeguk-cli` 3·4. 모두 PASS이고 실행 전후 대상 `git status` 동일. 5개 프로젝트에서 무작위 edge 25개를 원본 import·alias·호출 줄로 수동 대조해 모두 확인 |
+| CG-V04 | PASS | 같은 commit 재실행 digest 동일, 파일 수정 후 `dirty: true`와 경로 기록·digest 변경, 기록된 python 버전이 `python3 --version` 출력과 일치 |
+| CG-V05 | PASS | 수작업 영향 집합(Python 4개 노드·거리 0~3, Go test import 포함 4개 노드)과 일치, `--depth 1` 기록, stale·dirty·FAIL 그래프와 미대응 파일에서 UNKNOWN과 이유, digest 변조 그래프 거부 |
+| CG-V06 | PASS | 변경 스킬 2개 skill-creator validator 통과, 한계 문구 포함, project 설치 dry-run에 변경 파일 포함(apply는 하지 않음) |
+| CG-V07 | PASS | `check_rules.py` PASS, Python 110개 OK, `cargo test --locked`(`TAEGUK_REQUIRE_GRAPH_TOOLS=1`) 32개 OK, `cargo clippy --all-targets` 경고 0, `mix format --check-formatted` OK, DB 연결 `mix test` 21개 OK |
+| CG-V08 | NOT_RUN | push 전 로컬 Codex 교차·보안 리뷰 예정 |
+
+같은 구현자가 fixture와 기대값을 함께 만들었으므로 CG-V01·V05는 같은 가정을 공유한다. 시험 프로젝트 수동 대조(CG-V03)가 다른 관측 층이다. CI에서 Go·Elixir·Python toolchain으로 같은 테스트가 도는지는 PR 실행 후 확인한다.
 
 ## BOSS 확정 (2026-10-28)
 

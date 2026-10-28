@@ -32,6 +32,8 @@ CLI 오류는 JSON stderr와 exit 2, 계산된 FAIL은 정상 JSON stdout과 exi
 
 `taeguk state verify-evidence WORK_ID root`는 상태 API에 등록된 현재 evidence의 SHA-256을 로컬 파일과 대조한다. 파일 동일성 검사이며 근거의 진실성이나 완료를 판정하지 않는다.
 
+`taeguk graph build ROOT --out GRAPH.json [--lang elixir|go|python|rust]`는 언어별 기존 도구로 정적 의존 그래프를 만든다. Elixir는 기존 `_build`의 임시 사본에서 `mix xref graph`, Go는 `go list -e -deps -json`, Rust는 `cargo metadata --no-deps`와 `syn` 기반 `mod`·`use`·경로 해석, Python은 표준 라이브러리 `ast`를 쓴다. 결과에는 commit, 미커밋 변경 경로, 도구 버전·명령, 해석하지 못한 사례(gap), 재실행 비교용 digest가 들어간다. 분석기 하나라도 실패하면 그래프는 FAIL이고 그 언어의 노드를 넣지 않는다. 대상 저장소에 compile·의존성 설치를 하지 않으며, 네트워크 조회도 끈다. `taeguk graph impact GRAPH.json ROOT (--changed PATH... | --git-diff BASE) [--depth N]`는 변경 파일에 의존하는 노드를 거리와 함께 반환한다. 그래프가 현재 HEAD가 아니거나, dirty 상태에서 만들어졌거나, FAIL이거나, 변경 파일이 그래프에 없으면 UNKNOWN이다. edge가 없다는 것은 영향이 없다는 증거가 아니다. 설계와 검증 근거는 [코드 그래프 작업 계약](code-graph-plan.md)에 있다.
+
 `taeguk audit review.json root`는 요구·검사 ID와 실제 파일 참조를 연결하는 선택적 점검이다. 전체 완료 판정을 출력하지 않는다. [입력과 한계](evidence-review.md)를 확인한다.
 
 ## 로컬 저장 경계

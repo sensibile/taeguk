@@ -1,0 +1,11 @@
+# from to kind; written from the fixture sources, not from tool output
+python:scripts/run.py python:scripts/helper.py import
+python:scripts/run.py python:src/app/__init__.py import
+python:scripts/run.py python:src/app/cli.py import
+python:src/app/cli.py python:src/app/__init__.py import
+python:src/app/cli.py python:src/app/core.py import
+python:src/app/core.py python:src/app/__init__.py import
+python:src/app/core.py python:src/app/util.py import
+python:src/app/util.py python:src/app/__init__.py import
+python:src/app/util.py python:src/app/core.py import
+python:tests/test_helper.py python:scripts/helper.py import

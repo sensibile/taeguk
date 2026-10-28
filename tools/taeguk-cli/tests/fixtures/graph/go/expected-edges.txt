@@ -1,0 +1,5 @@
+# from to kind; written from the fixture sources, not from tool output
+go:example.com/fx/a go:example.com/fx/b import
+go:example.com/fx/b go:example.com/fx/c import
+go:example.com/fx/c go:example.com/fx/a test_import
+go:example.com/fx/cmd go:example.com/fx/a import

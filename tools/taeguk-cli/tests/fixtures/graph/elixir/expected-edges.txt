@@ -1,0 +1,5 @@
+# from to kind; written from the fixture sources, not from tool output
+elixir:lib/fx/a.ex elixir:lib/fx/b.ex runtime
+elixir:lib/fx/b.ex elixir:lib/fx/macros.ex compile
+elixir:lib/fx/s.ex elixir:lib/fx/t.ex export
+elixir:lib/fx/t.ex elixir:lib/fx/s.ex runtime
