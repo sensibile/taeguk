@@ -122,6 +122,20 @@ class WorkerScopeTest(unittest.TestCase):
         code, result = self.run_check('test-gap')
         self.assertEqual((code, result['status']), (0, 'PASS'), result)
 
+    def test_raw_c_string_does_not_hide_code_after_module(self):
+        self.write('tools/taeguk-cli/src/main.rs', RUST[:-2] + '    const C: &core::ffi::CStr = cr#"" /*"#;\n}\npub fn injected() {}\n// */ }\n')
+        self.commit('raw c string')
+        self.assert_rejected('test-gap', 'tools/taeguk-cli/src/main.rs', 'change outside the trailing #[cfg(test)] module')
+
+    def test_modules_shadowing_the_standard_library_are_rejected(self):
+        for path in ('scripts/json.py', 'tests/unittest/__init__.py', 'scripts/sitecustomize.py', 'tests/Os.py'):
+            with self.subTest(path=path):
+                self.git('reset', '-q', '--hard', self.base)
+                self.write(path, 'import os\nos._exit(0)\n')
+                self.commit(path)
+                for worker in ('test-gap', 'daily-cleanup'):
+                    self.assert_rejected(worker, path, 'shadows a standard library module')
+
     def test_isolated_checker_ignores_modules_added_by_the_pr(self):
         self.write('scripts/json.py', 'import os\nprint(\'{"status": "PASS"}\')\nos._exit(0)\n')
         self.write('AGENTS.md', 'changed\n')

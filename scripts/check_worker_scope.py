@@ -37,6 +37,11 @@ CLEANUP_PREFIXES = TEST_PREFIXES + (
 )
 CLEANUP_FILES = {'README.md'}
 
+# CI runs `python3 scripts/...` and `unittest discover -s tests`, which put these directories first
+# on sys.path: a module there named like a standard one replaces it in protected checks.
+IMPORT_ROOTS = ('scripts/', 'tests/')
+SHADOWED = set(sys.stdlib_module_names) | {'sitecustomize', 'usercustomize'}
+
 REGULAR_MODES = {'100644', '100755'}
 ZERO = '0' * 40
 
@@ -100,7 +105,7 @@ def significant(src):
                     depth, i = depth - 1, i + 2
                 else:
                     i += 1
-        elif raw := re.match(r'b?r(#*)"', src[i:]) if (c in 'br' and (i == 0 or not (src[i-1].isalnum() or src[i-1] == '_'))) else None:
+        elif raw := re.match(r'[bc]?r(#*)"', src[i:]) if (c in 'bcr' and (i == 0 or not (src[i-1].isalnum() or src[i-1] == '_'))) else None:
             close = '"' + raw.group(1)
             j = src.find(close, i + raw.end())
             if j < 0:
@@ -174,6 +179,11 @@ def violation(worker, entry):
         return 'non-ASCII or control character in path'
     if protected(path):
         return 'protected path'
+    if path.startswith(IMPORT_ROOTS) and status != 'D':
+        rest = path.split('/', 1)[1]
+        top = rest.split('/')[0]
+        if (top.split('.')[0] if top == rest else top).lower() in SHADOWED:
+            return 'shadows a standard library module'
     if status not in 'AMD':
         return f'unsupported change type {status}'
     for mode in (entry['old_mode'], entry['new_mode']):
