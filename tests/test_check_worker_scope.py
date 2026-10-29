@@ -7,6 +7,11 @@ import tempfile
 import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1]/'scripts/check_worker_scope.py'
+# Git hooks export GIT_DIR and friends; inheriting them would point these commands at the real repository.
+ENV = {**{k: v for k, v in os.environ.items() if not k.startswith('GIT_')},
+       'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@example.invalid',
+       'GIT_COMMITTER_NAME': 't', 'GIT_COMMITTER_EMAIL': 't@example.invalid',
+       'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1'}
 
 RUST = '''fn add(a: i32, b: i32) -> i32 {
     a + b
@@ -39,9 +44,7 @@ class WorkerScopeTest(unittest.TestCase):
         self.git('checkout', '-q', '-b', 'work')
 
     def git(self, *args):
-        env = {**os.environ, 'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@example.invalid',
-               'GIT_COMMITTER_NAME': 't', 'GIT_COMMITTER_EMAIL': 't@example.invalid'}
-        return subprocess.run(['git', *args], cwd=self.repo, env=env, check=True, capture_output=True, text=True).stdout
+        return subprocess.run(['git', *args], cwd=self.repo, env=ENV, check=True, capture_output=True, text=True).stdout
 
     def write(self, path, text, mode=None):
         target = self.repo/path
@@ -57,7 +60,7 @@ class WorkerScopeTest(unittest.TestCase):
 
     def run_check(self, worker, base=None):
         out = subprocess.run([sys.executable, str(SCRIPT), worker, '--base', base or self.base, '--head', 'HEAD'],
-                             cwd=self.repo, capture_output=True, text=True)
+                             cwd=self.repo, env=ENV, capture_output=True, text=True)
         return out.returncode, json.loads(out.stdout)
 
     def assert_rejected(self, worker, path, reason):
@@ -160,7 +163,7 @@ class WorkerScopeTest(unittest.TestCase):
         self.addCleanup(lambda: __import__('shutil').rmtree(trusted))
         (trusted/'check_worker_scope.py').write_text(SCRIPT.read_text())
         out = subprocess.run([sys.executable, '-I', str(trusted/'check_worker_scope.py'), 'daily-cleanup',
-                              '--base', self.base, '--head', 'HEAD'], cwd=self.repo, capture_output=True, text=True)
+                              '--base', self.base, '--head', 'HEAD'], cwd=self.repo, env=ENV, capture_output=True, text=True)
         self.assertEqual(out.returncode, 1, out.stdout)
         self.assertIn({'path': 'AGENTS.md', 'reason': 'protected path'}, json.loads(out.stdout)['rejected'])
 
