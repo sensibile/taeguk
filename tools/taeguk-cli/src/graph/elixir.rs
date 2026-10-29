@@ -102,7 +102,17 @@ for line <- String.split(IO.read(:stdio, :eof), "\n", trim: true),
           node, acc -> {node, acc}
         end)
         |> elem(1)
-      expand = fn [h | t] = parts -> if is_map_key(aliases, h), do: aliases[h] ++ t, else: parts end
+      # Module names are compared in one form: `Elixir.Kernel` and `:"Elixir.Kernel"` are
+      # `Kernel`, and alias chains (`alias K, as: K2`) are followed up to 8 steps.
+      strip = fn [:Elixir | rest] -> rest; parts -> parts end
+      expand = fn parts ->
+        Enum.reduce_while(1..8, strip.(parts), fn _, [h | t] = acc ->
+          case aliases do
+            %{^h => full} when full != [h] -> {:cont, strip.(full) ++ t}
+            _ -> {:halt, acc}
+          end
+        end)
+      end
       Macro.prewalk(ast, fn
         {{:., meta, [recv, fun]}, _, args} = node when is_atom(fun) and is_list(args) ->
           static =
@@ -111,8 +121,14 @@ for line <- String.split(IO.read(:stdio, :eof), "\n", trim: true),
           known =
             case recv do
               {:__aliases__, _, parts} when is_list(parts) and parts != [] ->
-                {expand.(parts), fun} in dynamic or {parts, fun} in dynamic
+                {expand.(parts), fun} in dynamic
               :erlang -> fun == :apply
+              atom when is_atom(atom) ->
+                case Atom.to_string(atom) do
+                  "Elixir." <> name ->
+                    {Enum.map(String.split(name, "."), &String.to_atom/1), fun} in dynamic
+                  _ -> false
+                end
               _ -> false
             end
           cond do

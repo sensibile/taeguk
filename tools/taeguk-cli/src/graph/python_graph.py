@@ -112,9 +112,10 @@ def path_bindings(tree):
         elif isinstance(node, ast.ImportFrom):
             for a in node.names:
                 bound = a.asname or a.name
-                if (node.module, a.name) in PATH_FUNCS:
+                # A relative import (`from .pathlib import Path`) is the project's own module.
+                if node.level == 0 and (node.module, a.name) in PATH_FUNCS:
                     funcs[bound] = PATH_FUNCS[(node.module, a.name)]
-                elif node.module == "os" and a.name == "path":
+                elif node.level == 0 and node.module == "os" and a.name == "path":
                     modules[bound] = "os.path"
                 else:
                     other.add(bound)
@@ -411,13 +412,21 @@ def main():
                     for f in inits:
                         if f in files and f != path:
                             edges.add((path, f))
+                    if any(a.name == "*" for a in node.names) and join(mod, "__init__.py") in files:
+                        gaps.append({"kind": "dynamic_import", "file": path,
+                                     "detail": f"line {node.lineno}: wildcard import from a package may load the submodules its __all__ lists"})
                     for target in ([mod] + [join(mod, a.name) for a in node.names]):
                         # A package directory wins over a module file of the same name.
                         f = next((f for f in (join(target, "__init__.py"), target + ".py") if f in files), None)
                         if f and f != path:
                             edges.add((path, f))
                     continue
-                names = [node.module] + [f"{node.module}.{a.name}" for a in node.names]
+                names = [node.module] + [f"{node.module}.{a.name}" for a in node.names if a.name != "*"]
+                # `from pkg import *` also imports the submodules `pkg.__all__` names.
+                if any(a.name == "*" for a in node.names) and any(
+                        t.endswith("__init__.py") for t in candidates(node.module, search, files)):
+                    gaps.append({"kind": "dynamic_import", "file": path,
+                                 "detail": f"line {node.lineno}: wildcard import from a package may load the submodules its __all__ lists"})
             elif isinstance(node, ast.Call):
                 func = node.func
                 called = getattr(func, "attr", None) or getattr(func, "id", None)

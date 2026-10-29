@@ -184,21 +184,23 @@ pub(crate) fn tool_version(lang: &str) -> Option<String> {
         _ => None,
     }
 }
-/// The empty tree, used as the attribute source so no `.gitattributes` filter driver applies.
+/// The empty tree, used as the attribute source so `.gitattributes` in the tree adds nothing.
 const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
-/// Runs git in ROOT without letting repository configuration run programs: the fsmonitor
-/// hook is off and attributes come from the empty tree, so no clean/smudge filter or
-/// filter process runs while git compares working tree files.
-fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    let o = exec(
-        Command::new("git")
-            .args(["-c", "core.fsmonitor=false"])
-            .arg(format!("--attr-source={EMPTY_TREE}"))
-            .arg("-C")
-            .arg(root)
-            .args(args),
-    )?;
+/// git in ROOT. Only commands that never pass working tree files through filter drivers are
+/// used (see `dirty_paths`): attributes can also come from `core.attributesFile` or
+/// `.git/info/attributes`, which no option disables, so the safe boundary is not reading file
+/// contents through git at all. The fsmonitor hook is off as well.
+fn git_command(root: &Path, args: &[&str]) -> Command {
+    let mut cmd = Command::new("git");
+    cmd.args(["-c", "core.fsmonitor=false"])
+        .arg(format!("--attr-source={EMPTY_TREE}"))
+        .arg("-C")
+        .arg(root)
+        .args(args);
+    cmd
+}
+fn git_done(args: &[&str], o: Output) -> Result<Vec<u8>, String> {
     if o.code != Some(0) {
         return Err(format!(
             "git {} failed: {}",
@@ -207,6 +209,12 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         ));
     }
     Ok(o.stdout)
+}
+fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    git_done(args, exec(&mut git_command(root, args))?)
+}
+fn git_input(root: &Path, args: &[&str], input: &[u8]) -> Result<Vec<u8>, String> {
+    git_done(args, exec_input(&mut git_command(root, args), input)?)
 }
 fn nul_list(data: Vec<u8>) -> Result<Vec<String>, String> {
     let text = String::from_utf8(data).map_err(|_| "git returned a non-UTF-8 path")?;
@@ -226,17 +234,110 @@ pub(crate) fn tracked(root: &Path) -> Result<Vec<String>, String> {
     nul_list(git(root, &["ls-files", "-z"])?)
 }
 /// Paths that differ from HEAD in the index or working tree, plus untracked files that are
-/// not ignored: analyzers such as `go list` read those too.
+/// not ignored: analyzers such as `go list` read those too. `git diff` against the working
+/// tree would run clean filters configured in the checkout, so the index is compared with
+/// HEAD by git (no working tree file read) and working tree files with the index here: regular
+/// files are hashed with `git hash-object --no-filters`, links compared by target, and anything
+/// else (a FIFO) counts as changed without being opened. A repository that uses filters (LFS)
+/// therefore always looks changed, which only makes impact UNKNOWN.
 fn dirty_paths(root: &Path) -> Result<Vec<String>, String> {
     let mut paths = nul_list(git(
         root,
-        &["diff", "HEAD", "--name-only", "--relative", "-z", "--"],
+        &[
+            "diff",
+            "--cached",
+            "HEAD",
+            "--name-only",
+            "--relative",
+            "-z",
+            "--",
+        ],
     )?)?;
+    paths.extend(worktree_changes(root)?);
     paths.extend(untracked(root)?);
     paths.sort();
     paths.dedup();
     Ok(paths)
 }
+/// Index entries whose working tree file differs, compared without filters.
+fn worktree_changes(root: &Path) -> Result<Vec<String>, String> {
+    if root.to_string_lossy().contains('\n') {
+        return Err("ROOT path contains a newline".into());
+    }
+    let (mut changed, mut regular, mut links) = (vec![], vec![], vec![]);
+    for entry in nul_list(git(root, &["ls-files", "-s", "-z"])?)? {
+        let Some((meta, path)) = entry.split_once('\t') else {
+            continue;
+        };
+        let [mode, sha, stage] = meta.split(' ').collect::<Vec<_>>()[..] else {
+            continue;
+        };
+        if mode == "160000" {
+            continue; // submodule
+        }
+        let kind = fs::symlink_metadata(root.join(path)).map(|m| m.file_type());
+        match (mode, kind) {
+            _ if stage != "0" => changed.push(path.to_string()),
+            ("120000", Ok(k)) if k.is_symlink() => links.push((path.to_string(), sha.to_string())),
+            (m, Ok(k)) if m != "120000" && k.is_file() && !path.contains('\n') => {
+                regular.push((path.to_string(), sha.to_string()))
+            }
+            _ => changed.push(path.to_string()),
+        }
+    }
+    if !regular.is_empty() {
+        // Absolute paths: git reads --stdin-paths relative to the repository top, not ROOT.
+        let input: String = regular
+            .iter()
+            .map(|(p, _)| format!("{}\n", root.join(p).display()))
+            .collect();
+        let out = git_input(
+            root,
+            &["hash-object", "--no-filters", "--stdin-paths"],
+            input.as_bytes(),
+        )?;
+        let hashes: Vec<&str> = std::str::from_utf8(&out)
+            .map_err(|_| "git returned a non-UTF-8 hash")?
+            .lines()
+            .collect();
+        if hashes.len() != regular.len() {
+            return Err("git hash-object returned an unexpected number of hashes".into());
+        }
+        for ((path, sha), hash) in regular.into_iter().zip(hashes) {
+            if sha != hash {
+                changed.push(path);
+            }
+        }
+    }
+    if !links.is_empty() {
+        let input: String = links.iter().map(|(_, sha)| format!("{sha}\n")).collect();
+        let out = git_input(root, &["cat-file", "--batch"], input.as_bytes())?;
+        let mut rest = &out[..];
+        for (path, _) in links {
+            let header_end = rest
+                .iter()
+                .position(|b| *b == b'\n')
+                .ok_or("git cat-file output ended early")?;
+            let header = String::from_utf8_lossy(&rest[..header_end]).into_owned();
+            let size: usize = header
+                .rsplit(' ')
+                .next()
+                .and_then(|n| n.parse().ok())
+                .ok_or("unexpected git cat-file header")?;
+            let start = header_end + 1;
+            let content = rest
+                .get(start..start + size)
+                .ok_or("git cat-file output ended early")?;
+            rest = rest.get(start + size + 1..).unwrap_or(&[]);
+            let target = fs::read_link(root.join(&path)).map_err(|e| format!("{path}: {e}"))?;
+            if target.as_os_str().as_encoded_bytes() != content {
+                changed.push(path);
+            }
+        }
+    }
+    Ok(changed)
+}
+
 fn untracked(root: &Path) -> Result<Vec<String>, String> {
     nul_list(git(
         root,
@@ -477,11 +578,26 @@ fn output_path(root: &Path, out: &Path) -> Result<PathBuf, String> {
     }
     Ok(real)
 }
+/// Files changed from BASE to the working tree: commits BASE..HEAD (tree comparison, no working
+/// tree file read) plus the working tree changes `dirty_paths` finds without filters.
 fn changed_since(root: &Path, base: &str) -> Result<Vec<String>, String> {
-    nul_list(git(
+    let mut paths = nul_list(git(
         root,
-        &["diff", "--name-only", "--relative", "-z", base, "--"],
-    )?)
+        &[
+            "diff",
+            "--name-only",
+            "--relative",
+            "-z",
+            "--end-of-options",
+            base,
+            "HEAD",
+            "--",
+        ],
+    )?)?;
+    paths.extend(dirty_paths(root)?);
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
 }
 
 /// Relative path from `base` to `path` when `path` is inside `base`.

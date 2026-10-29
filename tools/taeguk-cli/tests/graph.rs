@@ -770,6 +770,22 @@ fn hostile_manifests_and_git_config_run_nothing() {
             !marker.exists(),
             "repository git configuration ran a program"
         );
+        // Attributes from core.attributesFile and .git/info/attributes cannot run filters either.
+        let attrs = w.0.join("attrs");
+        fs::write(&attrs, "*.py filter=evil\n").unwrap();
+        git(
+            &w.repo(),
+            &["config", "core.attributesFile", attrs.to_str().unwrap()],
+        );
+        fs::create_dir_all(w.repo().join(".git/info")).unwrap();
+        fs::write(w.repo().join(".git/info/attributes"), "*.py filter=evil\n").unwrap();
+        fs::write(w.repo().join("common.py"), "VALUE = 3\n").unwrap();
+        build(&w, "python");
+        impact(&w, &["--git-diff", "HEAD"]);
+        assert!(
+            !marker.exists(),
+            "an attribute file outside the tree ran a filter"
+        );
     }
     // A manifest is data; one carrying a Stream with a callback is refused, not enumerated.
     if available("mix", "--version") {
@@ -1069,6 +1085,7 @@ fn impact_follows_reverse_edges_and_reports_limits() {
     assert_eq!(
         review_files(&v),
         [
+            "src/app/wilduser.py",
             "tests/test_aliases.py",
             "tests/test_annotated.py",
             "tests/test_bexec.py",

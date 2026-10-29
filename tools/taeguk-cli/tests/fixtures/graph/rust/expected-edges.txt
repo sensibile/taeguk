@@ -51,3 +51,5 @@ rust:app/src/allow.rs rust:core/src/model.rs use
 rust:app/src/ext.rs rust:core/src/lib.rs use
 rust:app/src/ext.rs rust:core/src/model.rs use
 rust:app/src/used.rs rust:app/src/cli.rs use
+rust:app/src/abs.rs rust:app/src/cli.rs use
+rust:app/src/abs.rs rust:core/src/model.rs use

@@ -18,3 +18,7 @@ python:src/app/user.py python:src/app/__init__.py import
 python:src/app/user.py python:src/app/pkgmod/__init__.py import
 python:src/app/rel.py python:src/app/__init__.py import
 python:src/app/rel.py python:src/app/pkgmod/__init__.py import
+python:src/app/wilduser.py python:src/app/__init__.py import
+python:src/app/wilduser.py python:src/app/wild/__init__.py import
+python:src/app/relpath.py python:src/app/pathlib.py import
+python:src/app/relpath.py python:src/app/__init__.py import

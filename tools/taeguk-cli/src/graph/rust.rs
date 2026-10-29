@@ -324,6 +324,15 @@ impl Resolver<'_> {
         };
         let (mut krate, mut base, mut rest) = (krate, here.to_vec(), segs);
         match first.as_str() {
+            // `::name` is always an external crate, never a module or alias of this one.
+            "::" => match segs
+                .get(1)
+                .and_then(|n| self.externs_of.get(krate)?.get(n))
+                .filter(|f| self.trees.contains_key(*f))
+            {
+                Some(other) => (krate, base, rest) = (other, vec![], &segs[2..]),
+                None => return false,
+            },
             "crate" => (base, rest) = (vec![], &segs[1..]),
             "self" => rest = &segs[1..],
             "super" => {
@@ -615,7 +624,9 @@ impl Scope {
         let mut scope = Scope::default();
         for i in items {
             match i {
-                syn::Item::Use(u) => scope.bind(&mut vec![], &u.tree, dropped),
+                syn::Item::Use(u) => {
+                    scope.bind(&mut absolute(u.leading_colon.is_some()), &u.tree, dropped)
+                }
                 // `extern crate fx_core as c;` binds `c` like `use fx_core as c;`.
                 syn::Item::ExternCrate(e) => {
                     let name = if e.ident == "self" {
@@ -826,6 +837,22 @@ fn mentions_path_attribute(meta: &syn::Meta) -> bool {
                 parts.iter().skip(1).any(mentions_path_attribute)
             }),
         _ => false,
+    }
+}
+
+/// Path segments; a leading `::` (an external crate in Rust 2018+) is kept as a first segment
+/// `::`, which no alias, module or keyword matches.
+fn segments<'a>(leading_colon: bool, idents: impl Iterator<Item = &'a syn::Ident>) -> Vec<String> {
+    absolute(leading_colon)
+        .into_iter()
+        .chain(idents.map(|i| i.to_string()))
+        .collect()
+}
+fn absolute(leading_colon: bool) -> Vec<String> {
+    if leading_colon {
+        vec!["::".to_string()]
+    } else {
+        vec![]
     }
 }
 
@@ -1089,7 +1116,7 @@ impl<'ast> Visit<'ast> for Paths {
     }
     fn visit_item_use(&mut self, u: &'ast syn::ItemUse) {
         u.attrs.iter().for_each(|a| self.visit_attribute(a));
-        self.use_tree(&mut vec![], &u.tree);
+        self.use_tree(&mut absolute(u.leading_colon.is_some()), &u.tree);
     }
     /// `extern crate` binds a name (see `Scope::of`) and records its path; with
     /// `#[macro_use]` it also imports macros whose names are not known here.
@@ -1196,7 +1223,10 @@ impl<'ast> Visit<'ast> for Paths {
         }
     }
     fn visit_path(&mut self, p: &'ast syn::Path) {
-        self.push(p.segments.iter().map(|s| s.ident.to_string()).collect());
+        self.push(segments(
+            p.leading_colon.is_some(),
+            p.segments.iter().map(|s| &s.ident),
+        ));
         visit::visit_path(self, p);
     }
 }
