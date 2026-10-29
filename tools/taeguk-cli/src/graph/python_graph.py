@@ -267,8 +267,9 @@ CODE_EXEC = ("exec", "eval", "compile")
 
 
 def bound_names(node):
-    """Names a node binds: assignment and deletion targets, parameters, definitions, imports,
-    `except ... as`, and match patterns (`case p`, `case [*rest]`, `case {**rest}`)."""
+    """Names a node binds: assignment and deletion targets, parameters, definitions, imports
+    (`from config import base`), `except ... as`, and match patterns (`case p`,
+    `case [*rest]`, `case {**rest}`)."""
     if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
         return [node.id]
     if isinstance(node, ast.arg):
@@ -283,6 +284,10 @@ def bound_names(node):
         return [node.rest]
     if isinstance(node, ast.ExceptHandler) and node.name:
         return [node.name]
+    if isinstance(node, ast.Import):
+        return [(a.asname or a.name).split(".")[0] for a in node.names]
+    if isinstance(node, ast.ImportFrom):
+        return [a.asname or a.name for a in node.names if a.name != "*"]
     return []
 
 

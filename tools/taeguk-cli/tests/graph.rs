@@ -910,6 +910,17 @@ fn python_resolve_follows_links_inside_root() {
         edges.contains("python:scripts/linked.py python:lnk/sibling.py"),
         "{edges:?}"
     );
+    // A tracked link is compared by its target text: unchanged, it is not dirty.
+    assert_eq!(g["dirty"], false, "{g}");
+    fs::remove_file(w.repo().join("scripts/linked.py")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("../lnk/sibling.py", w.repo().join("scripts/linked.py")).unwrap();
+    let g = build(&w, "python");
+    assert_eq!(
+        g["dirty_paths"],
+        serde_json::json!(["scripts/linked.py"]),
+        "{g}"
+    );
 }
 
 #[test]
@@ -1125,6 +1136,7 @@ fn impact_follows_reverse_edges_and_reports_limits() {
             "tests/test_file.py",
             "tests/test_fromexec.py",
             "tests/test_helper.py",
+            "tests/test_importbind.py",
             "tests/test_match.py",
             "tests/test_nested.py",
             "tests/test_order.py",

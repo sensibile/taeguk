@@ -214,9 +214,15 @@ for line <- String.split(IO.read(:stdio, :eof), "\n", trim: true),
       # `Task.start(m, :run, [])`, `{m, :run, []}` in a child spec) may be called by the
       # receiving code: any argument list or 3-tuple with a runtime module, then an atom, then
       # a list or variable, is a gap.
+      # Allow-list: only an alias, an atom or `__MODULE__` is a module known here; any other
+      # expression (a variable, an attribute, `List.first(mods)`) is a runtime value.
       runtime = fn
-        {name, _, ctx} when is_atom(name) and is_atom(ctx) -> true
-        {:@, _, _} -> true
+        {:__aliases__, _, _} -> false
+        {:__MODULE__, _, ctx} when is_atom(ctx) -> false
+        atom when is_atom(atom) -> false
+        # Literal maps, structs, tuples and binaries are data, not modules.
+        {literal, _, _} when literal in [:%{}, :%, :{}, :<<>>] -> false
+        {_, _, _} -> true
         _ -> false
       end
       mfa? = fn items ->

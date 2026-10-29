@@ -214,9 +214,6 @@ fn git_done(args: &[&str], o: Output) -> Result<Vec<u8>, String> {
 fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     git_done(args, exec(&mut git_command(root, args))?)
 }
-fn git_input(root: &Path, args: &[&str], input: &[u8]) -> Result<Vec<u8>, String> {
-    git_done(args, exec_input(&mut git_command(root, args), input)?)
-}
 fn nul_list(data: Vec<u8>) -> Result<Vec<String>, String> {
     let text = String::from_utf8(data).map_err(|_| "git returned a non-UTF-8 path")?;
     Ok(text
@@ -272,6 +269,22 @@ pub(crate) fn open_regular(path: &Path) -> std::io::Result<fs::File> {
         return Err(std::io::Error::other("not a regular file"));
     }
     Ok(file)
+}
+
+/// The git blob id of bytes in memory (a link's target text).
+fn blob_id_of(data: &[u8], sha256: bool) -> String {
+    let header = format!("blob {}\0", data.len());
+    if sha256 {
+        let mut h = Sha256::new();
+        h.update(header.as_bytes());
+        h.update(data);
+        format!("{:x}", h.finalize())
+    } else {
+        let mut h = sha1::Sha1::new();
+        h.update(header.as_bytes());
+        h.update(data);
+        h.hex()
+    }
 }
 
 /// Largest working tree file hashed; a larger one counts as changed without being read.
@@ -345,43 +358,25 @@ fn worktree_changes(root: &Path) -> Result<Vec<String>, String> {
             _ => changed.push(path.to_string()),
         }
     }
-    if !regular.is_empty() {
-        // Hashed here rather than by git: the file is opened without blocking and checked to
-        // be regular through the open handle, so one swapped for a FIFO cannot stall the CLI.
-        let sha256 = String::from_utf8_lossy(&git(root, &["rev-parse", "--show-object-format"])?)
-            .trim()
-            == "sha256";
-        for (path, sha) in regular {
-            match blob_id(&root.join(&path), sha256) {
-                Ok(id) if id == sha => {}
-                _ => changed.push(path),
-            }
+    if regular.is_empty() && links.is_empty() {
+        return Ok(changed);
+    }
+    // Hashed here rather than by git: a file is opened without blocking and checked to be
+    // regular through the open handle, so one swapped for a FIFO cannot stall the CLI, and a
+    // link is hashed from its target text, so no blob of any size is read from the object store.
+    let sha256 = String::from_utf8_lossy(&git(root, &["rev-parse", "--show-object-format"])?)
+        .trim()
+        == "sha256";
+    for (path, sha) in regular {
+        match blob_id(&root.join(&path), sha256) {
+            Ok(id) if id == sha => {}
+            _ => changed.push(path),
         }
     }
-    if !links.is_empty() {
-        let input: String = links.iter().map(|(_, sha)| format!("{sha}\n")).collect();
-        let out = git_input(root, &["cat-file", "--batch"], input.as_bytes())?;
-        let mut rest = &out[..];
-        for (path, _) in links {
-            let header_end = rest
-                .iter()
-                .position(|b| *b == b'\n')
-                .ok_or("git cat-file output ended early")?;
-            let header = String::from_utf8_lossy(&rest[..header_end]).into_owned();
-            let size: usize = header
-                .rsplit(' ')
-                .next()
-                .and_then(|n| n.parse().ok())
-                .ok_or("unexpected git cat-file header")?;
-            let start = header_end + 1;
-            let content = rest
-                .get(start..start + size)
-                .ok_or("git cat-file output ended early")?;
-            rest = rest.get(start + size + 1..).unwrap_or(&[]);
-            let target = fs::read_link(root.join(&path)).map_err(|e| format!("{path}: {e}"))?;
-            if target.as_os_str().as_encoded_bytes() != content {
-                changed.push(path);
-            }
+    for (path, sha) in links {
+        let target = fs::read_link(root.join(&path)).map_err(|e| format!("{path}: {e}"))?;
+        if blob_id_of(target.as_os_str().as_encoded_bytes(), sha256) != sha {
+            changed.push(path);
         }
     }
     Ok(changed)
@@ -559,10 +554,14 @@ fn input_fingerprint(root: &Path, langs: &[String], read: &[String]) -> Result<S
                 h.update(format!("size={} mtime={mtime}", meta.len()).as_bytes());
             }
             Ok(meta) if meta.is_file() => {
-                // Opened without blocking and re-checked, in case it was swapped for a FIFO.
+                // Opened without blocking and re-checked, in case it was swapped for a FIFO;
+                // the read itself is bounded too, in case the file grew after the size check.
                 let mut data = Vec::new();
-                match open_regular(&root.join(rel)).and_then(|mut f| f.read_to_end(&mut data)) {
-                    Ok(_) => h.update(Sha256::digest(&data)),
+                match open_regular(&root.join(rel))
+                    .and_then(|f| f.take(MAX_SOURCE + 1).read_to_end(&mut data))
+                {
+                    Ok(n) if n as u64 <= MAX_SOURCE => h.update(Sha256::digest(&data)),
+                    Ok(_) => h.update(b"grew past the size bound"),
                     Err(_) => h.update(b"unreadable"),
                 }
             }
