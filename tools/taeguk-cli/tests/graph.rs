@@ -1143,6 +1143,33 @@ fn rust_path_attribute_walks_links_like_the_os() {
 }
 
 #[test]
+fn python_package_mappings_not_interpreted_are_gaps() {
+    if !available("python3", "--version") {
+        return;
+    }
+    // `public_pkg` is found in `implementation/`: a mapping that is not interpreted must be
+    // reported rather than dropped, or `import public_pkg` has neither an edge nor a gap.
+    let w = work("python");
+    let text = fs::read_to_string(w.repo().join("pyproject.toml")).unwrap();
+    fs::write(
+        w.repo().join("pyproject.toml"),
+        format!("{text}\n[tool.setuptools.package-dir]\npublic_pkg = \"implementation\"\n"),
+    )
+    .unwrap();
+    git(&w.repo(), &["commit", "-qam", "mapping"]);
+    let g = build(&w, "python");
+    assert_eq!(g["status"], "PASS", "{g}");
+    assert!(
+        g["gaps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["kind"] == "package_mapping_unresolved" && x["file"] == "pyproject.toml"),
+        "{g}"
+    );
+}
+
+#[test]
 fn cargo_workspace_above_root_fails() {
     if !available("cargo", "--version") {
         return;
@@ -1695,6 +1722,7 @@ fn impact_follows_reverse_edges_and_reports_limits() {
             "tests/test_file.py",
             "tests/test_fromdict.py",
             "tests/test_fromexec.py",
+            "tests/test_fromossys.py",
             "tests/test_fromsysdict.py",
             "tests/test_helper.py",
             "tests/test_importbind.py",

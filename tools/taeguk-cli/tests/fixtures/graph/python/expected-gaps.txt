@@ -35,3 +35,4 @@ python dynamic_import tests/test_fromdict.py
 python sys_path_unresolved tests/test_fromsysdict.py
 python dynamic_import tests/test_fromsysdict.py
 python dynamic_import tests/test_bget.py
+python sys_path_unresolved tests/test_fromossys.py

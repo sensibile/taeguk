@@ -1217,7 +1217,9 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
     if scanned.is_ok()
         && let Some(changed) = changed
     {
-        for a in analyzers.iter_mut().filter(|a| a.status == "PASS") {
+        // Every analyzer, also one that already failed: its message may quote what a tool read
+        // while ROOT was in the changed state.
+        for a in analyzers.iter_mut() {
             a.status = "FAIL".into();
             a.error = Some(format!(
                 "ROOT changed while the analyzers ran ({changed}); build again"

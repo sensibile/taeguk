@@ -42,17 +42,41 @@ def read_source(root, path):
     return data
 
 
+# pyproject settings that map an import name to another directory, by build backend. Only the
+# setuptools root mapping (`package-dir = {"" = "src"}`) and `packages.find.where` are
+# interpreted; any other mapping is reported, not ignored.
+REMAPPING = (
+    ("setuptools", "package-dir"),
+    ("poetry", "packages"),
+    ("hatch", "build"),
+    ("pdm", "build"),
+    ("flit", "module"),
+    ("maturin", "python-source"),
+)
+
+
 def configured_roots(root, files):
-    roots = []
+    """Import roots from pyproject.toml, and the mappings found there that are not interpreted."""
+    roots, unsupported = [], []
     try:
         tool = tomllib.loads(read_source(root, "pyproject.toml").decode()).get("tool", {})
         setuptools = tool.get("setuptools", {})
         found = setuptools.get("packages", {})
         if isinstance(found, dict):
             roots += found.get("find", {}).get("where", [])
-        package_dir = setuptools.get("package-dir", {})
-        if isinstance(package_dir, dict) and "" in package_dir:
-            roots.append(package_dir[""])
+        for backend, key in REMAPPING:
+            value = tool.get(backend, {}).get(key) if isinstance(tool.get(backend), dict) else None
+            if value is None:
+                continue
+            if (backend, key) == ("setuptools", "package-dir") and isinstance(value, dict):
+                if "" in value:
+                    roots.append(value[""])
+                others = sorted(k for k in value if k != "")
+                if not others:
+                    continue
+                unsupported.append(f"tool.setuptools.package-dir maps {', '.join(others)}")
+            else:
+                unsupported.append(f"tool.{backend}.{key}")
     except FileNotFoundError:
         pass
     if any(f.startswith("src/") for f in files):
@@ -63,7 +87,7 @@ def configured_roots(root, files):
         r = str(PurePosixPath(r)).strip("/") if r not in ("", ".") else ""
         if r not in seen:
             seen.append(r)
-    return seen
+    return seen, unsupported
 
 
 def join(*parts):
@@ -377,6 +401,11 @@ def bindings(tree):
             builtins_names |= {a.asname for a in node.names if a.name == "builtins" and a.asname}
         elif isinstance(node, ast.ImportFrom):
             dynamic |= {a.asname for a in node.names if a.name in DYNAMIC and a.asname}
+            # `from os import sys as s`: the sys or builtins module under a name taken from
+            # another module is the same module for the allow-lists.
+            sys_names |= {a.asname or a.name for a in node.names if a.name == "sys"}
+            builtins_names |= {a.asname or a.name for a in node.names
+                               if a.name in ("builtins", "__builtins__")}
         value, names = assigned_names(node)
         if value is not None:
             name = getattr(value, "attr", None) or getattr(value, "id", None)
@@ -519,8 +548,11 @@ def sys_path_changes(tree, path, sys_names):
 def main():
     data = json.load(sys.stdin)
     root, files = data["root"], set(data["files"])
-    roots = configured_roots(root, files)
+    roots, unsupported = configured_roots(root, files)
     edges, gaps, errors = set(), [], []
+    for setting in unsupported:
+        gaps.append({"kind": "package_mapping_unresolved", "file": "pyproject.toml",
+                     "detail": f"{setting} may place packages elsewhere; imports through it may be missing"})
     for path in sorted(files):
         try:
             tree = ast.parse(read_source(root, path), path)
