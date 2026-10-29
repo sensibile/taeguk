@@ -54,10 +54,10 @@ class DocDriftTest(unittest.TestCase):
         self.assertNotIn(('link', 'docs/note.md', '#kept'), found)
 
     def test_titled_and_reference_links(self):
-        self.write('docs/note.md', '# Note\n\n[a](gone-a.md "Title") [b][ref]\n\n[ref]: gone-b.md\n')
+        self.write('docs/note.md', '# Note\n\n[a](gone-a.md "Title") [b][ref] [c](gone-c.md \'T\') [d](gone-d.md (T))\n\n[ref]: gone-b.md\n')
         found = self.kinds()
-        self.assertIn(('link', 'docs/note.md', 'gone-a.md'), found)
-        self.assertIn(('link', 'docs/note.md', 'gone-b.md'), found)
+        for value in ('gone-a.md', 'gone-b.md', 'gone-c.md', 'gone-d.md'):
+            self.assertIn(('link', 'docs/note.md', value), found)
 
     def test_repeated_heading_anchor_is_numbered(self):
         self.write('docs/note.md', '# Note\n\n## Usage\n\n## Usage\n\n[a](#usage) [b](#usage-1) [c](#usage-2)\n')
@@ -65,6 +65,13 @@ class DocDriftTest(unittest.TestCase):
         self.assertNotIn(('link', 'docs/note.md', '#usage'), found)
         self.assertNotIn(('link', 'docs/note.md', '#usage-1'), found)
         self.assertIn(('link', 'docs/note.md', '#usage-2'), found)
+
+    def test_numbered_anchor_skips_taken_heading(self):
+        self.write('docs/note.md', '# Note\n\n## Usage\n\n## Usage-1\n\n## Usage\n\n[a](#usage-1) [b](#usage-2) [c](#usage-1-1)\n')
+        found = self.kinds()
+        self.assertNotIn(('link', 'docs/note.md', '#usage-1'), found)
+        self.assertNotIn(('link', 'docs/note.md', '#usage-2'), found)
+        self.assertIn(('link', 'docs/note.md', '#usage-1-1'), found)
 
     def test_rule_version_followed_by_korean_particle(self):
         self.write('docs/note.md', '# Note\n\nREQ-001 9.9와 REQ-007 9.9를 적용한다. VER-005 9.9.\n')

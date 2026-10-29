@@ -40,7 +40,7 @@ def scan(root):
             def add(kind, value, detail):
                 findings.append({'kind': kind, 'file': rel, 'line': number, 'value': value, 'detail': detail})
             # Inline links with an optional title, and reference definitions ([ref]: target).
-            links = re.findall(r'\]\(<?([^)\s>]+)>?(?:\s+"[^"]*")?\)', line)
+            links = re.findall(r'\]\(<?([^)\s>]+)>?(?:\s+(?:"[^"]*"|\'[^\']*\'|\([^)]*\)))?\)', line)
             links += re.findall(r'^\s{0,3}\[[^\]]+\]:\s*<?([^\s>]+)>?', line)
             for value in links:
                 parts = urlsplit(value)
@@ -71,6 +71,7 @@ def main():
     findings = scan(parser.parse_args().root)
     print(json.dumps({'status': 'FINDINGS' if findings else 'NONE', 'scope': 'mechanical_document_drift_only',
                       'findings': findings, 'limits': ['no semantic comparison', 'docs/rules is checked by check_rules.py',
+                                                       'line-based regex, not a Markdown parser: rare syntax such as multi-line links can be missed',
                                                        'a finding is a candidate, not a defect']}, ensure_ascii=False, indent=2))
     return bool(findings)
 

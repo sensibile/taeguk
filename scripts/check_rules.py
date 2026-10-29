@@ -28,14 +28,15 @@ def reference(base, value, boundary, markdown_only=False):
 
 
 def anchors(text):
-    found, counts = set(), {}
+    counts = {}
     for heading in re.findall(r'^#{1,6} +(.+)$', text, re.MULTILINE):
-        slug = re.sub(r'[^\w\- ]', '', heading.lower()).replace(' ', '-')
-        # GitHub numbers repeated headings: usage, usage-1, usage-2.
-        found.add(f'{slug}-{counts[slug]}' if slug in counts else slug)
-        counts[slug] = counts.get(slug, 0) + 1
-    found.update(re.findall(r'<a\s+id="([^"]+)"', text))
-    return found
+        slug = anchor = re.sub(r'[^\w\- ]', '', heading.lower()).replace(' ', '-')
+        # GitHub numbers repeated headings (usage, usage-1) and skips numbers another heading already took.
+        while anchor in counts:
+            counts[slug] += 1
+            anchor = f'{slug}-{counts[slug]}'
+        counts[anchor] = 0
+    return set(counts) | set(re.findall(r'<a\s+id="([^"]+)"', text))
 
 
 def check(root):
