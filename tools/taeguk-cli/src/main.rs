@@ -280,8 +280,13 @@ mod tests {
     }
     #[test]
     fn declared_failed_check_is_fail_not_unknown() {
-        let dir = env::temp_dir().join(format!("taeguk-failed-{}", process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = env::temp_dir().join(format!("taeguk-failed-{}-{nanos}", process::id()));
+        // create_dir fails on an existing path, so a pre-planted directory or link is never reused.
+        fs::create_dir(&dir).unwrap();
         fs::write(dir.join("artifact"), b"abc").unwrap();
         let p = Packet {
             artifact: "artifact".into(),
