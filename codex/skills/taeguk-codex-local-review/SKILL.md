@@ -21,10 +21,12 @@ Running the CLI sends the diff and repository context to OpenAI. On 2026-10-28 B
    ```
 3. Read the diff that will be sent. If it contains secrets, credentials, tokens or personal data, do not run; report NOT_RUN and the location without repeating the value.
 4. Check `codex --version`. A missing CLI or failed login is NOT_RUN, not a product failure.
+5. Write the purpose context from [review prompts](references/review-prompts.md): purpose, requirements, expected-value source, out-of-scope items with their decision records, and reachability. Take each field from the work contract, approved requirements and decision records, not from the implementation. Without it Codex reviews against generic practice and its findings cannot be assessed against what the change is for. If the purpose or expected-value source is not recorded anywhere, do not invent one; ask the assigner, and record the review as NOT_RUN if it stays missing.
+6. On a rerun for the same PR or worker run, add the prior adjudications: every earlier Codex finding that was rejected or left unfixed, with its head SHA and reason.
 
 ## Run
 
-Use a read-only sandbox, no saved session, and save the final message as evidence outside the reviewed tree:
+Use a read-only sandbox, no saved session, and keep both the prompt file and the final message as evidence outside the reviewed tree:
 
 ```sh
 codex exec review -c 'model="gpt-6-sol"' -c 'model_reasoning_effort="high"' -c 'sandbox_mode="read-only"' --ephemeral -o "$OUT" - < "$PROMPT"
@@ -32,14 +34,15 @@ codex exec review -c 'model="gpt-6-sol"' -c 'model_reasoning_effort="high"' -c '
 
 On 2026-10-29 BOSS set cross and security reviews to `gpt-6-sol` with `high` effort for cost, replacing the 2026-10-28 `gpt-6-astra`/`medium` pin. The pin lives in this command, not in the role TOML, so roles keep inheriting the session model. Record the model and effort with the result; a run without them does not follow this procedure.
 
-In codex-cli 0.164.0 the target flags `--base`, `--commit` and `--uncommitted` cannot be combined with a custom prompt (exit 2, observed 2026-10-28). So state the target inside the prompt file as the exact `git diff` command for the SHAs above, followed by the focus from [review prompts](references/review-prompts.md) and the request, approved requirements and plan version the reviewer needs. Run it in the foreground or as a tracked background command and keep its exit code.
+In codex-cli 0.164.0 the target flags `--base`, `--commit` and `--uncommitted` cannot be combined with a custom prompt (exit 2, observed 2026-10-28). So state the target inside the prompt file as the exact `git diff` command for the SHAs above, followed by the purpose context, the focus and, on a rerun, the prior adjudications, in the order given in [review prompts](references/review-prompts.md). Run it in the foreground or as a tracked background command and keep its exit code.
 
 ## After running
 
 - Confirm HEAD, `git status --short` and the content fingerprint are unchanged. A change made during the review is a FAIL of the review run; report it and do not keep the edits silently. A change from another writer means the result belongs to an older version; rerun on the new one.
-- Record command, CLI version, target SHAs, exit code, output path, start and end time.
+- Record command, CLI version, target SHAs, exit code, prompt path and its `shasum -a 256`, output path, start and end time. Without the prompt it cannot be checked later what purpose Codex was given.
 - Exit 0 with no findings means "Codex reported no findings for this target". It is not PASS for correctness or security. A non-zero exit, timeout or empty output is NOT_RUN or UNKNOWN.
-- Report each finding with location, Codex's claim, severity and your assessment: reproduced, plausible, rejected with reason, or needs reproduction. Send claims needing execution to `taeguk_tool_verifier`.
+- Report each finding with location, Codex's claim, severity and your assessment: reproduced, plausible, rejected with reason, or needs reproduction. Send claims needing execution to `taeguk_tool_verifier`. A finding that repeats a prior adjudication without new evidence is recorded as a repeat of that entry, not assessed again.
+- Report purpose challenges separately. They question the purpose, expected-value source or a deferral, which only BOSS can change, so do not reject them yourself; pass them to BOSS with your view.
 - When the target changes, rerun on the new range. Do not reuse a result from an older head.
 
 Agreement between Codex and another model is supporting analysis, not independent execution evidence. When Codex also implemented the change, state that this was not a cross-model review.
