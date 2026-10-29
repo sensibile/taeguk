@@ -202,6 +202,19 @@ fn untracked(root: &Path) -> Result<Vec<String>, String> {
     )?)
 }
 
+/// An ignored directory of generated build output that no selected analyzer reads. It is
+/// recognized by what the tools write, not by name: a Mix build (`_build/<env>/lib`, which go
+/// skips as `_`-prefixed and which is checked while it is copied) or, when go is not selected, a
+/// cargo or other cache directory (`.rustc_info.json`, `CACHEDIR.TAG`). A directory merely named
+/// `target` can hold workspace members cargo reads, so it is walked.
+fn build_output(dir: &Path, name: &std::ffi::OsStr, go: bool) -> bool {
+    let mix = name == "_build"
+        && fs::read_dir(dir)
+            .is_ok_and(|mut d| d.any(|e| e.is_ok_and(|e| e.path().join("lib").is_dir())));
+    let cache = dir.join(".rustc_info.json").is_file() || dir.join("CACHEDIR.TAG").is_file();
+    mix || (!go && cache)
+}
+
 /// Walks ROOT on disk (git does not list special files), calling `visit(rel, path, kind,
 /// ignored)` for each entry; a directory is entered when `visit` returns true. `.git` is
 /// skipped, and so are ignored directories no selected analyzer reads: `_build` (go skips
@@ -239,7 +252,7 @@ fn walk(
             let rel = relative(root, &path).ok_or("non-UTF-8 path under ROOT")?;
             let name = entry.file_name();
             let is_ignored = in_ignored || ignored.contains(&rel);
-            if rel == ".git" || (is_ignored && (name == "_build" || (name == "target" && !go))) {
+            if rel == ".git" || (is_ignored && build_output(&path, &name, go)) {
                 continue;
             }
             let kind = entry.file_type().map_err(|e| format!("{rel}: {e}"))?;

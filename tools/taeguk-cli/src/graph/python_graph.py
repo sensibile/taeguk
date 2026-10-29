@@ -295,8 +295,9 @@ def main():
                 if called in dynamic:
                     gaps.append({"kind": "dynamic_import", "file": path,
                                  "detail": f"line {node.lineno}: {called}() target is not resolved statically"})
-            # Any reference to the dynamic import machinery marks the file, however the function is
-            # later renamed or passed on: the call itself may not be recognizable.
+            # Any reference to the dynamic import machinery marks the file, by name, attribute
+            # (`builtins.__import__`) or string (`getattr(builtins, "__import__")`), however the
+            # function is later renamed or passed on: the call itself may not be recognizable.
             machinery = None
             if isinstance(node, ast.Import):
                 machinery = next((a.name for a in node.names if a.name.split(".")[0] in DYNAMIC_MODULES), None)
@@ -304,6 +305,10 @@ def main():
                 machinery = node.module
             elif isinstance(node, ast.Name) and node.id == "__import__":
                 machinery = "__import__"
+            elif isinstance(node, ast.Attribute) and node.attr in DYNAMIC:
+                machinery = node.attr
+            elif isinstance(node, ast.Constant) and node.value in DYNAMIC + DYNAMIC_MODULES:
+                machinery = node.value
             if machinery:
                 gaps.append({"kind": "dynamic_import", "file": path,
                              "detail": f"line {node.lineno}: uses {machinery}; modules it loads are not resolved statically"})

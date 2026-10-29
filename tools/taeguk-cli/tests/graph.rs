@@ -354,6 +354,23 @@ fn analyzer_failures_mark_the_graph_failed() {
         git(&w.repo(), &["add", "-A"]);
         git(&w.repo(), &["commit", "-qm", "link"]);
         assert_fails(&w, "rust", "app/Cargo.toml resolves outside ROOT");
+        // A directory merely named `target` can hold workspace members cargo reads.
+        let w = work("rust");
+        let manifest = w.repo().join("Cargo.toml");
+        let text = fs::read_to_string(&manifest)
+            .unwrap()
+            .replace("\"app\"]", "\"app\", \"target/member\"]");
+        fs::write(&manifest, text).unwrap();
+        git(&w.repo(), &["commit", "-qam", "member"]);
+        fs::create_dir_all(w.repo().join("target/member")).unwrap();
+        assert!(
+            Command::new("mkfifo")
+                .arg(w.repo().join("target/member/Cargo.toml"))
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert_fails(&w, "rust", "target/member/Cargo.toml is not a regular file");
     }
     if available("mix", "--version") {
         // mix.exs is read before anything else, so a device link must fail without a build.
@@ -529,8 +546,14 @@ fn glob_reexport_cycles_finish() {
         }
         fs::write(dir.join(format!("m{i}.rs")), text).unwrap();
     }
+    // Two names bound to each other through 16 cfg branches each would expand 16^8 times.
+    let mut web: String = (0..16)
+        .map(|i| format!("#[cfg(any())]\nuse b::p{i} as a;\n#[cfg(any())]\nuse a::q{i} as b;\n"))
+        .collect();
+    web += "pub fn g() {\n    a::x::y();\n}\n";
+    fs::write(w.repo().join("core/src/alias_web.rs"), web).unwrap();
     let lib = w.repo().join("core/src/lib.rs");
-    let text = fs::read_to_string(&lib).unwrap() + "pub mod web;\n";
+    let text = fs::read_to_string(&lib).unwrap() + "pub mod web;\npub mod alias_web;\n";
     fs::write(&lib, text).unwrap();
     git(&w.repo(), &["add", "-A"]);
     git(&w.repo(), &["commit", "-qm", "web"]);
@@ -538,6 +561,14 @@ fn glob_reexport_cycles_finish() {
     let g = build(&w, "rust");
     assert_eq!(g["status"], "PASS", "{g}");
     assert!(started.elapsed() < Duration::from_secs(60));
+    assert!(
+        g["gaps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["kind"] == "resolution_truncated" && x["file"] == "core/src/alias_web.rs"),
+        "{g}"
+    );
 }
 
 #[test]
@@ -638,6 +669,7 @@ fn impact_follows_reverse_edges_and_reports_limits() {
         review_files(&v),
         [
             "tests/test_aliases.py",
+            "tests/test_builtins.py",
             "tests/test_helper.py",
             "tests/test_order.py",
             "tests/test_paths.py",

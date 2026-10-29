@@ -151,8 +151,9 @@ const DYNAMIC: [&str; 4] = [
 ];
 
 /// Whether `line` calls a function on a variable (`mod.execute()`, `state.mod.run(x)`): the
-/// module is a runtime value, so xref cannot record the edge. Map field access without
-/// parentheses is not a call and is not matched; neither is an anonymous call `fun.(x)`.
+/// module is a runtime value, so xref cannot record the edge. Without parentheses
+/// (`mod.execute x`) an argument must follow; map field access (`state.count + 1`) and an
+/// anonymous call `fun.(x)` are not matched.
 fn variable_call(line: &str) -> bool {
     let code = line.split('#').next().unwrap_or(line);
     let b = code.as_bytes();
@@ -178,7 +179,28 @@ fn variable_call(line: &str) -> bool {
         while end < b.len() && (ident(b[end]) || b[end] == b'?' || b[end] == b'!') {
             end += 1;
         }
-        end < b.len() && b[end] == b'('
+        if end < b.len() && b[end] == b'(' {
+            return true;
+        }
+        // Without parentheses (`mod.execute x`) an argument follows after spaces; an operator,
+        // separator or block keyword there means field access instead.
+        let rest = code[end..].trim_start_matches([' ', '\t']);
+        if rest.len() == code.len() - end {
+            return false;
+        }
+        let word: String = rest
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        let starts_arg = rest
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_alphanumeric() || "_:\"'[{%@&".contains(c));
+        starts_arg
+            && ![
+                "do", "end", "and", "or", "when", "in", "not", "else", "after", "rescue", "catch",
+            ]
+            .contains(&word.as_str())
     })
 }
 
@@ -328,6 +350,8 @@ mod tests {
             "def run(mod), do: mod.execute()",
             "state.mod.run(x)",
             "_m.f(1)",
+            "def run(mod, x), do: mod.execute x",
+            "mod.start :normal, []",
         ] {
             assert!(variable_call(line), "{line}");
         }
@@ -336,6 +360,10 @@ mod tests {
             ":ets.new(:t, [])",
             "fun.(x)",
             "state.count + 1",
+            "if state.ok do",
+            "x = map.value",
+            "f(map.a, map.b)",
+            "state.items |> Enum.map(&f/1)",
             "# mod.run()",
             "Fx.B.b()",
         ] {

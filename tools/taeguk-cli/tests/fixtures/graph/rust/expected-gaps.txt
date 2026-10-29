@@ -2,3 +2,4 @@ rust cfg_module_missing core/src/lib.rs
 rust resolution_truncated app/src/many.rs
 rust macro_body_not_analyzed app/src/macros.rs
 rust cfg_attr_path core/src/lib.rs
+rust macro_body_not_analyzed app/src/inc.rs

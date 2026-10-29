@@ -64,6 +64,8 @@ const MAX_MODULE_FILES: usize = 10_000;
 /// Bounds on alias chains and on the paths one mention may expand to (cfg branches multiply).
 const MAX_ALIAS_DEPTH: usize = 8;
 const MAX_EXPANSIONS: usize = 16;
+/// Expansion calls one binding or mention may make.
+const MAX_EXPAND_STEPS: usize = 1_024;
 /// Module states one mention may visit while following re-exports.
 const MAX_RESOLVE_STEPS: usize = 4_096;
 
@@ -583,8 +585,46 @@ struct Paths {
     paths: Vec<PathRef>,
     scopes: Vec<Scope>,
     dropped: Cell<bool>,
+    /// Expansion steps left for the current binding or mention: cfg branches that bind names
+    /// to each other can otherwise branch exponentially before the result bound applies.
+    steps: Cell<usize>,
     opaque_macros: BTreeSet<String>,
 }
+
+/// Standard macros that expand only to their arguments plus standard library code.
+const PLAIN_MACROS: [&str; 31] = [
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "cfg",
+    "column",
+    "compile_error",
+    "concat",
+    "dbg",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "env",
+    "eprint",
+    "eprintln",
+    "file",
+    "format",
+    "format_args",
+    "line",
+    "matches",
+    "module_path",
+    "option_env",
+    "panic",
+    "print",
+    "println",
+    "stringify",
+    "todo",
+    "unimplemented",
+    "unreachable",
+    "vec",
+    "write",
+    "writeln",
+];
 
 /// Whether a token stream contains `::` at any depth.
 fn has_path(tokens: proc_macro2::TokenStream) -> bool {
@@ -614,6 +654,7 @@ impl Paths {
             paths: vec![],
             scopes: vec![],
             dropped: Cell::new(false),
+            steps: Cell::new(0),
             opaque_macros: BTreeSet::new(),
         };
         p.enter(items.iter());
@@ -626,12 +667,14 @@ impl Paths {
             let list = scope.aliases.entry(name.clone()).or_default();
             for f in fulls {
                 let mut out = vec![];
+                self.steps.set(MAX_EXPAND_STEPS);
                 self.expand(f.clone(), Some(&raw), 0, &mut out);
                 out.into_iter().for_each(|e| add(list, e, &self.dropped));
             }
         }
         for g in &raw.globs {
             let mut out = vec![];
+            self.steps.set(MAX_EXPAND_STEPS);
             self.expand(g.clone(), Some(&raw), 0, &mut out);
             out.into_iter()
                 .for_each(|e| add(&mut scope.globs, e, &self.dropped));
@@ -649,6 +692,10 @@ impl Paths {
         depth: usize,
         out: &mut Vec<Vec<String>>,
     ) {
+        if self.steps.get() == 0 {
+            return self.dropped.set(true);
+        }
+        self.steps.set(self.steps.get() - 1);
         let Some(first) = segs.first() else {
             return add(out, segs, &self.dropped);
         };
@@ -683,6 +730,7 @@ impl Paths {
     }
     fn push(&mut self, segs: Vec<String>) {
         let mut all = vec![];
+        self.steps.set(MAX_EXPAND_STEPS);
         self.expand(segs, None, 0, &mut all);
         let globs: Vec<Vec<String>> = self.scopes.iter().flat_map(|s| s.globs.clone()).collect();
         for segs in all {
@@ -728,18 +776,36 @@ impl<'ast> Visit<'ast> for Paths {
     /// Macro arguments are token streams. Those that parse as comma-separated expressions
     /// (`println!`, `vec!`, `assert!` ...) are visited like code; any other body that mentions a
     /// path (`a::b`) is recorded so the call site becomes a gap.
+    /// Only standard macros whose expansion uses nothing beyond their arguments are treated as
+    /// fully analyzed; any other macro (`include!`, `json!`, the crate's own) may expand to code
+    /// that reaches other modules, so its call site is a gap even when its arguments parse.
     fn visit_macro(&mut self, m: &'ast syn::Macro) {
         visit::visit_macro(self, m);
+        let name = m
+            .path
+            .segments
+            .last()
+            .map(|s| s.ident.to_string())
+            .unwrap_or_default();
+        let std_path = m.path.segments.len() == 1
+            || m.path
+                .segments
+                .first()
+                .is_some_and(|s| s.ident == "std" || s.ident == "core" || s.ident == "alloc");
+        let plain = std_path && PLAIN_MACROS.contains(&name.as_str());
         let parsed = m.parse_body_with(
             syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated,
         );
-        match parsed {
-            Ok(args) => args.iter().for_each(|e| self.visit_expr(e)),
-            Err(_) if has_path(m.tokens.clone()) => {
-                let name = m.path.segments.last().map(|s| s.ident.to_string());
-                self.opaque_macros.insert(name.unwrap_or_default());
-            }
-            Err(_) => {}
+        if let Ok(args) = &parsed {
+            args.iter().for_each(|e| self.visit_expr(e));
+        }
+        let opaque = if name == "macro_rules" || plain {
+            parsed.is_err() && has_path(m.tokens.clone())
+        } else {
+            true
+        };
+        if opaque {
+            self.opaque_macros.insert(name);
         }
     }
     fn visit_path(&mut self, p: &'ast syn::Path) {

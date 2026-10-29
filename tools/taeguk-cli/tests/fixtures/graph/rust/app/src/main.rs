@@ -2,6 +2,7 @@ mod cli;
 mod declared;
 mod facade_user;
 mod globbed;
+mod inc;
 mod loop_;
 mod macros;
 mod many;
