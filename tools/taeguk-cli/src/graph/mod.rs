@@ -126,34 +126,112 @@ pub(crate) struct Output {
     pub(crate) stderr: String,
 }
 pub(crate) fn exec(cmd: &mut Command) -> Result<Output, String> {
-    let o = cmd
-        .output()
-        .map_err(|e| format!("cannot run {:?}: {e}", cmd.get_program()))?;
-    Ok(Output {
-        code: o.status.code(),
-        stdout: o.stdout,
-        stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
-    })
+    bounded(cmd.stdin(Stdio::null()), None)
 }
 /// Runs a command with `input` on stdin. Data derived from the target repository (file names,
 /// paths inside ROOT) goes to tools this way, never as command-line arguments, where a name like
 /// `-r` would be read as an option.
 pub(crate) fn exec_input(cmd: &mut Command, input: &[u8]) -> Result<Output, String> {
+    bounded(cmd.stdin(Stdio::piped()), Some(input))
+}
+
+/// Default bound on one process (an analyzer, git, a tool), overridable with
+/// TAEGUK_GRAPH_TIMEOUT_SECS.
+const ANALYZER_TIMEOUT_SECS: u64 = 600;
+fn time_limit() -> u64 {
+    env::var("TAEGUK_GRAPH_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(ANALYZER_TIMEOUT_SECS)
+}
+
+/// Set for an analyzer process: the tools it runs stay in its process group, which the CLI
+/// process owns and removes.
+const IN_ANALYZER: &str = "TAEGUK_GRAPH_IN_ANALYZER";
+
+/// Every process this tool starts runs through here, with a time bound. Files in the target
+/// repository can make a tool wait forever (git opening a FIFO `.gitignore`), so a wait that
+/// never ends becomes an error, not a stuck CLI. The CLI process starts each child in a new
+/// process group and kills what is left of that group once the child has exited or timed out,
+/// so nothing a tool or an analyzer started outlives it (also when an analyzer crashes). Inside
+/// an analyzer, tools stay in the analyzer's group for that cleanup; a tool that times out is
+/// killed itself.
+fn bounded(cmd: &mut Command, input: Option<&[u8]>) -> Result<Output, String> {
+    let limit = time_limit();
+    let owner = env::var_os(IN_ANALYZER).is_none();
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(unix)]
+    if owner {
+        std::os::unix::process::CommandExt::process_group(cmd, 0);
+    }
     let mut child = cmd
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("cannot run {:?}: {e}", cmd.get_program()))?;
-    let mut stdin = child.stdin.take().ok_or("stdin unavailable")?;
-    let input = input.to_vec();
-    let writer = std::thread::spawn(move || stdin.write_all(&input));
-    let o = child.wait_with_output().map_err(|e| e.to_string())?;
-    let _ = writer.join();
+    let writer = match (input, child.stdin.take()) {
+        (Some(input), Some(mut stdin)) => {
+            let input = input.to_vec();
+            Some(std::thread::spawn(move || {
+                let _ = stdin.write_all(&input);
+            }))
+        }
+        _ => None,
+    };
+    let read = |mut r: Box<dyn Read + Send>| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = r.read_to_end(&mut buf);
+            buf
+        })
+    };
+    let out = read(Box::new(child.stdout.take().expect("piped stdout")));
+    let err = read(Box::new(child.stderr.take().expect("piped stderr")));
+    let started = std::time::Instant::now();
+    let mut failure = None;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if started.elapsed().as_secs() >= limit => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(10)),
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                failure = Some(format!("{:?}: {e}", cmd.get_program()));
+                break None;
+            }
+        }
+    };
+    #[cfg(unix)]
+    if owner {
+        // SAFETY: kill(2) on the process group this process created for the child; no memory
+        // is touched. The group id stays reserved while any member is left, so it is not reused.
+        unsafe {
+            libc::kill(-(child.id() as i32), libc::SIGKILL);
+        }
+    }
+    if let Some(e) = failure {
+        return Err(e);
+    }
+    if let Some(w) = writer {
+        let _ = w.join();
+    }
+    let (out, err) = (
+        out.join().unwrap_or_default(),
+        err.join().unwrap_or_default(),
+    );
+    let Some(status) = status else {
+        return Err(format!(
+            "{:?} did not finish within {limit} s and was stopped",
+            cmd.get_program()
+        ));
+    };
     Ok(Output {
-        code: o.status.code(),
-        stdout: o.stdout,
-        stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
+        code: status.code(),
+        stdout: out,
+        stderr: String::from_utf8_lossy(&err).into_owned(),
     })
 }
 /// Last non-empty line of `<tool> <arg>`. Like the analyzers it runs outside ROOT, so the
@@ -938,9 +1016,6 @@ fn analyze(root: &Path, lang: &str) -> Result<(Analyzer, Result<Partial, String>
     })
 }
 
-/// Default bound on one analyzer process, overridable with TAEGUK_GRAPH_TIMEOUT_SECS.
-const ANALYZER_TIMEOUT_SECS: u64 = 600;
-
 /// Runs one analyzer as a child process of this binary, in its own process group, with a time
 /// bound. Whatever the input does to a parser or external tool (a crash such as stack
 /// exhaustion, or a wait that never ends), the result is that analyzer's FAIL, not a crashed or
@@ -951,10 +1026,6 @@ fn isolated(root: &Path, lang: &str) -> (Analyzer, Result<Partial, String>) {
         Ok(exe) => exe,
         Err(e) => return failed(format!("cannot locate taeguk executable: {e}")),
     };
-    let limit = env::var("TAEGUK_GRAPH_TIMEOUT_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(ANALYZER_TIMEOUT_SECS);
     // The analyzer and the tools it runs keep their temporary files in a directory this process
     // owns and removes, so nothing is left behind when the analyzer is killed on timeout.
     let scratch = match TempDir::new(&format!("{lang}-run")) {
@@ -962,53 +1033,15 @@ fn isolated(root: &Path, lang: &str) -> (Analyzer, Result<Partial, String>) {
         Err(e) => return failed(format!("cannot create a temporary directory: {e}")),
     };
     let mut cmd = Command::new(exe);
-    cmd.env("TMPDIR", &scratch.0);
-    cmd.args(["graph", "__analyze", lang])
-        .arg(root)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    #[cfg(unix)]
-    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
-    let mut child = match cmd.spawn() {
-        Ok(child) => child,
-        Err(e) => return failed(format!("cannot start analyzer process: {e}")),
+    cmd.env("TMPDIR", &scratch.0)
+        .env(IN_ANALYZER, "1")
+        .args(["graph", "__analyze", lang])
+        .arg(root);
+    let o = match exec(&mut cmd) {
+        Ok(o) => o,
+        Err(e) => return failed(format!("analyzer process: {e}")),
     };
-    let read = |mut r: Box<dyn Read + Send>| {
-        std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            let _ = r.read_to_end(&mut buf);
-            buf
-        })
-    };
-    let out = read(Box::new(child.stdout.take().expect("piped stdout")));
-    let err = read(Box::new(child.stderr.take().expect("piped stderr")));
-    let started = std::time::Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
-            Ok(None) if started.elapsed().as_secs() >= limit => {
-                #[cfg(unix)]
-                let _ = Command::new("kill")
-                    .args(["-KILL", &format!("-{}", child.id())])
-                    .status();
-                let _ = child.kill();
-                let _ = child.wait();
-                break None;
-            }
-            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(20)),
-            Err(e) => return failed(format!("analyzer process: {e}")),
-        }
-    };
-    let (out, err) = (
-        out.join().unwrap_or_default(),
-        err.join().unwrap_or_default(),
-    );
-    let Some(status) = status else {
-        return failed(format!(
-            "analyzer did not finish within {limit} s and was stopped"
-        ));
-    };
+    let (out, err) = (o.stdout, o.stderr);
     let reply: Option<Value> = serde_json::from_slice(&out).ok();
     let parsed = reply.and_then(|v| {
         let a: Analyzer = serde_json::from_value(v.get("analyzer")?.clone()).ok()?;
@@ -1020,16 +1053,12 @@ fn isolated(root: &Path, lang: &str) -> (Analyzer, Result<Partial, String>) {
         Some((a, result))
     });
     match parsed {
-        Some(r) if status.success() => r,
+        Some(r) if o.code == Some(0) => r,
         _ => {
-            let tail: String = String::from_utf8_lossy(&err)
-                .lines()
-                .rev()
-                .take(3)
-                .collect::<Vec<_>>()
-                .join(" | ");
+            let tail: String = err.lines().rev().take(3).collect::<Vec<_>>().join(" | ");
             failed(format!(
-                "analyzer process exited abnormally ({status}): {tail}"
+                "analyzer process exited abnormally (exit code {:?}): {tail}",
+                o.code
             ))
         }
     }
@@ -1091,6 +1120,11 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
     }
     read.sort();
     read.dedup();
+    if let Some(r) = read.iter().find(|r| !plain_relative(r)) {
+        return Err(format!(
+            "an analyzer reported a read path that is not a plain ROOT-relative path: {r:?}"
+        ));
+    }
     let known: BTreeSet<_> = nodes.iter().map(|n| n.id.clone()).collect();
     edges.retain(|e| e.from != e.to && known.contains(&e.from) && known.contains(&e.to));
     nodes.sort();
@@ -1190,8 +1224,13 @@ fn read_graph(path: &Path) -> Result<Graph, String> {
     Ok(g)
 }
 
-/// `a/b` or `a/b/` (a tree): no absolute path, empty, `.` or `..` component.
+/// `a/b`, `a/b/` (a tree) or `./` (the ROOT tree): no absolute path, empty, `.` or `..`
+/// component otherwise. build checks what it records against this too, so impact never refuses
+/// a graph build wrote.
 fn plain_relative(r: &str) -> bool {
+    if r == "./" {
+        return true;
+    }
     let body = r.strip_suffix('/').unwrap_or(r);
     !body.is_empty()
         && !body.contains('\0')

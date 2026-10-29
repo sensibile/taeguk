@@ -193,7 +193,12 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
         .iter()
         .any(|v| !v.is_empty())
         {
-            out.read.push(format!("{rel_dir}/"));
+            // `./` is the whole ROOT tree (a package at the module root).
+            out.read.push(if rel_dir.is_empty() {
+                "./".into()
+            } else {
+                format!("{rel_dir}/")
+            });
         }
         let id = format!("go:{}", p.import_path);
         out.nodes.push(Node::new("go", &p.import_path, files));

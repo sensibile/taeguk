@@ -208,23 +208,26 @@ def real_parts(parts):
     return out
 
 
-def physical(base, more):
-    """`base` joined with literal segments as the OS walks them: a `..` right after a
-    symbolic link inside ROOT goes to the link target's parent, not back lexically, so such a
-    path is unresolved."""
+def lexical(base, more, pathlib):
+    """`base` joined with literal segments as the string or `PurePath` holds them: `..` is
+    kept (the OS resolves it only where the path is used, after any link before it). pathlib
+    drops `.` and empty segments; os.path keeps them, and `dirname` of such a string is not
+    the parent of the parts here, so they are unresolved."""
     out = list(base)
     for p in more:
         if p in ("", "."):
+            if not pathlib:
+                raise Unresolved("'.' or empty segment in os.path.join")
             continue
-        if p == "..":
-            if not out:
-                raise Unresolved("path leaves ROOT")
-            if os.path.islink(os.path.join(CTX["root"], *out)):
-                raise Unresolved("'..' after a symbolic link")
-            out.pop()
-        else:
-            out.append(p)
+        out.append(p)
     return out
+
+
+def parent(parts):
+    """`.parent` and `dirname`: drop the last part as written (`a/..` gives `a`)."""
+    if not parts:
+        raise Unresolved("path leaves ROOT")
+    return parts[:-1]
 
 
 def dir_value(node, path, env):
@@ -248,7 +251,7 @@ def eval_path(node, path, env):
     elif isinstance(node, ast.Constant) and isinstance(node.value, str) and not node.value.startswith("/"):
         return ("rel", node.value)
     elif isinstance(node, ast.Attribute) and node.attr == "parent":
-        return norm(dir_value(node.value, path, env) + [".."])
+        return parent(dir_value(node.value, path, env))
     elif isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute) and node.value.attr == "parents":
         index = node.slice
         if isinstance(index, ast.Constant) and isinstance(index.value, int):
@@ -260,7 +263,7 @@ def eval_path(node, path, env):
     elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
         right = eval_path(node.right, path, env)
         if isinstance(right, tuple):
-            return physical(dir_value(node.left, path, env), right[1].split("/"))
+            return lexical(dir_value(node.left, path, env), right[1].split("/"), pathlib=True)
     elif isinstance(node, ast.Call):
         func = node.func
         if isinstance(func, ast.Attribute) and func.attr in ("resolve", "absolute") and not node.args:
@@ -273,16 +276,19 @@ def eval_path(node, path, env):
         if name in ("Path", "str", "abspath", "realpath", "fspath") and len(node.args) == 1:
             value = eval_path(node.args[0], path, env)
             if isinstance(value, list):
-                return real_parts(value) if name == "realpath" else value
+                if name == "realpath":
+                    return real_parts(value)
+                # abspath normalizes the string: `..` is removed lexically.
+                return norm(value) if name == "abspath" else value
         if name == "dirname" and len(node.args) == 1:
-            return norm(dir_value(node.args[0], path, env) + [".."])
+            return parent(dir_value(node.args[0], path, env))
         if name == "join" and node.args:
             parts = dir_value(node.args[0], path, env)
             for arg in node.args[1:]:
                 more = eval_path(arg, path, env)
                 if not isinstance(more, tuple):
                     raise Unresolved("non-literal join segment")
-                parts = physical(parts, more[1].split("/"))
+                parts = lexical(parts, more[1].split("/"), pathlib=False)
             return parts
     raise Unresolved(ast.unparse(node))
 

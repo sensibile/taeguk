@@ -635,6 +635,17 @@ fn analyzers_run_isolated_with_a_time_limit() {
             .contains("did not finish within 3 s"),
         "{g}"
     );
+    // The analyzer was stopped; the cargo it started must not be left running.
+    std::thread::sleep(Duration::from_millis(500));
+    let left = Command::new("pgrep")
+        .args(["-f", w.repo().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        left.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&left.stdout)
+    );
 }
 
 #[test]
@@ -1053,6 +1064,87 @@ fn go_embed_of_build_output_is_fingerprinted() {
     assert!(ok, "{v}");
     let graph = fs::read_to_string(w.graph()).unwrap();
     assert!(!graph.contains("corp.example"), "{graph}");
+}
+
+#[test]
+fn go_embed_at_module_root_can_be_queried() {
+    if !available("go", "version") {
+        return;
+    }
+    // A package at the module root embeds from the whole ROOT tree; the graph build writes for
+    // it must be one impact accepts, and a change to the embedded file makes it stale.
+    let w = work("go");
+    fs::write(
+        w.repo().join("root.go"),
+        "package fx\n\nimport _ \"embed\"\n\n//go:embed payload.txt\nvar Payload string\n",
+    )
+    .unwrap();
+    fs::write(w.repo().join("payload.txt"), "one\n").unwrap();
+    fs::write(w.repo().join(".gitignore"), "/payload.txt\n").unwrap();
+    git(&w.repo(), &["add", "-A"]);
+    git(&w.repo(), &["commit", "-qm", "root embed"]);
+    let g = build(&w, "go");
+    assert_eq!(g["status"], "PASS", "{g}");
+    assert!(
+        g["read"].as_array().unwrap().iter().any(|r| r == "./"),
+        "{g}"
+    );
+    let v = impact(&w, &["--changed", "b/b.go"]);
+    assert!(other_reasons(&v).is_empty(), "{v}");
+    fs::write(w.repo().join("payload.txt"), "two\n").unwrap();
+    let v = impact(&w, &["--changed", "b/b.go"]);
+    assert_eq!(other_reasons(&v), ["analyzer_inputs_changed"]);
+}
+
+#[test]
+fn git_waiting_on_a_fifo_is_bounded() {
+    if !available("python3", "--version") {
+        return;
+    }
+    // git opens `.gitignore` with a blocking open; a FIFO there must not hang build or impact.
+    let w = work("python");
+    build(&w, "python");
+    fs::remove_file(w.repo().join(".gitignore")).ok();
+    assert!(
+        Command::new("mkfifo")
+            .arg(w.repo().join(".gitignore"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    let started = std::time::Instant::now();
+    for args in [
+        vec![
+            "graph",
+            "build",
+            w.repo().to_str().unwrap(),
+            "--out",
+            w.0.join("other.json").to_str().unwrap(),
+            "--lang",
+            "python",
+        ],
+        vec![
+            "graph",
+            "impact",
+            w.graph().to_str().unwrap(),
+            w.repo().to_str().unwrap(),
+            "--changed",
+            "common.py",
+        ],
+    ] {
+        let o = Command::new(env!("CARGO_BIN_EXE_taeguk"))
+            .args(&args)
+            .env("TAEGUK_GRAPH_TIMEOUT_SECS", "2")
+            .output()
+            .unwrap();
+        let text =
+            String::from_utf8_lossy(&o.stdout).into_owned() + &String::from_utf8_lossy(&o.stderr);
+        assert!(
+            text.contains("did not finish within 2 s"),
+            "{args:?}: {text}"
+        );
+    }
+    assert!(started.elapsed() < Duration::from_secs(30));
 }
 
 #[test]
@@ -1573,7 +1665,7 @@ fn large_and_linked_inputs_stay_bounded() {
             .any(|p| p == "common.py"),
         "{g}"
     );
-    // `..` right after a link inside ROOT walks from the link target, so it is not resolved.
+    // `..` right after a link inside ROOT walks from the link target, as the OS does.
     let w = work("python");
     fs::create_dir_all(w.repo().join("sub/deep")).unwrap();
     fs::write(w.repo().join("sub/sibling.py"), "V = 1\n").unwrap();
@@ -1581,22 +1673,26 @@ fn large_and_linked_inputs_stay_bounded() {
     std::os::unix::fs::symlink("sub/deep", w.repo().join("link")).unwrap();
     fs::write(
         w.repo().join("dotdot.py"),
-        "import sys\nfrom pathlib import Path\n\nsys.path.insert(0, str(Path(__file__).parent / \"link\" / \"..\"))\n",
+        "import sys\nfrom pathlib import Path\n\nsys.path.insert(0, str(Path(__file__).parent / \"link\" / \"..\"))\nimport sibling\n",
     )
     .unwrap();
     git(&w.repo(), &["add", "-A"]);
     git(&w.repo(), &["commit", "-qm", "link"]);
     let g = build(&w, "python");
     assert!(
-        g["gaps"]
+        g["edges"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|x| x["file"] == "dotdot.py"
-                && x["detail"]
-                    .as_str()
-                    .unwrap()
-                    .contains("after a symbolic link")),
+            .any(|e| e["from"] == "python:dotdot.py" && e["to"] == "python:sub/sibling.py"),
+        "{g}"
+    );
+    assert!(
+        !g["gaps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["file"] == "dotdot.py"),
         "{g}"
     );
 }

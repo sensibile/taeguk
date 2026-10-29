@@ -24,3 +24,5 @@ python:src/app/relpath.py python:src/app/pathlib.py import
 python:src/app/relpath.py python:src/app/__init__.py import
 python:plug/run.py python:plug/pathlib.py import
 python:plugrun/run.py python:plug/pathlib.py import
+python:updown/run.py python:updown/sub/helper.py import
+python:updown/run2.py python:updown/sub/helper.py import

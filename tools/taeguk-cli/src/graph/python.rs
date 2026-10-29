@@ -1,10 +1,6 @@
-use super::{Analyzer, Edge, Gap, Node, Output, Partial, TempDir, tool_version};
+use super::{Analyzer, Edge, Gap, Node, Partial, TempDir, exec_input, tool_version};
 use serde::Deserialize;
-use std::{
-    io::Write,
-    path::Path,
-    process::{Command, Stdio},
-};
+use std::{path::Path, process::Command};
 
 const SCRIPT: &str = include_str!("python_graph.py");
 
@@ -40,27 +36,13 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
     let files: Vec<&String> = tracked.iter().filter(|f| f.ends_with(".py")).collect();
     let input = serde_json::json!({"root": root, "files": files}).to_string();
     let dir = TempDir::new("python")?;
-    let mut child = Command::new("python3")
-        .args(["-I", "-c", SCRIPT])
-        // Outside ROOT, so the user's environment picks python3, not files in the repository.
-        .current_dir(&dir.0)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("cannot run python3: {e}"))?;
-    child
-        .stdin
-        .take()
-        .ok_or("python3 stdin unavailable")?
-        .write_all(input.as_bytes())
-        .map_err(|e| e.to_string())?;
-    let o = child.wait_with_output().map_err(|e| e.to_string())?;
-    let o = Output {
-        code: o.status.code(),
-        stdout: o.stdout,
-        stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
-    };
+    let o = exec_input(
+        Command::new("python3")
+            .args(["-I", "-c", SCRIPT])
+            // Outside ROOT, so the user's environment picks python3, not files in the repository.
+            .current_dir(&dir.0),
+        input.as_bytes(),
+    )?;
     a.exit_code = o.code;
     if o.code != Some(0) {
         return Err(format!(
