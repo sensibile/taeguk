@@ -339,6 +339,8 @@ build는 분석기 실행 전에 ROOT를 파일 시스템에서 직접 순회한
 
 33차(확인 라운드) 대상 `b630b14...36acbc9`, 새 판정 기준, 2026-10-29T05:23~05:27Z. 교차·보안 모두 exit 0, fingerprint 동일. 보안: 막을 결함 없음. 교차 P2 1건(`setup.cfg`의 `package_dir`): 오래된 setuptools 프로젝트의 흔한 설정이라 결함으로 고쳤다. 루트 매핑과 `[options.packages.find] where`는 해석하고, 이름 매핑과 `setup.py`의 `package_dir`(코드라 실행하지 않음)는 gap이다. `setup.cfg`·`setup.py`도 `read`에 기록한다.
 
+33차 수정분 확인 리뷰: 대상 `36acbc9...83a1b57`, 새 판정 기준, 2026-10-29T05:24~05:26Z. 교차·보안 모두 exit 0, fingerprint 동일, 막을 결함 없음. 리뷰 루프를 여기서 마친다.
+
 같은 구현자가 fixture와 기대값을 함께 만들었으므로 CG-V01·V05는 같은 가정을 공유한다. 시험 프로젝트 수동 대조(CG-V03)가 다른 관측 층이다. CI에서 Go·Elixir·Python toolchain으로 같은 테스트가 도는지는 PR 실행 후 확인한다.
 
 ## BOSS 확정 (2026-10-28)
