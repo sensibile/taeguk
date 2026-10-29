@@ -955,6 +955,8 @@ fn impact_follows_reverse_edges_and_reports_limits() {
         review_files(&v),
         [
             "tests/test_aliases.py",
+            "tests/test_annotated.py",
+            "tests/test_bexec.py",
             "tests/test_builtins.py",
             "tests/test_cond.py",
             "tests/test_exec.py",

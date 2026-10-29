@@ -162,46 +162,36 @@ const DYNAMIC: [&str; 4] = [
     "String.to_existing_atom",
 ];
 
-/// Whether `line` has a dot access on a variable or module attribute (`mod.execute()`,
-/// `mod.execute`, `state.mod.run x`, `@impl.call()`): with or without parentheses this may be a
-/// call on a module chosen at runtime, which xref cannot record. Map field access looks the
-/// same and is matched too (allow-list: only what is known to be static passes). Anonymous calls
-/// `fun.(x)`, aliases (`Enum.map`) and atoms (`:ets.new`) are not matched; text in comments and
-/// strings is matched too.
+/// Allow-list for dot access: `.name` is static only after a module alias (`Enum.map`,
+/// `Fx.B.b`), an Erlang module atom (`:ets.new`) or a number. After anything else (a variable
+/// `mod.run`, a module attribute `@impl.call`, a parenthesized or bracketed expression
+/// `(mod).run()`, a string) the receiver may be a module chosen at runtime, which the manifest
+/// does not record, so the line is a gap. Map field access looks the same and is included.
+/// Anonymous calls `fun.(x)` and ranges `a..b` are not dot access. Comments are not cut off
+/// (`#` also appears in strings), so a match there only adds a gap.
 fn variable_call(line: &str) -> bool {
-    // Comments are not cut off: `#` also appears in strings and sigils, and telling them apart
-    // needs a tokenizer. A match inside a comment only adds a gap.
     let b = line.as_bytes();
     let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
     (1..b.len()).any(|i| {
-        if b[i] != b'.' || !ident(b[i - 1]) {
-            return false;
-        }
-        let mut start = i;
-        while start > 0 && ident(b[start - 1]) {
-            start -= 1;
-        }
-        let head = b[start];
-        let before = start.checked_sub(1).map(|j| b[j]);
-        let variable = head.is_ascii_lowercase() || head == b'_';
-        // A receiver right after `.` belongs to a longer chain that started elsewhere.
-        if !variable || before == Some(b':') || before == Some(b'.') && !chain_is_variable(b, start)
+        let next = b.get(i + 1).copied();
+        if b[i] != b'.'
+            || b[i - 1] == b'.'
+            || !next.is_some_and(|c| c.is_ascii_lowercase() || c == b'_')
         {
             return false;
         }
-        b.get(i + 1)
-            .is_some_and(|c| c.is_ascii_lowercase() || *c == b'_')
+        if !ident(b[i - 1]) {
+            return true;
+        }
+        // Walk back over the receiver chain `A.B.c` to its first segment.
+        let mut s = i;
+        while s > 0 && (ident(b[s - 1]) || b[s - 1] == b'.') {
+            s -= 1;
+        }
+        let head = b[s];
+        let atom = s > 0 && b[s - 1] == b':';
+        !(head.is_ascii_uppercase() || head.is_ascii_digit() || atom)
     })
-}
-
-/// Whether the dotted chain ending just before `start` begins with a variable or `@attribute`.
-fn chain_is_variable(b: &[u8], start: usize) -> bool {
-    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'.';
-    let mut s = start;
-    while s > 0 && ident(b[s - 1]) {
-        s -= 1;
-    }
-    b[s].is_ascii_lowercase() || b[s] == b'_' || (s > 0 && b[s - 1] == b'@')
 }
 
 /// Whether `line` calls `name`, with or without parentheses (`apply(m, f, a)`, `apply m, f, a`,
@@ -302,10 +292,19 @@ mod tests {
             "_label = \"#\"; mod.execute()",
             "# mod.run()",
             "@impl.call()",
+            "def call(mod), do: (mod).run()",
+            "list[0].run()",
         ] {
             assert!(variable_call(line), "{line}");
         }
-        for line in ["Enum.map(xs, f)", ":ets.new(:t, [])", "fun.(x)", "Fx.B.b()"] {
+        for line in [
+            "Enum.map(xs, f)",
+            ":ets.new(:t, [])",
+            "fun.(x)",
+            "Fx.B.b()",
+            "for i <- 1..10, do: i",
+            "x = 1.5",
+        ] {
             assert!(!variable_call(line), "{line}");
         }
     }

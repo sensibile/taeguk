@@ -148,23 +148,65 @@ DYNAMIC_MODULES = ("importlib", "runpy", "pkgutil", "imp", "zipimport")
 CODE_EXEC = ("exec", "eval", "compile")
 
 
+def assigned_names(node):
+    """(value, target names) of a plain, annotated or walrus assignment, else (None, [])."""
+    if isinstance(node, ast.Assign):
+        return node.value, [t.id for t in node.targets if isinstance(t, ast.Name)]
+    if isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and isinstance(node.target, ast.Name):
+        return node.value, [node.target.id]
+    return None, []
+
+
 def bindings(tree):
-    """Names bound to the sys module (`import sys as s`) and to dynamic import functions
-    (`from importlib import import_module as load`, `load = importlib.import_module`)."""
-    sys_names, dynamic = {"sys"}, set(DYNAMIC)
+    """Names bound to the sys and builtins modules (`import sys as s`, `b = builtins`) and to
+    dynamic import functions (`from importlib import import_module as load`)."""
+    sys_names, builtins_names, dynamic = {"sys"}, {"builtins", "__builtins__"}, set(DYNAMIC)
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             sys_names |= {a.asname for a in node.names if a.name == "sys" and a.asname}
+            builtins_names |= {a.asname for a in node.names if a.name == "builtins" and a.asname}
         elif isinstance(node, ast.ImportFrom):
             dynamic |= {a.asname for a in node.names if a.name in DYNAMIC and a.asname}
-        elif isinstance(node, ast.Assign):
-            value = node.value
+        value, names = assigned_names(node)
+        if value is not None:
             name = getattr(value, "attr", None) or getattr(value, "id", None)
             if isinstance(value, (ast.Name, ast.Attribute)) and name in DYNAMIC:
-                dynamic |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+                dynamic |= set(names)
             if isinstance(value, ast.Name) and value.id in sys_names:
-                sys_names |= {t.id for t in node.targets if isinstance(t, ast.Name)}
-    return sys_names, dynamic
+                sys_names |= set(names)
+            if isinstance(value, ast.Name) and value.id in builtins_names:
+                builtins_names |= set(names)
+    return sys_names, builtins_names, dynamic
+
+
+def parent_map(tree):
+    return {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+
+
+def unevaluated_sys_uses(tree, sys_names, parents):
+    """Allow-list for the sys module: `sys.path.insert(...)`/`append(...)` calls are evaluated,
+    `x in sys.path` only reads, `sys.<other>` is unrelated. Any other use of `sys.path` or of
+    `sys` itself (aliased, annotated, passed on, subscripted, assigned) may change the search
+    path in a way not evaluated, so each one is unresolved."""
+    found = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Name) and node.id in sys_names and isinstance(node.ctx, ast.Load)):
+            continue
+        parent = parents.get(id(node))
+        if not (isinstance(parent, ast.Attribute) and parent.value is node):
+            found.append(f"line {node.lineno}: {node.id} used as a value")
+            continue
+        if parent.attr != "path":
+            continue
+        use = parents.get(id(parent))
+        call = parents.get(id(use))
+        if (isinstance(use, ast.Attribute) and use.attr in ("insert", "append")
+                and isinstance(call, ast.Call) and call.func is use):
+            continue
+        if isinstance(use, ast.Compare) and all(isinstance(o, (ast.In, ast.NotIn)) for o in use.ops):
+            continue
+        found.append(f"line {node.lineno}: sys.path used in a form that is not evaluated")
+    return found
 
 
 def is_sys_path(node, sys_names):
@@ -196,8 +238,6 @@ def sys_path_changes(tree, path, sys_names):
                 unresolved.append(f"line {node.lineno}: sys.path assignment")
             if isinstance(node, ast.ImportFrom) and node.module == "sys" and any(a.name == "path" for a in node.names):
                 unresolved.append(f"line {node.lineno}: from sys import path")
-            if isinstance(node, ast.Assign) and is_sys_path(node.value, sys_names):
-                unresolved.append(f"line {node.lineno}: sys.path bound to another name")
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
                 continue
             if not is_sys_path(node.func.value, sys_names):
@@ -262,8 +302,10 @@ def main():
         is_package = join(here, "__init__.py") in files
         # A script directory without __init__.py is sys.path[0] when the script runs.
         search = roots if is_package else [here] + [r for r in roots if r != here]
-        sys_names, dynamic = bindings(tree)
+        sys_names, builtins_names, dynamic = bindings(tree)
+        parents = parent_map(tree)
         front, back, unresolved = sys_path_changes(tree, path, sys_names)
+        unresolved += unevaluated_sys_uses(tree, sys_names, parents)
         search = list(dict.fromkeys(front + search + back))
         for detail in unresolved:
             gaps.append({"kind": "sys_path_unresolved", "file": path,
@@ -314,9 +356,14 @@ def main():
                 machinery = node.value
             elif isinstance(node, ast.Name) and node.id in CODE_EXEC:
                 machinery = f"{node.id}()"
-            elif (isinstance(node, ast.Attribute) and node.attr in CODE_EXEC
-                  and isinstance(node.value, ast.Name) and node.value.id == "builtins"):
-                machinery = f"builtins.{node.attr}"
+            elif isinstance(node, ast.Name) and node.id in builtins_names:
+                # Allow-list for the builtins module: only attributes other than code execution
+                # and imports pass; the module used as a value may reach them anywhere.
+                parent = parents.get(id(node))
+                if not (isinstance(parent, ast.Attribute) and parent.value is node):
+                    machinery = f"{node.id} used as a value"
+                elif parent.attr in CODE_EXEC + ("__import__",):
+                    machinery = f"{node.id}.{parent.attr}"
             elif (isinstance(node, ast.Attribute) and node.attr == "modules"
                   and isinstance(node.value, ast.Name) and node.value.id in sys_names):
                 machinery = "sys.modules"

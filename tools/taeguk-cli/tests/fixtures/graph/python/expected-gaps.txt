@@ -11,3 +11,5 @@ python sys_path_unresolved tests/test_param.py
 python sys_path_unresolved tests/test_nested.py
 python dynamic_import tests/test_exec.py
 python sys_path_unresolved tests/test_cond.py
+python sys_path_unresolved tests/test_annotated.py
+python dynamic_import tests/test_bexec.py
