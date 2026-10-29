@@ -1193,6 +1193,54 @@ fn python_package_mappings_not_interpreted_are_gaps() {
 }
 
 #[test]
+fn python_setup_cfg_package_dir_is_read() {
+    if !available("python3", "--version") {
+        return;
+    }
+    // The older setuptools config `[options] package_dir = =lib` puts packages under `lib`.
+    let w = work("python");
+    fs::create_dir_all(w.repo().join("lib/pkg")).unwrap();
+    fs::write(w.repo().join("lib/pkg/__init__.py"), "").unwrap();
+    fs::write(w.repo().join("lib/pkg/core.py"), "VALUE = 1\n").unwrap();
+    fs::write(
+        w.repo().join("tests/test_core_cfg.py"),
+        "from pkg.core import VALUE\n",
+    )
+    .unwrap();
+    fs::write(
+        w.repo().join("setup.cfg"),
+        "[options]\npackage_dir =\n    =lib\n    other = elsewhere\n",
+    )
+    .unwrap();
+    git(&w.repo(), &["add", "-A"]);
+    git(&w.repo(), &["commit", "-qm", "setup.cfg"]);
+    let g = build(&w, "python");
+    assert_eq!(g["status"], "PASS", "{g}");
+    assert!(
+        g["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["from"] == "python:tests/test_core_cfg.py"
+                && e["to"] == "python:lib/pkg/core.py"),
+        "{g}"
+    );
+    // A name mapping is not interpreted; it is reported.
+    assert!(
+        g["gaps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["kind"] == "package_mapping_unresolved"
+                && x["detail"]
+                    .as_str()
+                    .unwrap()
+                    .contains("setup.cfg package_dir maps other")),
+        "{g}"
+    );
+}
+
+#[test]
 fn cargo_workspace_above_root_fails() {
     if !available("cargo", "--version") {
         return;

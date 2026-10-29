@@ -1,6 +1,7 @@
 """Static import graph for tracked Python files. Standard library only; reads JSON from stdin."""
 
 import ast
+import configparser
 import json
 import os
 import stat
@@ -77,6 +78,35 @@ def configured_roots(root, files):
                 unsupported.append(f"tool.setuptools.package-dir maps {', '.join(others)}")
             else:
                 unsupported.append(f"tool.{backend}.{key}")
+    except FileNotFoundError:
+        pass
+    # setuptools' older declarative config: `[options] package_dir = =lib` (the root mapping) and
+    # `[options.packages.find] where = lib` are interpreted like their pyproject forms.
+    try:
+        cfg = configparser.ConfigParser(interpolation=None)
+        cfg.read_string(read_source(root, "setup.cfg").decode())
+        if cfg.has_option("options.packages.find", "where"):
+            roots += cfg.get("options.packages.find", "where").split()
+        if cfg.has_option("options", "package_dir"):
+            others = []
+            for line in cfg.get("options", "package_dir").splitlines():
+                name, sep, target = line.partition("=")
+                if not sep:
+                    continue
+                if name.strip():
+                    others.append(name.strip())
+                else:
+                    roots.append(target.strip())
+            if others:
+                unsupported.append(f"setup.cfg package_dir maps {', '.join(sorted(others))}")
+    except FileNotFoundError:
+        pass
+    except configparser.Error:
+        unsupported.append("setup.cfg could not be parsed")
+    # setup.py is code and is not run: a package_dir there is reported, not evaluated.
+    try:
+        if b"package_dir" in read_source(root, "setup.py"):
+            unsupported.append("setup.py package_dir (setup.py is not evaluated)")
     except FileNotFoundError:
         pass
     if any(f.startswith("src/") for f in files):

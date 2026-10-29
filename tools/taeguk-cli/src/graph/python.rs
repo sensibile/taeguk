@@ -64,10 +64,12 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
             .join(",")
     ));
     Ok(Partial {
-        // pyproject.toml decides the package roots, also when git ignores it; recorded even when
-        // absent, so adding one later changes the fingerprint.
+        // pyproject.toml, setup.cfg and setup.py decide the package roots, also when git ignores
+        // them; recorded even when absent, so adding one later changes the fingerprint.
         // Links followed while resolving `sys.path` entries are recorded by their target text.
-        read: std::iter::once("pyproject.toml".to_string())
+        read: ["pyproject.toml", "setup.cfg", "setup.py"]
+            .into_iter()
+            .map(String::from)
             .chain(r.links)
             .collect(),
         nodes: files
