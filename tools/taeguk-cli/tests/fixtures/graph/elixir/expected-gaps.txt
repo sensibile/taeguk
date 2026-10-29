@@ -6,3 +6,4 @@ elixir dynamic_call lib/fx/runner3.ex
 elixir dynamic_call lib/fx/runner4.ex
 elixir dynamic_call lib/fx/runner5.ex
 elixir dynamic_call lib/fx/runner6.ex
+elixir dynamic_call lib/fx/runner7.ex

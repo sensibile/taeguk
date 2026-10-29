@@ -134,6 +134,27 @@ pub(crate) fn exec(cmd: &mut Command) -> Result<Output, String> {
         stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
     })
 }
+/// Runs a command with `input` on stdin. Data derived from the target repository (file names,
+/// paths inside ROOT) goes to tools this way, never as command-line arguments, where a name like
+/// `-r` would be read as an option.
+pub(crate) fn exec_input(cmd: &mut Command, input: &[u8]) -> Result<Output, String> {
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("cannot run {:?}: {e}", cmd.get_program()))?;
+    let mut stdin = child.stdin.take().ok_or("stdin unavailable")?;
+    let input = input.to_vec();
+    let writer = std::thread::spawn(move || stdin.write_all(&input));
+    let o = child.wait_with_output().map_err(|e| e.to_string())?;
+    let _ = writer.join();
+    Ok(Output {
+        code: o.status.code(),
+        stdout: o.stdout,
+        stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
+    })
+}
 /// Last non-empty line of `<tool> <arg>`. Like the analyzers it runs outside ROOT, so the
 /// user's environment picks the toolchain, never a toolchain file in the target repository.
 pub(crate) fn version(tool: &str, args: &[&str]) -> Option<String> {

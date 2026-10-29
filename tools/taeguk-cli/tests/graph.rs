@@ -796,7 +796,76 @@ fn hostile_manifests_and_git_config_run_nothing() {
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
         assert_fails(&w, "elixir", "not plain data");
         assert!(!marker.exists(), "manifest content ran");
+        // A source named like an option (`-r`) is data on stdin, never an elixir argument.
+        let w = work("elixir");
+        let o = Command::new("mix")
+            .arg("compile")
+            .current_dir(w.repo())
+            .output()
+            .unwrap();
+        assert!(o.status.success());
+        let marker = w.0.join("option-ran");
+        fs::write(
+            w.repo().join("-r"),
+            format!("File.write!({:?}, \"x\")\n", marker.to_str().unwrap()),
+        )
+        .unwrap();
+        git(&w.repo(), &["add", "--", "-r"]);
+        git(&w.repo(), &["commit", "-qm", "dash"]);
+        let manifest = w.repo().join("_build/dev/lib/fx/.mix/compile.elixir");
+        let craft = format!(
+            "t = :erlang.binary_to_term(File.read!({m:?})); s = elem(t, 2); \
+             File.write!({m:?}, :erlang.term_to_binary(put_elem(t, 2, Map.put(s, \"-r\", s[\"lib/fx/a.ex\"]))))",
+            m = manifest.to_str().unwrap()
+        );
+        let o = Command::new("elixir")
+            .args(["-e", &craft])
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        build(&w, "elixir");
+        assert!(
+            !marker.exists(),
+            "a repository file name was read as an elixir option"
+        );
     }
+}
+
+#[test]
+fn python_resolve_follows_links_inside_root() {
+    if !available("python3", "--version") {
+        return;
+    }
+    // `Path(__file__).resolve()` of a linked script is the link target's directory.
+    let w = work("python");
+    fs::create_dir_all(w.repo().join("lnk")).unwrap();
+    fs::write(
+        w.repo().join("lnk/real.py"),
+        "import sys\nfrom pathlib import Path\n\nsys.path.insert(0, str(Path(__file__).resolve().parent))\n\nimport sibling  # noqa: E402\n",
+    )
+    .unwrap();
+    fs::write(w.repo().join("lnk/sibling.py"), "VALUE = 1\n").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("../lnk/real.py", w.repo().join("scripts/linked.py")).unwrap();
+    git(&w.repo(), &["add", "-A"]);
+    git(&w.repo(), &["commit", "-qm", "link"]);
+    let g = build(&w, "python");
+    let edges: BTreeSet<String> = g["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            format!(
+                "{} {}",
+                e["from"].as_str().unwrap(),
+                e["to"].as_str().unwrap()
+            )
+        })
+        .collect();
+    assert!(
+        edges.contains("python:scripts/linked.py python:lnk/sibling.py"),
+        "{edges:?}"
+    );
 }
 
 #[test]
@@ -1013,7 +1082,8 @@ fn impact_follows_reverse_edges_and_reports_limits() {
             "tests/test_order.py",
             "tests/test_param.py",
             "tests/test_paths.py",
-            "tests/test_reload.py"
+            "tests/test_reload.py",
+            "tests/test_shadow.py"
         ]
     );
     assert_eq!(

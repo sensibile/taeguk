@@ -1,5 +1,5 @@
 use super::{
-    Analyzer, Edge, Gap, Node, Partial, TempDir, check_source, exec, read_source, relative,
+    Analyzer, Edge, Gap, Node, Partial, TempDir, check_source, exec_input, read_source, relative,
     tool_version,
 };
 use std::{collections::BTreeSet, env, fs, path::Path, process::Command, time::UNIX_EPOCH};
@@ -10,7 +10,8 @@ use std::{collections::BTreeSet, env, fs, path::Path, process::Command, time::UN
 /// runtime; that is what `mix xref graph` reports. Only manifest version 35 (Elixir 1.20) is
 /// understood; another version fails.
 const SCRIPT: &str = r#"
-[path] = System.argv()
+# The manifest path arrives on stdin, never as an argument.
+path = IO.read(:stdio, :eof) |> String.trim_trailing("\n")
 # Only the parts read below are used, and each is checked to be plain data of the expected
 # shape before it is enumerated: enumerating a struct (a Stream, a File.Stream) or calling a
 # function would run code that came from the file. Other fields (warnings hold diagnostic
@@ -61,17 +62,47 @@ end
 /// when `recv` is an alias (`Enum`), an atom (`:ets`) or `__MODULE__`; any other receiver (a
 /// variable, a module attribute, a parenthesized expression, map field access, which looks the
 /// same) is a gap, and so are `apply`, `Kernel.apply`, `:erlang.apply`, `Module.concat`,
-/// `Module.safe_concat`, `String.to_atom` and `String.to_existing_atom`. A file that does not
-/// parse is a gap as a whole. Arguments come in pairs: the ROOT-relative path, then the file.
+/// `Module.safe_concat`, `String.to_atom` and `String.to_existing_atom`, also through `alias ...,
+/// as:` or as imported local calls. A file that does not
+/// parse is a gap as a whole. Files arrive on stdin, one `ROOT-relative\tabsolute` per line, so
+/// no repository file name is ever a command-line argument.
 const SCAN: &str = r##"
 gap = fn rel, line, detail -> IO.puts("gap\t#{rel}\t#{line || 0}\t#{detail}") end
 dynamic = [
   {[:Kernel], :apply}, {[:Module], :concat}, {[:Module], :safe_concat},
   {[:String], :to_atom}, {[:String], :to_existing_atom}
 ]
-for [rel, file] <- Enum.chunk_every(System.argv(), 2) do
+for line <- String.split(IO.read(:stdio, :eof), "\n", trim: true),
+    [rel, file] = String.split(line, "\t", parts: 2) do
   case Code.string_to_quoted(File.read!(file), columns: false, emit_warnings: false) do
     {:ok, ast} ->
+      # `alias Kernel, as: K` and `alias Mod.{A, B}` make short names stand for full ones.
+      aliases =
+        ast
+        |> Macro.prewalk(%{}, fn
+          {kind, _, [{:__aliases__, _, parts} | rest]} = node, acc
+          when kind in [:alias, :require] and is_list(parts) ->
+            as =
+              case rest do
+                [opts] when is_list(opts) ->
+                  case Keyword.get(opts, :as) do
+                    {:__aliases__, _, [name]} -> name
+                    _ -> List.last(parts)
+                  end
+                _ -> List.last(parts)
+              end
+            {node, Map.put(acc, as, parts)}
+          {:alias, _, [{{:., _, [{:__aliases__, _, base}, :{}]}, _, children} | _]} = node, acc ->
+            acc =
+              Enum.reduce(children, acc, fn
+                {:__aliases__, _, parts}, acc -> Map.put(acc, List.last(parts), base ++ parts)
+                _, acc -> acc
+              end)
+            {node, acc}
+          node, acc -> {node, acc}
+        end)
+        |> elem(1)
+      expand = fn [h | t] = parts -> if is_map_key(aliases, h), do: aliases[h] ++ t, else: parts end
       Macro.prewalk(ast, fn
         {{:., meta, [recv, fun]}, _, args} = node when is_atom(fun) and is_list(args) ->
           static =
@@ -79,7 +110,8 @@ for [rel, file] <- Enum.chunk_every(System.argv(), 2) do
               match?({:__MODULE__, _, ctx} when is_atom(ctx), recv)
           known =
             case recv do
-              {:__aliases__, _, parts} -> {parts, fun} in dynamic
+              {:__aliases__, _, parts} when is_list(parts) and parts != [] ->
+                {expand.(parts), fun} in dynamic or {parts, fun} in dynamic
               :erlang -> fun == :apply
               _ -> false
             end
@@ -89,8 +121,12 @@ for [rel, file] <- Enum.chunk_every(System.argv(), 2) do
             true -> :ok
           end
           node
-        {:apply, meta, args} = node when is_list(args) ->
-          gap.(rel, meta[:line], "apply picks its module at runtime")
+        # Local calls that `import Kernel/Module/String` make dynamic: `apply`, `concat`,
+        # `safe_concat`, `to_atom`, `to_existing_atom`.
+        {name, meta, args} = node
+        when name in [:apply, :concat, :safe_concat, :to_atom, :to_existing_atom] and
+               is_list(args) ->
+          gap.(rel, meta[:line], "#{name} may pick its module at runtime")
           node
         node ->
           node
@@ -174,11 +210,11 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
     a.command[3] = shown.clone();
     // Run outside ROOT so nothing from the target repository is picked up from the directory.
     let tmp = TempDir::new("elixir")?;
-    let o = exec(
+    let o = exec_input(
         Command::new("elixir")
             .args(["-e", SCRIPT])
-            .arg(&real)
             .current_dir(&tmp.0),
+        real.to_string_lossy().as_bytes(),
     )?;
     a.exit_code = o.code;
     if o.code != Some(0) {
@@ -202,13 +238,21 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
     }
     out.read.push(relative(root, &real).unwrap_or(shown));
     // Every source is checked (regular file inside ROOT, size bound) before elixir reads it.
-    let mut scan = Command::new("elixir");
-    scan.args(["-e", SCAN]).current_dir(&tmp.0);
+    let mut list = String::new();
     for n in &out.nodes {
         let file = &n.files[0];
-        scan.arg(file).arg(check_source(root, &root.join(file))?);
+        let real = check_source(root, &root.join(file))?;
+        if file.contains(['\t', '\n']) || real.to_string_lossy().contains(['\t', '\n']) {
+            return Err(format!("{file:?}: tab or newline in a source path"));
+        }
+        list += &format!("{file}\t{}\n", real.display());
     }
-    let o = exec(&mut scan)?;
+    let o = exec_input(
+        Command::new("elixir")
+            .args(["-e", SCAN])
+            .current_dir(&tmp.0),
+        list.as_bytes(),
+    )?;
     if o.code != Some(0) {
         return Err(format!("scanning sources failed: {}", o.stderr.trim()));
     }

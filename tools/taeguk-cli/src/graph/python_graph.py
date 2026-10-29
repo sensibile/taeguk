@@ -89,6 +89,74 @@ def norm(parts):
     return out
 
 
+# Per-file context: the ROOT and the names bound to known path functions and modules.
+CTX = {"root": "", "funcs": {}, "modules": {}}
+PATH_FUNCS = {("pathlib", "Path"): "Path", ("pathlib", "PurePath"): "Path",
+              ("pathlib", "PosixPath"): "Path", ("os.path", "dirname"): "dirname",
+              ("os.path", "join"): "join", ("os.path", "abspath"): "abspath",
+              ("os.path", "realpath"): "realpath", ("os", "fspath"): "fspath"}
+
+
+def path_bindings(tree):
+    """Names bound to known path functions and modules, minus any name bound another way."""
+    funcs, modules, other = {"str": "str"}, {}, set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name in ("os", "os.path", "pathlib") and a.asname:
+                    modules[a.asname] = a.name
+                elif a.name in ("os", "os.path", "pathlib"):
+                    modules[a.name.split(".")[0]] = a.name.split(".")[0]
+                else:
+                    other.add((a.asname or a.name).split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            for a in node.names:
+                bound = a.asname or a.name
+                if (node.module, a.name) in PATH_FUNCS:
+                    funcs[bound] = PATH_FUNCS[(node.module, a.name)]
+                elif node.module == "os" and a.name == "path":
+                    modules[bound] = "os.path"
+                else:
+                    other.add(bound)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            other.add(node.name)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            other.add(node.id)
+        elif isinstance(node, ast.arg):
+            other.add(node.arg)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            other.update(node.names)
+    funcs = {k: v for k, v in funcs.items() if k not in other}
+    modules = {k: v for k, v in modules.items() if k not in other}
+    return funcs, modules
+
+
+def known_function(func):
+    """The known path function a call target is bound to in this file, or None."""
+    if isinstance(func, ast.Name):
+        return CTX["funcs"].get(func.id)
+    if not isinstance(func, ast.Attribute):
+        return None
+    owner = func.value
+    if isinstance(owner, ast.Name):
+        module = CTX["modules"].get(owner.id)
+    elif isinstance(owner, ast.Attribute) and owner.attr == "path" and isinstance(owner.value, ast.Name):
+        module = "os.path" if CTX["modules"].get(owner.value.id) == "os" else None
+    else:
+        module = None
+    return PATH_FUNCS.get((module, func.attr)) if module else None
+
+
+def real_parts(parts):
+    """`resolve()`/`realpath`: follow links inside ROOT; a path that leaves ROOT is unresolved."""
+    root = CTX["root"]
+    real = os.path.realpath(os.path.join(root, *parts))
+    if os.path.commonpath([root, real]) != root:
+        raise Unresolved("resolved path leaves ROOT")
+    rel = os.path.relpath(real, root)
+    return [] if rel == "." else rel.split(os.sep)
+
+
 def dir_value(node, path, env):
     """Like eval_path, but only a ROOT-relative directory; bare strings depend on the working directory."""
     value = eval_path(node, path, env)
@@ -122,13 +190,17 @@ def eval_path(node, path, env):
             return norm(dir_value(node.left, path, env) + right[1].split("/"))
     elif isinstance(node, ast.Call):
         func = node.func
-        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
-        if name in ("resolve", "absolute") and isinstance(func, ast.Attribute) and not node.args:
-            return eval_path(func.value, path, env)
-        if name in ("Path", "PurePath", "PosixPath", "str", "abspath", "realpath", "fspath") and len(node.args) == 1:
+        if isinstance(func, ast.Attribute) and func.attr in ("resolve", "absolute") and not node.args:
+            value = dir_value(func.value, path, env)
+            return real_parts(value) if func.attr == "resolve" else value
+        # Allow-list: a function counts only when it is bound to the known one in this file
+        # (`from os.path import dirname`, `import os` then `os.path.dirname`, builtin `str`)
+        # and the name is not rebound anywhere else in the file.
+        name = known_function(func)
+        if name in ("Path", "str", "abspath", "realpath", "fspath") and len(node.args) == 1:
             value = eval_path(node.args[0], path, env)
             if isinstance(value, list):
-                return value
+                return real_parts(value) if name == "realpath" else value
         if name == "dirname" and len(node.args) == 1:
             return norm(dir_value(node.args[0], path, env) + [".."])
         if name == "join" and node.args:
@@ -312,6 +384,8 @@ def main():
         is_package = join(here, "__init__.py") in files
         # A script directory without __init__.py is sys.path[0] when the script runs.
         search = roots if is_package else [here] + [r for r in roots if r != here]
+        CTX["root"] = root
+        CTX["funcs"], CTX["modules"] = path_bindings(tree)
         sys_names, builtins_names, dynamic = bindings(tree)
         parents = parent_map(tree)
         front, back, unresolved = sys_path_changes(tree, path, sys_names)
