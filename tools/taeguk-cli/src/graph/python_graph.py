@@ -12,6 +12,14 @@ from pathlib import PurePosixPath
 MAX_SOURCE = 8 << 20
 
 
+def opened_path(fd):
+    """The path of an open file as the kernel reports it."""
+    import fcntl
+    if hasattr(fcntl, "F_GETPATH"):
+        return os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).rstrip(b"\0"))
+    return os.readlink(f"/proc/self/fd/{fd}")
+
+
 def read_source(root, path):
     """Bytes of a file that resolves to a regular file inside ROOT, at most MAX_SOURCE."""
     real = os.path.realpath(os.path.join(root, path))
@@ -23,6 +31,11 @@ def read_source(root, path):
     with open(os.open(real, os.O_RDONLY | os.O_NONBLOCK), "rb") as f:
         if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
             raise ValueError("not a regular file")
+        # The opened file itself must be inside ROOT: a file or parent swapped for a link out of
+        # ROOT after the check above is refused.
+        opened = opened_path(f.fileno())
+        if os.path.commonpath([root, opened]) != root:
+            raise ValueError("replaced by a link out of ROOT")
         data = f.read(MAX_SOURCE + 1)
     if len(data) > MAX_SOURCE:
         raise ValueError(f"larger than {MAX_SOURCE} bytes")
@@ -166,6 +179,25 @@ def real_parts(parts):
     return [] if rel == "." else rel.split(os.sep)
 
 
+def physical(base, more):
+    """`base` joined with literal segments as the OS walks them: a `..` right after a
+    symbolic link inside ROOT goes to the link target's parent, not back lexically, so such a
+    path is unresolved."""
+    out = list(base)
+    for p in more:
+        if p in ("", "."):
+            continue
+        if p == "..":
+            if not out:
+                raise Unresolved("path leaves ROOT")
+            if os.path.islink(os.path.join(CTX["root"], *out)):
+                raise Unresolved("'..' after a symbolic link")
+            out.pop()
+        else:
+            out.append(p)
+    return out
+
+
 def dir_value(node, path, env):
     """Like eval_path, but only a ROOT-relative directory; bare strings depend on the working directory."""
     value = eval_path(node, path, env)
@@ -199,7 +231,7 @@ def eval_path(node, path, env):
     elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
         right = eval_path(node.right, path, env)
         if isinstance(right, tuple):
-            return norm(dir_value(node.left, path, env) + right[1].split("/"))
+            return physical(dir_value(node.left, path, env), right[1].split("/"))
     elif isinstance(node, ast.Call):
         func = node.func
         if isinstance(func, ast.Attribute) and func.attr in ("resolve", "absolute") and not node.args:
@@ -221,7 +253,7 @@ def eval_path(node, path, env):
                 more = eval_path(arg, path, env)
                 if not isinstance(more, tuple):
                     raise Unresolved("non-literal join segment")
-                parts = norm(parts + more[1].split("/"))
+                parts = physical(parts, more[1].split("/"))
             return parts
     raise Unresolved(ast.unparse(node))
 
@@ -402,22 +434,20 @@ def sys_path_changes(tree, path, sys_names):
         # always runs at that point; a call inside `if`/`try`/`for`/`with`/`match`, a boolean or
         # conditional expression or a comprehension may or may not run, so it is not evaluated.
         changes(stmt, env, not isinstance(stmt, (ast.Expr, ast.Assign, ast.AnnAssign)), stmt)
+        value = None
         if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
-            name = stmt.targets[0].id
             try:
                 value = eval_path(stmt.value, path, env)
             except Unresolved:
                 value = None
-            if isinstance(value, list):
-                env[name] = value
-            else:
+        # Every name the statement binds anywhere (the target, a walrus in the value, tuple
+        # unpacking, `for`, `with ... as`, `del`, match patterns) loses its known value; only a
+        # plain `name = <evaluated path>` gets a new one.
+        for node in ast.walk(stmt):
+            for name in bound_names(node):
                 env.pop(name, None)
-        else:
-            # Any other binding (tuple unpacking, augmented or annotated assignment, `for`,
-            # `with ... as`, walrus, `del`) leaves the name's value unknown.
-            for node in ast.walk(stmt):
-                for name in bound_names(node):
-                    env.pop(name, None)
+        if isinstance(value, list):
+            env[stmt.targets[0].id] = value
     for stmt in later:
         changes(stmt, env, True)
     return front, back, unresolved

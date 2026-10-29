@@ -23,3 +23,4 @@ python sys_path_unresolved tests/test_unpack.py
 python sys_path_unresolved tests/test_file.py
 python sys_path_unresolved tests/test_match.py
 python sys_path_unresolved tests/test_patch.py
+python sys_path_unresolved tests/test_walrus.py

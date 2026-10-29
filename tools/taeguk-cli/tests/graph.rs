@@ -1134,6 +1134,7 @@ fn impact_follows_reverse_edges_and_reports_limits() {
             "tests/test_reload.py",
             "tests/test_shadow.py",
             "tests/test_unpack.py",
+            "tests/test_walrus.py",
             "tests/test_wild.py"
         ]
     );
@@ -1359,6 +1360,59 @@ fn graph_input_is_checked_before_use() {
         String::from_utf8_lossy(&o.stderr)
     );
     assert!(String::from_utf8_lossy(&o.stderr).contains("unknown node"));
+}
+
+#[test]
+fn large_and_linked_inputs_stay_bounded() {
+    if !available("python3", "--version") {
+        return;
+    }
+    // A tracked file grown far beyond any source counts as changed without being read.
+    let w = work("python");
+    let big = w.repo().join("common.py");
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&big)
+        .unwrap()
+        .set_len(2 << 30)
+        .unwrap();
+    let started = std::time::Instant::now();
+    let g = build(&w, "python");
+    assert!(started.elapsed() < Duration::from_secs(60));
+    assert!(
+        g["dirty_paths"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p == "common.py"),
+        "{g}"
+    );
+    // `..` right after a link inside ROOT walks from the link target, so it is not resolved.
+    let w = work("python");
+    fs::create_dir_all(w.repo().join("sub/deep")).unwrap();
+    fs::write(w.repo().join("sub/sibling.py"), "V = 1\n").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("sub/deep", w.repo().join("link")).unwrap();
+    fs::write(
+        w.repo().join("dotdot.py"),
+        "import sys\nfrom pathlib import Path\n\nsys.path.insert(0, str(Path(__file__).parent / \"link\" / \"..\"))\n",
+    )
+    .unwrap();
+    git(&w.repo(), &["add", "-A"]);
+    git(&w.repo(), &["commit", "-qm", "link"]);
+    let g = build(&w, "python");
+    assert!(
+        g["gaps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["file"] == "dotdot.py"
+                && x["detail"]
+                    .as_str()
+                    .unwrap()
+                    .contains("after a symbolic link")),
+        "{g}"
+    );
 }
 
 #[test]

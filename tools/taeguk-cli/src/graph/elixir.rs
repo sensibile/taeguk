@@ -1,6 +1,6 @@
 use super::{
-    Analyzer, Edge, Gap, Node, Partial, TempDir, check_source, exec_input, read_source, relative,
-    tool_version,
+    Analyzer, Edge, Gap, MAX_SOURCE, Node, Partial, TempDir, exec_input, read_inside, read_source,
+    relative, tool_version,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -201,9 +201,9 @@ for line <- String.split(IO.read(:stdio, :eof), "\n", trim: true),
           gap.(rel, meta[:line], "anonymous function call; its target is not known")
           node
         # Local calls (and captures such as `&apply/3`) that `import Kernel/Module/String` make
-        # dynamic: `apply`, `concat`, `safe_concat`, `to_atom`, `to_existing_atom`.
+        # dynamic: `apply`, `concat`, `safe_concat`, `to_atom`, `to_existing_atom`, `capture`.
         {name, meta, args} = node
-        when name in [:apply, :concat, :safe_concat, :to_atom, :to_existing_atom] and
+        when name in [:apply, :concat, :safe_concat, :to_atom, :to_existing_atom, :capture] and
                (is_list(args) or is_atom(args)) ->
           gap.(rel, meta[:line], "#{name} may pick its module at runtime")
           node
@@ -288,23 +288,23 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
         .ok_or("cannot find app name in mix.exs")?;
     let manifest = build.join("lib").join(&app).join(".mix/compile.elixir");
     let shown = format!("_build/{mix_env}/lib/{app}/.mix/compile.elixir");
-    let real = manifest
-        .canonicalize()
-        .map_err(|_| format!("{shown} not found; compile the project first"))?;
-    let meta = fs::metadata(&real).map_err(|e| format!("{shown}: {e}"))?;
-    if !real.starts_with(root) || !meta.is_file() || meta.len() > MAX_MANIFEST {
-        return Err(format!(
-            "{shown} must be a regular file inside ROOT of at most {MAX_MANIFEST} bytes"
-        ));
+    if !manifest.exists() {
+        return Err(format!("{shown} not found; compile the project first"));
     }
+    let (real, bytes) = read_inside(root, &manifest, MAX_MANIFEST).map_err(|e| {
+        format!("{e}; {shown} must be a regular file inside ROOT of at most {MAX_MANIFEST} bytes")
+    })?;
     a.command[3] = shown.clone();
     // Run outside ROOT so nothing from the target repository is picked up from the directory.
+    // elixir reads copies this process made from verified opens, never the paths themselves.
     let tmp = TempDir::new("elixir")?;
+    let copy = tmp.0.join("manifest");
+    fs::write(&copy, &bytes).map_err(|e| e.to_string())?;
     let o = exec_input(
         Command::new("elixir")
             .args(["-e", SCRIPT])
             .current_dir(&tmp.0),
-        real.to_string_lossy().as_bytes(),
+        copy.to_string_lossy().as_bytes(),
     )?;
     a.exit_code = o.code;
     if o.code != Some(0) {
@@ -346,13 +346,15 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
     out.read.push(relative(root, &real).unwrap_or(shown));
     // Every source is checked (regular file inside ROOT, size bound) before elixir reads it.
     let mut list = String::new();
-    for n in &out.nodes {
+    for (i, n) in out.nodes.iter().enumerate() {
         let file = &n.files[0];
-        let real = check_source(root, &root.join(file))?;
-        if file.contains(['\t', '\n']) || real.to_string_lossy().contains(['\t', '\n']) {
+        if file.contains(['\t', '\n']) {
             return Err(format!("{file:?}: tab or newline in a source path"));
         }
-        list += &format!("{file}\t{}\n", real.display());
+        let (_, bytes) = read_inside(root, &root.join(file), MAX_SOURCE)?;
+        let copy = tmp.0.join(format!("source-{i}"));
+        fs::write(&copy, &bytes).map_err(|e| e.to_string())?;
+        list += &format!("{file}\t{}\n", copy.display());
     }
     let o = exec_input(
         Command::new("elixir")

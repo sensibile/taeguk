@@ -274,16 +274,48 @@ pub(crate) fn open_regular(path: &Path) -> std::io::Result<fs::File> {
     Ok(file)
 }
 
-/// The git blob id of a file's content as it is (no filters), in the repository's hash.
+/// Largest working tree file hashed; a larger one counts as changed without being read.
+const MAX_HASHED: u64 = 1 << 30;
+
+/// The git blob id of a file's content as it is (no filters), in the repository's hash. The
+/// content is streamed in fixed-size pieces, so memory stays bounded; a file over MAX_HASHED
+/// returns an error, which the caller treats as changed.
 fn blob_id(path: &Path, sha256: bool) -> std::io::Result<String> {
-    let mut data = Vec::new();
-    open_regular(path)?.read_to_end(&mut data)?;
-    let mut object = format!("blob {}\0", data.len()).into_bytes();
-    object.extend_from_slice(&data);
+    let mut file = open_regular(path)?;
+    let len = file.metadata()?.len();
+    if len > MAX_HASHED {
+        return Err(std::io::Error::other("too large to hash"));
+    }
+    let header = format!("blob {len}\0");
+    let (mut s1, mut s2) = (sha1::Sha1::new(), Sha256::new());
+    let mut feed = |data: &[u8]| {
+        if sha256 {
+            s2.update(data)
+        } else {
+            s1.update(data)
+        }
+    };
+    feed(header.as_bytes());
+    let mut buf = vec![0u8; 64 << 10];
+    let mut read = 0u64;
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        read += n as u64;
+        if read > len {
+            return Err(std::io::Error::other("file grew while hashing"));
+        }
+        feed(&buf[..n]);
+    }
+    if read != len {
+        return Err(std::io::Error::other("file changed while hashing"));
+    }
     Ok(if sha256 {
-        format!("{:x}", Sha256::digest(&object))
+        format!("{:x}", s2.finalize())
     } else {
-        sha1::hex(&object)
+        s1.hex()
     })
 }
 
@@ -738,20 +770,72 @@ pub(crate) fn check_source(root: &Path, path: &Path) -> Result<PathBuf, String> 
     Ok(real)
 }
 /// Largest source file an analyzer reads.
-const MAX_SOURCE: u64 = 8 << 20;
+pub(crate) const MAX_SOURCE: u64 = 8 << 20;
 /// Reads a source file that resolves to a regular file inside ROOT (canonical), within MAX_SOURCE.
 /// Returns its canonical path with the text, so links cannot pull in files outside ROOT or devices.
 pub(crate) fn read_source(root: &Path, path: &Path) -> Result<(PathBuf, String), String> {
-    let shown = || relative(root, path).unwrap_or_else(|| path.display().to_string());
-    let real = check_source(root, path)?;
-    let mut text = String::new();
-    open_regular(&real)
-        .and_then(|f| f.take(MAX_SOURCE + 1).read_to_string(&mut text))
-        .map_err(|e| format!("{}: {e}", shown()))?;
-    if text.len() as u64 > MAX_SOURCE {
-        return Err(format!("{} is larger than {MAX_SOURCE} bytes", shown()));
-    }
+    let (real, data) = read_inside(root, path, MAX_SOURCE)?;
+    let text = String::from_utf8(data).map_err(|_| {
+        format!(
+            "{} is not UTF-8",
+            relative(root, path).unwrap_or_else(|| path.display().to_string())
+        )
+    })?;
     Ok((real, text))
+}
+
+/// Reads a regular file inside ROOT of at most `limit` bytes. The path is checked first, then
+/// the file is opened without blocking, and the path of the opened file itself (not the path
+/// that was checked) must still be inside ROOT: a file or parent replaced by a link out of ROOT
+/// between the check and the open is refused.
+pub(crate) fn read_inside(
+    root: &Path,
+    path: &Path,
+    limit: u64,
+) -> Result<(PathBuf, Vec<u8>), String> {
+    let shown = || relative(root, path).unwrap_or_else(|| path.display().to_string());
+    let real = path
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", shown()))?;
+    if !real.starts_with(root) {
+        return Err(format!("{} resolves outside ROOT", shown()));
+    }
+    let file = open_regular(&real).map_err(|e| format!("{}: {e}", shown()))?;
+    match opened_path(&file) {
+        Ok(opened) if opened.starts_with(root) => {}
+        Ok(_) => return Err(format!("{} was replaced by a link out of ROOT", shown())),
+        Err(e) => return Err(format!("{}: cannot confirm the opened file: {e}", shown())),
+    }
+    let mut data = Vec::new();
+    file.take(limit + 1)
+        .read_to_end(&mut data)
+        .map_err(|e| format!("{}: {e}", shown()))?;
+    if data.len() as u64 > limit {
+        return Err(format!("{} is larger than {limit} bytes", shown()));
+    }
+    Ok((real, data))
+}
+
+/// The path of an open file as the kernel reports it.
+#[cfg(target_os = "macos")]
+fn opened_path(file: &fs::File) -> std::io::Result<PathBuf> {
+    use std::os::{fd::AsRawFd, unix::ffi::OsStrExt};
+    let mut buf = vec![0u8; libc::PATH_MAX as usize];
+    // SAFETY: F_GETPATH writes a NUL-terminated path of at most PATH_MAX bytes into buf.
+    if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETPATH, buf.as_mut_ptr()) } == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+    Ok(PathBuf::from(std::ffi::OsStr::from_bytes(&buf[..end])))
+}
+#[cfg(target_os = "linux")]
+fn opened_path(file: &fs::File) -> std::io::Result<PathBuf> {
+    use std::os::fd::AsRawFd;
+    fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))
+}
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn opened_path(_: &fs::File) -> std::io::Result<PathBuf> {
+    Err(std::io::Error::other("not supported on this platform"))
 }
 
 pub(crate) struct TempDir(pub(crate) PathBuf);
