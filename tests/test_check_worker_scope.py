@@ -93,6 +93,11 @@ class WorkerScopeTest(unittest.TestCase):
         self.commit('code after tests')
         self.assert_rejected('test-gap', 'tools/taeguk-cli/src/main.rs', 'change outside the trailing #[cfg(test)] module')
 
+    def test_test_gap_rejects_comment_after_test_module(self):
+        self.write('tools/taeguk-cli/src/main.rs', RUST + '// outside the test module\n')
+        self.commit('trailing comment')
+        self.assert_rejected('test-gap', 'tools/taeguk-cli/src/main.rs', 'change outside the trailing #[cfg(test)] module')
+
     def test_test_gap_rejects_second_test_module(self):
         self.write('tools/taeguk-cli/src/main.rs', RUST.replace('fn add', '#[cfg(test)]\nfn helper() {}\n\nfn add'))
         self.commit('second cfg')

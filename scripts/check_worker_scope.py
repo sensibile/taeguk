@@ -142,8 +142,8 @@ def significant(src):
     return out
 
 
-def test_module_open(src):
-    """Offset of the `{` opening the trailing `#[cfg(test)] mod name {`, or None.
+def test_module_span(src):
+    """Offsets of the `{` and `}` of the trailing `#[cfg(test)] mod name { ... }`, or None.
 
     The module must be the only `#[cfg(test)]` item and the last item: nothing but whitespace and
     comments may follow its closing brace.
@@ -162,18 +162,22 @@ def test_module_open(src):
     for j in range(opening, len(tokens)):
         depth += {'{': 1, '}': -1}.get(tokens[j][1], 0)
         if depth == 0:
-            return tokens[opening][0] if j == len(tokens) - 1 else None
+            return (tokens[opening][0], tokens[j][0]) if j == len(tokens) - 1 else None
     return None
 
 
 def rust_test_only(old, new):
-    """True when old and new are identical up to the trailing test module's opening brace."""
+    """True when old and new differ only inside the trailing test module's braces.
+
+    A second `#[cfg(test)]`, even inside the module, makes this False: rejected, never passed.
+    """
     try:
         old_src, new_src = old.decode(), new.decode()
-        old_open, new_open = test_module_open(old_src), test_module_open(new_src)
+        old_span, new_span = test_module_span(old_src), test_module_span(new_src)
     except (UnicodeDecodeError, ValueError):
         return False
-    return old_open is not None and new_open is not None and old_src[:old_open+1] == new_src[:new_open+1]
+    return (old_span is not None and new_span is not None
+            and old_src[:old_span[0]+1] == new_src[:new_span[0]+1] and old_src[old_span[1]:] == new_src[new_span[1]:])
 
 
 def violation(worker, entry):
