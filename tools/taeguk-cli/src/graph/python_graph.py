@@ -143,6 +143,8 @@ def eval_path(node, path, env):
 
 
 DYNAMIC = ("import_module", "__import__", "spec_from_file_location", "run_path")
+# sys attributes besides path that decide or record how imports resolve.
+SYS_IMPORT_STATE = ("meta_path", "path_hooks", "path_importer_cache")
 DYNAMIC_MODULES = ("importlib", "runpy", "pkgutil", "imp", "zipimport")
 # Builtins that run code given as data; what that code imports is not seen statically.
 CODE_EXEC = ("exec", "eval", "compile")
@@ -196,6 +198,9 @@ def unevaluated_sys_uses(tree, sys_names, parents):
         if not (isinstance(parent, ast.Attribute) and parent.value is node):
             found.append(f"line {node.lineno}: {node.id} used as a value")
             continue
+        if parent.attr in SYS_IMPORT_STATE:
+            found.append(f"line {node.lineno}: sys.{parent.attr} changes how imports resolve")
+            continue
         if parent.attr != "path":
             continue
         use = parents.get(id(parent))
@@ -225,7 +230,7 @@ def sys_path_changes(tree, path, sys_names):
               if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef))
               for n in ast.walk(f) if n is not f}
 
-    def changes(scope, current, deferred):
+    def changes(scope, current, deferred, top=None):
         for node in ast.walk(scope):
             # Assignments to sys.path or its slices, other names for it, and `from sys import path`
             # are not evaluated.
@@ -236,8 +241,10 @@ def sys_path_changes(tree, path, sys_names):
                 targets = [node.target]
             if any(is_sys_path(t.value if isinstance(t, ast.Subscript) else t, sys_names) for t in targets):
                 unresolved.append(f"line {node.lineno}: sys.path assignment")
-            if isinstance(node, ast.ImportFrom) and node.module == "sys" and any(a.name == "path" for a in node.names):
-                unresolved.append(f"line {node.lineno}: from sys import path")
+            if isinstance(node, ast.ImportFrom) and node.module == "sys":
+                taken = [a.name for a in node.names if a.name in ("path", "*") + SYS_IMPORT_STATE]
+                if taken:
+                    unresolved.append(f"line {node.lineno}: from sys import {', '.join(taken)}")
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
                 continue
             if not is_sys_path(node.func.value, sys_names):
@@ -247,7 +254,7 @@ def sys_path_changes(tree, path, sys_names):
             try:
                 if arg is None:
                     raise Unresolved(f"sys.path.{method}")
-                if deferred or id(node) in inside:
+                if deferred or id(node) in inside or (top is not None and node is not top.value):
                     # Inside a function or class the values at call time (parameters, locals,
                     # later reassignments) are not known statically.
                     raise Unresolved(f"sys.path.{method} inside a function, class or conditional block")
@@ -265,7 +272,10 @@ def sys_path_changes(tree, path, sys_names):
             continue
         # Only statements that always run at that point are evaluated; a change inside
         # `if`/`try`/`for`/`with`/`match` may or may not run.
-        changes(stmt, env, not isinstance(stmt, (ast.Expr, ast.Assign, ast.AnnAssign, ast.AugAssign)))
+        # Only a statement that is the call itself (`sys.path.insert(...)`, `x = sys.path.append(...)`)
+        # always runs at that point; a call inside `if`/`try`/`for`/`with`/`match`, a boolean or
+        # conditional expression or a comprehension may or may not run, so it is not evaluated.
+        changes(stmt, env, not isinstance(stmt, (ast.Expr, ast.Assign, ast.AnnAssign)), stmt)
         if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
             name = stmt.targets[0].id
             try:
@@ -348,6 +358,13 @@ def main():
                 machinery = next((a.name for a in node.names if a.name.split(".")[0] in DYNAMIC_MODULES), None)
             elif isinstance(node, ast.ImportFrom) and node.module and node.module.split(".")[0] in DYNAMIC_MODULES:
                 machinery = node.module
+            elif isinstance(node, ast.ImportFrom) and node.module in ("builtins", "sys"):
+                # `from builtins import exec as run`, `from sys import modules`: the names leave
+                # the module, so the allow-list on module attributes no longer sees their uses.
+                risky = CODE_EXEC + ("__import__", "*") if node.module == "builtins" else ("modules", "*")
+                taken = [a.name for a in node.names if a.name in risky]
+                if taken:
+                    machinery = f"from {node.module} import {', '.join(taken)}"
             elif isinstance(node, ast.Name) and node.id == "__import__":
                 machinery = "__import__"
             elif isinstance(node, ast.Attribute) and node.attr in DYNAMIC:

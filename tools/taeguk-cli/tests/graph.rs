@@ -754,6 +754,52 @@ fn toolchain_files_in_the_repository_are_not_used() {
 }
 
 #[test]
+fn hostile_manifests_and_git_config_run_nothing() {
+    // git configuration in the checkout (fsmonitor, filter drivers) must not run programs.
+    if available("python3", "--version") {
+        let w = work("python");
+        let marker = w.0.join("git-ran");
+        let hook = format!("touch {}", marker.to_str().unwrap());
+        git(&w.repo(), &["config", "core.fsmonitor", &hook]);
+        git(&w.repo(), &["config", "filter.evil.clean", &hook]);
+        fs::write(w.repo().join(".gitattributes"), "*.py filter=evil\n").unwrap();
+        fs::write(w.repo().join("common.py"), "VALUE = 2\n").unwrap();
+        build(&w, "python");
+        impact(&w, &["--changed", "common.py"]);
+        assert!(
+            !marker.exists(),
+            "repository git configuration ran a program"
+        );
+    }
+    // A manifest is data; one carrying a Stream with a callback is refused, not enumerated.
+    if available("mix", "--version") {
+        let w = work("elixir");
+        let o = Command::new("mix")
+            .arg("compile")
+            .current_dir(w.repo())
+            .output()
+            .unwrap();
+        assert!(o.status.success());
+        let marker = w.0.join("manifest-ran");
+        let manifest = w.repo().join("_build/dev/lib/fx/.mix/compile.elixir");
+        let craft = format!(
+            "t = :erlang.binary_to_term(File.read!({m:?})); \
+             s = Stream.map([{c:?}], fn c -> System.cmd(\"touch\", [c]) end); \
+             File.write!({m:?}, :erlang.term_to_binary(put_elem(t, 2, s)))",
+            m = manifest.to_str().unwrap(),
+            c = marker.to_str().unwrap()
+        );
+        let o = Command::new("elixir")
+            .args(["-e", &craft])
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        assert_fails(&w, "elixir", "not plain data");
+        assert!(!marker.exists(), "manifest content ran");
+    }
+}
+
+#[test]
 fn files_analyzers_read_are_fingerprinted() {
     if available("python3", "--version") {
         // An ignored pyproject.toml still sets the package roots.
@@ -957,9 +1003,11 @@ fn impact_follows_reverse_edges_and_reports_limits() {
             "tests/test_aliases.py",
             "tests/test_annotated.py",
             "tests/test_bexec.py",
+            "tests/test_boolop.py",
             "tests/test_builtins.py",
             "tests/test_cond.py",
             "tests/test_exec.py",
+            "tests/test_fromexec.py",
             "tests/test_helper.py",
             "tests/test_nested.py",
             "tests/test_order.py",

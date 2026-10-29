@@ -1,5 +1,6 @@
 use super::{
-    Analyzer, Edge, Gap, Node, Partial, TempDir, exec, read_source, relative, tool_version,
+    Analyzer, Edge, Gap, Node, Partial, TempDir, check_source, exec, read_source, relative,
+    tool_version,
 };
 use std::{collections::BTreeSet, env, fs, path::Path, process::Command, time::UNIX_EPOCH};
 
@@ -10,29 +11,95 @@ use std::{collections::BTreeSet, env, fs, path::Path, process::Command, time::UN
 /// understood; another version fails.
 const SCRIPT: &str = r#"
 [path] = System.argv()
-refs = fn r when is_map(r) -> Map.keys(r); r when is_list(r) -> r; _ -> [] end
+# Only the parts read below are used, and each is checked to be plain data of the expected
+# shape before it is enumerated: enumerating a struct (a Stream, a File.Stream) or calling a
+# function would run code that came from the file. Other fields (warnings hold diagnostic
+# structs) are never touched.
+refuse = fn what ->
+  IO.puts(:stderr, "manifest #{what} is not plain data of the expected shape; refused")
+  System.halt(4)
+end
+plain_map = fn t -> is_map(t) and not Map.has_key?(t, :__struct__) end
+atoms = fn
+  r when is_list(r) -> if Enum.all?(r, &is_atom/1), do: r, else: refuse.("references")
+  r when is_map(r) ->
+    if plain_map.(r) and Enum.all?(Map.keys(r), &is_atom/1), do: Map.keys(r), else: refuse.("references")
+  _ -> refuse.("references")
+end
 case :erlang.binary_to_term(File.read!(path)) do
   {35, modules, sources, _, _, _, _, _, _, _, _} ->
+    if not (plain_map.(modules) and plain_map.(sources)), do: refuse.("index")
     files = fn m ->
       case modules do
-        %{^m => m_info} when elem(m_info, 0) == :module -> elem(m_info, 2)
+        %{^m => m_info} when is_tuple(m_info) and tuple_size(m_info) > 2 and elem(m_info, 0) == :module ->
+          srcs = elem(m_info, 2)
+          if is_list(srcs) and Enum.all?(srcs, &is_binary/1), do: srcs, else: refuse.("module sources")
         _ -> []
       end
     end
-    for {src, info} <- sources, elem(info, 0) == :source do
+    for {src, info} <- sources, is_binary(src), is_tuple(info), tuple_size(info) > 6,
+        elem(info, 0) == :source do
       IO.puts("node\t" <> src)
       edges =
-        for {kind, i} <- [compile: 4, export: 5, runtime: 6], m <- refs.(elem(info, i)),
+        for {kind, i} <- [compile: 4, export: 5, runtime: 6], m <- atoms.(elem(info, i)),
             to <- files.(m), to != src, reduce: %{} do
           acc -> Map.put_new(acc, to, kind)
         end
       for {to, kind} <- edges, do: IO.puts("edge\t#{src}\t#{to}\t#{kind}")
     end
   other ->
-    IO.puts(:stderr, "unsupported Mix manifest version #{inspect(is_tuple(other) && elem(other, 0))}")
+    # Only an integer version is printed; inspecting arbitrary terms could run their code.
+    version = if is_tuple(other) and tuple_size(other) > 0 and is_integer(elem(other, 0)), do: elem(other, 0), else: "unknown"
+    IO.puts(:stderr, "unsupported Mix manifest version #{version}")
     System.halt(3)
 end
 "#;
+
+/// Finds, with Elixir's own parser, the calls whose target module is chosen at runtime, which
+/// the manifest cannot record. `Code.string_to_quoted` only parses; nothing is evaluated, and
+/// strings and comments are not code to it. Allow-list: a remote call `recv.fun` is static only
+/// when `recv` is an alias (`Enum`), an atom (`:ets`) or `__MODULE__`; any other receiver (a
+/// variable, a module attribute, a parenthesized expression, map field access, which looks the
+/// same) is a gap, and so are `apply`, `Kernel.apply`, `:erlang.apply`, `Module.concat`,
+/// `Module.safe_concat`, `String.to_atom` and `String.to_existing_atom`. A file that does not
+/// parse is a gap as a whole. Arguments come in pairs: the ROOT-relative path, then the file.
+const SCAN: &str = r##"
+gap = fn rel, line, detail -> IO.puts("gap\t#{rel}\t#{line || 0}\t#{detail}") end
+dynamic = [
+  {[:Kernel], :apply}, {[:Module], :concat}, {[:Module], :safe_concat},
+  {[:String], :to_atom}, {[:String], :to_existing_atom}
+]
+for [rel, file] <- Enum.chunk_every(System.argv(), 2) do
+  case Code.string_to_quoted(File.read!(file), columns: false, emit_warnings: false) do
+    {:ok, ast} ->
+      Macro.prewalk(ast, fn
+        {{:., meta, [recv, fun]}, _, args} = node when is_atom(fun) and is_list(args) ->
+          static =
+            match?({:__aliases__, _, _}, recv) or is_atom(recv) or
+              match?({:__MODULE__, _, ctx} when is_atom(ctx), recv)
+          known =
+            case recv do
+              {:__aliases__, _, parts} -> {parts, fun} in dynamic
+              :erlang -> fun == :apply
+              _ -> false
+            end
+          cond do
+            not static -> gap.(rel, meta[:line], "call on a runtime value (#{fun})")
+            known -> gap.(rel, meta[:line], "#{fun} picks its module at runtime")
+            true -> :ok
+          end
+          node
+        {:apply, meta, args} = node when is_list(args) ->
+          gap.(rel, meta[:line], "apply picks its module at runtime")
+          node
+        node ->
+          node
+      end)
+    {:error, _} ->
+      gap.(rel, 0, "file does not parse; its calls are not analyzed")
+  end
+end
+"##;
 
 /// Largest compile manifest read.
 const MAX_MANIFEST: u64 = 256 << 20;
@@ -134,87 +201,31 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
         ));
     }
     out.read.push(relative(root, &real).unwrap_or(shown));
+    // Every source is checked (regular file inside ROOT, size bound) before elixir reads it.
+    let mut scan = Command::new("elixir");
+    scan.args(["-e", SCAN]).current_dir(&tmp.0);
     for n in &out.nodes {
         let file = &n.files[0];
-        let (_, source) = read_source(root, &root.join(file))?;
-        for (i, line) in source.lines().enumerate() {
-            if DYNAMIC.iter().any(|d| calls(line, d)) || variable_call(line) {
-                out.gaps.push(Gap::new(
-                    "elixir",
-                    "dynamic_call",
-                    Some(file),
-                    format!(
-                        "line {}: runtime dispatch is not observed in the manifest",
-                        i + 1
-                    ),
-                ));
-            }
-        }
+        scan.arg(file).arg(check_source(root, &root.join(file))?);
+    }
+    let o = exec(&mut scan)?;
+    if o.code != Some(0) {
+        return Err(format!("scanning sources failed: {}", o.stderr.trim()));
+    }
+    for line in String::from_utf8_lossy(&o.stdout).lines() {
+        let [_, file, line_no, detail] = line.splitn(4, '\t').collect::<Vec<_>>()[..] else {
+            return Err(format!("unexpected source scan line: {line}"));
+        };
+        out.gaps.push(Gap::new(
+            "elixir",
+            "dynamic_call",
+            Some(file),
+            format!("line {line_no}: {detail}; not observed in the manifest"),
+        ));
     }
     Ok(out)
 }
 
-/// Calls whose target module is chosen at runtime, so xref records no edge for them.
-const DYNAMIC: [&str; 4] = [
-    "apply",
-    "Module.concat",
-    "String.to_atom",
-    "String.to_existing_atom",
-];
-
-/// Allow-list for dot access: `.name` is static only after a module alias (`Enum.map`,
-/// `Fx.B.b`), an Erlang module atom (`:ets.new`) or a number. After anything else (a variable
-/// `mod.run`, a module attribute `@impl.call`, a parenthesized or bracketed expression
-/// `(mod).run()`, a string) the receiver may be a module chosen at runtime, which the manifest
-/// does not record, so the line is a gap. Map field access looks the same and is included.
-/// Anonymous calls `fun.(x)` and ranges `a..b` are not dot access. Comments are not cut off
-/// (`#` also appears in strings), so a match there only adds a gap.
-fn variable_call(line: &str) -> bool {
-    let b = line.as_bytes();
-    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
-    (1..b.len()).any(|i| {
-        let next = b.get(i + 1).copied();
-        if b[i] != b'.'
-            || b[i - 1] == b'.'
-            || !next.is_some_and(|c| c.is_ascii_lowercase() || c == b'_')
-        {
-            return false;
-        }
-        if !ident(b[i - 1]) {
-            return true;
-        }
-        // Walk back over the receiver chain `A.B.c` to its first segment.
-        let mut s = i;
-        while s > 0 && (ident(b[s - 1]) || b[s - 1] == b'.') {
-            s -= 1;
-        }
-        let head = b[s];
-        let atom = s > 0 && b[s - 1] == b':';
-        !(head.is_ascii_uppercase() || head.is_ascii_digit() || atom)
-    })
-}
-
-/// Whether `line` calls `name`, with or without parentheses (`apply(m, f, a)`, `apply m, f, a`,
-/// `Kernel.apply ...`, `|> apply(...)`): the name is not part of a longer identifier and is
-/// followed by `(` or by whitespace and an argument.
-fn calls(line: &str, name: &str) -> bool {
-    let ident = |c: char| c.is_alphanumeric() || c == '_' || c == '?' || c == '!';
-    line.match_indices(name).any(|(i, _)| {
-        let before = line[..i].chars().next_back();
-        let after = line[i + name.len()..].trim_start_matches([' ', '\t']);
-        let spaced = line[i + name.len()..].starts_with([' ', '\t']);
-        before.is_none_or(|c| !ident(c))
-            && (line[i + name.len()..].starts_with('(')
-                || (spaced
-                    && after
-                        .chars()
-                        .next()
-                        .is_some_and(|c| !matches!(c, '=' | '|' | '-' | '<' | '>' | ')' | ','))))
-    })
-}
-
-/// Modification time in whole seconds; Mix writes the manifest time at that resolution,
-/// so a source saved earlier in the same second must not look newer.
 fn modified(path: &Path) -> Option<u64> {
     let t = fs::metadata(path).and_then(|m| m.modified()).ok()?;
     t.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs())
@@ -258,54 +269,5 @@ mod tests {
         assert_eq!(kinds, ["compile", "runtime"]);
         assert_eq!(p.nodes.len(), 3);
         assert!(parse_refs("edge\ta\tb\tweird").is_err());
-    }
-    #[test]
-    fn dynamic_calls_with_or_without_parentheses() {
-        for line in [
-            "apply(m, :run, [])",
-            "def call(m), do: apply m, :run, []",
-            "Kernel.apply m, :run, []",
-            "m |> Module.concat(Sub)",
-            "String.to_atom name",
-        ] {
-            assert!(DYNAMIC.iter().any(|d| calls(line, d)), "{line}");
-        }
-        for line in [
-            "applyx(m)",
-            "reapply(m)",
-            "apply = 1",
-            "x.apply_all(m)",
-            "# applies",
-        ] {
-            assert!(!DYNAMIC.iter().any(|d| calls(line, d)), "{line}");
-        }
-        for line in [
-            "def run(mod), do: mod.execute()",
-            "state.mod.run(x)",
-            "_m.f(1)",
-            "def run(mod, x), do: mod.execute x",
-            "mod.start :normal, []",
-            "def run(mod), do: mod.execute",
-            "state.count + 1",
-            "x = map.value",
-            "\"#{x}\" <> mod.run()",
-            "_label = \"#\"; mod.execute()",
-            "# mod.run()",
-            "@impl.call()",
-            "def call(mod), do: (mod).run()",
-            "list[0].run()",
-        ] {
-            assert!(variable_call(line), "{line}");
-        }
-        for line in [
-            "Enum.map(xs, f)",
-            ":ets.new(:t, [])",
-            "fun.(x)",
-            "Fx.B.b()",
-            "for i <- 1..10, do: i",
-            "x = 1.5",
-        ] {
-            assert!(!variable_call(line), "{line}");
-        }
     }
 }

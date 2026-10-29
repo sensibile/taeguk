@@ -829,7 +829,7 @@ fn mentions_path_attribute(meta: &syn::Meta) -> bool {
     }
 }
 
-/// Single-segment trait names in a `derive` list, also inside `cfg_attr` at any depth.
+/// Trait paths in a `derive` list, also inside `cfg_attr` at any depth.
 fn derive_names(meta: &syn::Meta) -> Vec<String> {
     use syn::{Meta, Token, punctuated::Punctuated};
     let Meta::List(list) = meta else {
@@ -845,13 +845,7 @@ fn derive_names(meta: &syn::Meta) -> Vec<String> {
         return vec![];
     }
     list.parse_args_with(Punctuated::<syn::Path, Token![,]>::parse_terminated)
-        .map(|traits| {
-            traits
-                .iter()
-                .filter(|t| t.segments.len() == 1)
-                .map(path_text)
-                .collect()
-        })
+        .map(|traits| traits.iter().map(path_text).collect())
         .unwrap_or_default()
 }
 
@@ -1161,11 +1155,12 @@ impl<'ast> Visit<'ast> for Paths {
             }
             return;
         }
+        // `std::println!` counts only while `std` itself is not rebound (`use other as std;`).
+        let first = m.path.segments.first().map(|s| s.ident.to_string());
         let std_path = m.path.segments.len() == 1
-            || m.path
-                .segments
-                .first()
-                .is_some_and(|s| s.ident == "std" || s.ident == "core" || s.ident == "alloc");
+            || first
+                .as_deref()
+                .is_some_and(|f| ["std", "core", "alloc"].contains(&f) && !self.rebound(f));
         // A `use` binding of the same name (`use other::vec;`) or an external glob import
         // (`use other::*;`) may mean another macro.
         let bound = m.path.segments.len() == 1 && self.rebound(&name);
@@ -1190,7 +1185,9 @@ impl<'ast> Visit<'ast> for Paths {
             // brought in by an external glob is another derive; one imported by
             // `#[macro_use] extern crate` is checked crate-wide. `cfg_attr` derives count too.
             for name in derive_names(&a.meta) {
-                if self.rebound(&name) {
+                // Multi-segment names (`std::fmt::Debug`) check their first segment.
+                let head = name.split("::").next().unwrap_or(&name).to_string();
+                if self.rebound(&head) {
                     self.unanalyzed.insert(format!("#[derive({name})]"));
                 } else {
                     self.plain_macros.insert(format!("derive({name})"));

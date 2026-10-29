@@ -9,3 +9,4 @@ rust cfg_attr_path app/src/main.rs
 rust construct_not_analyzed app/src/derived.rs
 rust construct_not_analyzed app/src/cfgderive.rs
 rust construct_not_analyzed app/src/globmac.rs
+rust construct_not_analyzed app/src/stdalias.rs

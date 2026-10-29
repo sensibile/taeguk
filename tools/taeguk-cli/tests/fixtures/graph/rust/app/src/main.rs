@@ -17,6 +17,7 @@ mod nested;
 mod ops;
 mod plat;
 mod scoped;
+mod stdalias;
 mod used;
 
 fn main() {

@@ -163,8 +163,21 @@ pub(crate) fn tool_version(lang: &str) -> Option<String> {
         _ => None,
     }
 }
+/// The empty tree, used as the attribute source so no `.gitattributes` filter driver applies.
+const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/// Runs git in ROOT without letting repository configuration run programs: the fsmonitor
+/// hook is off and attributes come from the empty tree, so no clean/smudge filter or
+/// filter process runs while git compares working tree files.
 fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    let o = exec(Command::new("git").arg("-C").arg(root).args(args))?;
+    let o = exec(
+        Command::new("git")
+            .args(["-c", "core.fsmonitor=false"])
+            .arg(format!("--attr-source={EMPTY_TREE}"))
+            .arg("-C")
+            .arg(root)
+            .args(args),
+    )?;
     if o.code != Some(0) {
         return Err(format!(
             "git {} failed: {}",
