@@ -1143,6 +1143,57 @@ fn rust_path_attribute_walks_links_like_the_os() {
 }
 
 #[test]
+fn cargo_workspace_above_root_fails() {
+    if !available("cargo", "--version") {
+        return;
+    }
+    // ROOT is the only member of a virtual workspace in its parent directory and inherits its
+    // edition from there: cargo reads that manifest, so the graph must not be built from it.
+    let w = work("rust");
+    let outer = w.0.join("outer");
+    let inner = outer.join("inner");
+    fs::create_dir_all(inner.join("src")).unwrap();
+    fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"inner\"]\n\n[workspace.package]\nedition = \"2015\"\n",
+    )
+    .unwrap();
+    fs::write(
+        inner.join("Cargo.toml"),
+        "[package]\nname = \"inner\"\nversion = \"0.1.0\"\nedition.workspace = true\n",
+    )
+    .unwrap();
+    fs::write(inner.join("src/lib.rs"), "pub fn f() {}\n").unwrap();
+    git(&inner, &["init", "-q"]);
+    git(&inner, &["add", "-A"]);
+    git(&inner, &["commit", "-qm", "inner"]);
+    let out = w.0.join("inner.json");
+    let (ok, v) = taeguk(&[
+        "graph",
+        "build",
+        inner.to_str().unwrap(),
+        "--out",
+        out.to_str().unwrap(),
+        "--lang",
+        "rust",
+    ]);
+    assert!(ok, "{v}");
+    let graph = fs::read_to_string(&out).unwrap();
+    let g: Value = serde_json::from_str(&graph).unwrap();
+    assert_eq!(g["status"], "FAIL", "{g}");
+    assert!(
+        g["analyzers"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("workspace root manifest"),
+        "{g}"
+    );
+    // ROOT's own path names its parent; the error must not name the outside manifest.
+    let error = g["analyzers"][0]["error"].as_str().unwrap();
+    assert!(!error.contains(outer.to_str().unwrap()), "{error}");
+}
+
+#[test]
 fn rust_module_directory_links_are_fingerprinted() {
     if !available("cargo", "--version") {
         return;
@@ -1635,6 +1686,7 @@ fn impact_follows_reverse_edges_and_reports_limits() {
             "tests/test_aliases.py",
             "tests/test_annotated.py",
             "tests/test_bexec.py",
+            "tests/test_bget.py",
             "tests/test_boolop.py",
             "tests/test_builtins.py",
             "tests/test_cond.py",

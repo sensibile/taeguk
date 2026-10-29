@@ -622,6 +622,13 @@ def main():
                 machinery = node.value
             elif isinstance(node, ast.Name) and node.id in CODE_EXEC:
                 machinery = f"{node.id}()"
+            elif (isinstance(node, ast.Name) and node.id == "__builtins__") or (
+                    isinstance(node, ast.Constant) and node.value == "__builtins__") or (
+                    isinstance(node, ast.Attribute) and node.attr in ("builtins", "__builtins__")):
+                # `__builtins__` is the builtins module or its dict depending on the context
+                # (`__builtins__.get("exec")`), so no attribute of it passes; checked before the
+                # module allow-list below. `os.builtins`-style attributes are not tracked there.
+                machinery = "the builtins module reached by another name"
             elif isinstance(node, ast.Name) and node.id in builtins_names:
                 # Allow-list for the builtins module: only public attributes other than code
                 # execution and imports pass; `__dict__` and other dunder attributes reach every
@@ -631,12 +638,6 @@ def main():
                     machinery = f"{node.id} used as a value"
                 elif parent.attr in CODE_EXEC + ("__import__",) or parent.attr.startswith("_"):
                     machinery = f"{node.id}.{parent.attr}"
-            elif (isinstance(node, ast.Name) and node.id == "__builtins__") or (
-                    isinstance(node, ast.Constant) and node.value == "__builtins__") or (
-                    isinstance(node, ast.Attribute) and node.attr in ("builtins", "__builtins__")):
-                # The builtins module under its other names (`__builtins__`, `os.builtins`-style
-                # attributes) is not tracked by the allow-list above.
-                machinery = "the builtins module reached by another name"
             elif (isinstance(node, ast.Attribute) and node.attr == "modules"
                   and isinstance(node.value, ast.Name) and node.value.id in sys_names):
                 machinery = "sys.modules"

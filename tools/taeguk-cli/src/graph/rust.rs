@@ -26,6 +26,7 @@ const COMMAND: [&str; 8] = [
 #[derive(Deserialize)]
 struct Metadata {
     packages: Vec<Package>,
+    workspace_root: PathBuf,
 }
 #[derive(Deserialize)]
 struct Package {
@@ -123,6 +124,14 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
     // Manifests cargo read must be inside ROOT, also when reached through a linked directory.
     for p in &meta.packages {
         check_source(root, &p.manifest_path)?;
+    }
+    // cargo looks for the workspace in every directory above the package, ROOT's parents too,
+    // and members inherit settings from it (`edition.workspace = true`); no option turns that
+    // off. Its manifest must be inside ROOT like the others (the path itself is not shown: it
+    // names directories outside ROOT).
+    let workspace = meta.workspace_root.join("Cargo.toml");
+    if !meta.workspace_root.starts_with(root) || check_source(root, &workspace).is_err() {
+        return Err("the cargo workspace root manifest is not a regular file inside ROOT".into());
     }
     // Code names a library by its target name (or a dependency rename), not the package name.
     let lib_of = |p: &Package| {
@@ -243,6 +252,7 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
     for p in &meta.packages {
         out.read.push(rel(&p.manifest_path)?);
     }
+    out.read.push(rel(&workspace)?);
     out.nodes = files
         .into_iter()
         .map(|f| Node::new("rust", f.clone(), vec![f]))
