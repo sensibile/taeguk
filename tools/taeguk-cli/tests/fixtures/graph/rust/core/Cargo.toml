@@ -1,0 +1,10 @@
+[package]
+name = "fx-core-pkg"
+version = "0.0.0"
+edition = "2021"
+
+[lib]
+name = "fx_core"
+
+[dependencies]
+fx-base = { path = "../base" }

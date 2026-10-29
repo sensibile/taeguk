@@ -1,0 +1,1637 @@
+mod elixir;
+mod go;
+mod python;
+mod rust;
+mod sha1;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use std::{
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    env, fs,
+    io::{Read, Write},
+    path::{Component, Path, PathBuf},
+    process::{Command, Stdio},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+const SCHEMA: &str = "taeguk.code-graph/1";
+const LANGS: [&str; 4] = ["elixir", "go", "python", "rust"];
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub(crate) struct Node {
+    id: String,
+    lang: String,
+    files: Vec<String>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub(crate) struct Edge {
+    from: String,
+    to: String,
+    kind: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub(crate) struct Gap {
+    lang: String,
+    kind: String,
+    file: Option<String>,
+    detail: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Analyzer {
+    lang: String,
+    tool: String,
+    version: Option<String>,
+    command: Vec<String>,
+    exit_code: Option<i32>,
+    status: String,
+    error: Option<String>,
+}
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub(crate) struct Partial {
+    nodes: Vec<Node>,
+    edges: Vec<Edge>,
+    gaps: Vec<Gap>,
+    /// ROOT-relative files the analyzer read beyond the language's source patterns (a Mix
+    /// manifest, a `#[path]` file with another extension); they join the input fingerprint.
+    #[serde(default)]
+    read: Vec<String>,
+}
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Graph {
+    schema: String,
+    root: String,
+    commit: String,
+    dirty: bool,
+    dirty_paths: Vec<String>,
+    /// Files analyzers reported reading beyond the source patterns, and the fingerprint of all
+    /// analyzer inputs.
+    read: Vec<String>,
+    inputs: String,
+    generated_at: u64,
+    status: String,
+    analyzers: Vec<Analyzer>,
+    nodes: Vec<Node>,
+    edges: Vec<Edge>,
+    gaps: Vec<Gap>,
+    digest: String,
+}
+
+impl Node {
+    fn new(lang: &str, id: impl Into<String>, files: Vec<String>) -> Self {
+        Node {
+            id: format!("{lang}:{}", id.into()),
+            lang: lang.into(),
+            files,
+        }
+    }
+}
+impl Edge {
+    fn new(from: &str, to: &str, kind: &str) -> Self {
+        Edge {
+            from: from.into(),
+            to: to.into(),
+            kind: kind.into(),
+        }
+    }
+}
+impl Gap {
+    fn new(lang: &str, kind: &str, file: Option<&str>, detail: impl Into<String>) -> Self {
+        Gap {
+            lang: lang.into(),
+            kind: kind.into(),
+            file: file.map(Into::into),
+            detail: detail.into(),
+        }
+    }
+}
+impl Analyzer {
+    fn new(lang: &str, tool: &str, command: &[&str]) -> Self {
+        Analyzer {
+            lang: lang.into(),
+            tool: tool.into(),
+            version: None,
+            command: command.iter().map(|s| s.to_string()).collect(),
+            exit_code: None,
+            status: "FAIL".into(),
+            error: None,
+        }
+    }
+}
+
+pub(crate) struct Output {
+    pub(crate) code: Option<i32>,
+    pub(crate) stdout: Vec<u8>,
+    pub(crate) stderr: String,
+}
+pub(crate) fn exec(cmd: &mut Command) -> Result<Output, String> {
+    bounded(cmd.stdin(Stdio::null()), None)
+}
+/// Runs a command with `input` on stdin. Data derived from the target repository (file names,
+/// paths inside ROOT) goes to tools this way, never as command-line arguments, where a name like
+/// `-r` would be read as an option.
+pub(crate) fn exec_input(cmd: &mut Command, input: &[u8]) -> Result<Output, String> {
+    bounded(cmd.stdin(Stdio::piped()), Some(input))
+}
+
+/// Default bound on one process (an analyzer, git, a tool), overridable with
+/// TAEGUK_GRAPH_TIMEOUT_SECS.
+const ANALYZER_TIMEOUT_SECS: u64 = 600;
+fn time_limit() -> u64 {
+    env::var("TAEGUK_GRAPH_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(ANALYZER_TIMEOUT_SECS)
+}
+
+/// Set for an analyzer process: the tools it runs stay in its process group, which the CLI
+/// process owns and removes.
+const IN_ANALYZER: &str = "TAEGUK_GRAPH_IN_ANALYZER";
+
+/// Every process this tool starts runs through here, with a time bound. Files in the target
+/// repository can make a tool wait forever (git opening a FIFO `.gitignore`), so a wait that
+/// never ends becomes an error, not a stuck CLI. The CLI process starts each child in a new
+/// process group and kills what is left of that group once the child has exited or timed out,
+/// so nothing a tool or an analyzer started outlives it (also when an analyzer crashes). Inside
+/// an analyzer, tools stay in the analyzer's group for that cleanup; a tool that times out is
+/// killed itself.
+fn bounded(cmd: &mut Command, input: Option<&[u8]>) -> Result<Output, String> {
+    let limit = time_limit();
+    let owner = env::var_os(IN_ANALYZER).is_none();
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    // git (run here, or by go and cargo) must not reach a remote: a repository's config can
+    // name a promisor remote whose missing objects git fetches on its own, through a transport
+    // command the repository chooses (`core.sshCommand`). No transport is allowed, lazy fetch
+    // is off, and nothing prompts or takes optional locks. Analyzers inherit this.
+    cmd.env("GIT_NO_LAZY_FETCH", "1")
+        .env("GIT_ALLOW_PROTOCOL", "")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_OPTIONAL_LOCKS", "0");
+    #[cfg(unix)]
+    if owner {
+        std::os::unix::process::CommandExt::process_group(cmd, 0);
+    }
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("cannot run {:?}: {e}", cmd.get_program()))?;
+    let writer = match (input, child.stdin.take()) {
+        (Some(input), Some(mut stdin)) => {
+            let input = input.to_vec();
+            Some(std::thread::spawn(move || {
+                let _ = stdin.write_all(&input);
+            }))
+        }
+        _ => None,
+    };
+    let read = |mut r: Box<dyn Read + Send>| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = r.read_to_end(&mut buf);
+            buf
+        })
+    };
+    let out = read(Box::new(child.stdout.take().expect("piped stdout")));
+    let err = read(Box::new(child.stderr.take().expect("piped stderr")));
+    let started = std::time::Instant::now();
+    let mut failure = None;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if started.elapsed().as_secs() >= limit => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(10)),
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                failure = Some(format!("{:?}: {e}", cmd.get_program()));
+                break None;
+            }
+        }
+    };
+    #[cfg(unix)]
+    if owner {
+        // SAFETY: kill(2) on the process group this process created for the child; no memory
+        // is touched. The group id stays reserved while any member is left, so it is not reused.
+        unsafe {
+            libc::kill(-(child.id() as i32), libc::SIGKILL);
+        }
+    }
+    if let Some(e) = failure {
+        return Err(e);
+    }
+    if let Some(w) = writer {
+        let _ = w.join();
+    }
+    let (out, err) = (
+        out.join().unwrap_or_default(),
+        err.join().unwrap_or_default(),
+    );
+    let Some(status) = status else {
+        return Err(format!(
+            "{:?} did not finish within {limit} s and was stopped",
+            cmd.get_program()
+        ));
+    };
+    Ok(Output {
+        code: status.code(),
+        stdout: out,
+        stderr: String::from_utf8_lossy(&err).into_owned(),
+    })
+}
+/// Last non-empty line of `<tool> <arg>`. Like the analyzers it runs outside ROOT, so the
+/// user's environment picks the toolchain, never a toolchain file in the target repository.
+pub(crate) fn version(tool: &str, args: &[&str]) -> Option<String> {
+    let dir = TempDir::new("version").ok()?;
+    let o = exec(
+        Command::new(tool)
+            .args(args)
+            .current_dir(&dir.0)
+            .env("RUSTUP_AUTO_INSTALL", "0")
+            .env("GOTOOLCHAIN", "local"),
+    )
+    .ok()?;
+    let text = String::from_utf8_lossy(&o.stdout).into_owned() + &o.stderr;
+    text.lines()
+        .map(str::trim)
+        .rfind(|l| !l.is_empty())
+        .map(Into::into)
+}
+/// Version of the tool an analyzer runs; impact compares it with the version in the graph.
+pub(crate) fn tool_version(lang: &str) -> Option<String> {
+    match lang {
+        "elixir" => version("elixir", &["--version"]),
+        "go" => version("go", &["version"]),
+        "python" => version("python3", &["--version"]),
+        "rust" => version("cargo", &["--version"])
+            .map(|c| format!("{c}; taeguk-cli {} syn 3", env!("CARGO_PKG_VERSION"))),
+        _ => None,
+    }
+}
+/// The empty tree, used as the attribute source so `.gitattributes` in the tree adds nothing.
+const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/// git in ROOT. Only commands that never pass working tree files through filter drivers are
+/// used (see `dirty_paths`): attributes can also come from `core.attributesFile` or
+/// `.git/info/attributes`, which no option disables, so the safe boundary is not reading file
+/// contents through git at all. The fsmonitor hook is off as well.
+fn git_command(root: &Path, args: &[&str]) -> Command {
+    let mut cmd = Command::new("git");
+    cmd.args(["-c", "core.fsmonitor=false"])
+        .arg(format!("--attr-source={EMPTY_TREE}"))
+        .arg("-C")
+        .arg(root)
+        .args(args);
+    cmd
+}
+fn git_done(args: &[&str], o: Output) -> Result<Vec<u8>, String> {
+    if o.code != Some(0) {
+        return Err(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            o.stderr.trim()
+        ));
+    }
+    Ok(o.stdout)
+}
+fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    git_done(args, exec(&mut git_command(root, args))?)
+}
+fn nul_list(data: Vec<u8>) -> Result<Vec<String>, String> {
+    let text = String::from_utf8(data).map_err(|_| "git returned a non-UTF-8 path")?;
+    Ok(text
+        .split('\0')
+        .filter(|s| !s.is_empty())
+        .map(Into::into)
+        .collect())
+}
+fn head(root: &Path) -> Result<String, String> {
+    Ok(String::from_utf8_lossy(&git(root, &["rev-parse", "HEAD"])?)
+        .trim()
+        .into())
+}
+/// Tracked files under ROOT, relative to ROOT.
+pub(crate) fn tracked(root: &Path) -> Result<Vec<String>, String> {
+    nul_list(git(root, &["ls-files", "-z"])?)
+}
+/// Paths that differ from HEAD in the index or working tree, plus untracked files that are
+/// not ignored: analyzers such as `go list` read those too. `git diff` against the working
+/// tree would run clean filters configured in the checkout, so the index is compared with
+/// HEAD by git (no working tree file read) and working tree files with the index here: regular
+/// files are hashed with `git hash-object --no-filters`, links compared by target, and anything
+/// else (a FIFO) counts as changed without being opened. A repository that uses filters (LFS)
+/// therefore always looks changed, which only makes impact UNKNOWN.
+fn dirty_paths(root: &Path) -> Result<Vec<String>, String> {
+    let mut paths = nul_list(git(
+        root,
+        &[
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--cached",
+            "HEAD",
+            "--name-only",
+            "--relative",
+            "-z",
+            "--",
+        ],
+    )?)?;
+    paths.extend(worktree_changes(root)?);
+    paths.extend(untracked(root)?);
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+/// Opens a file for reading without blocking (a FIFO swapped in after a check returns at once)
+/// and confirms through the open handle that it is a regular file.
+pub(crate) fn open_regular(path: &Path) -> std::io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK);
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::other("not a regular file"));
+    }
+    Ok(file)
+}
+
+/// The git blob id of bytes in memory (a link's target text).
+fn blob_id_of(data: &[u8], sha256: bool) -> String {
+    let header = format!("blob {}\0", data.len());
+    if sha256 {
+        let mut h = Sha256::new();
+        h.update(header.as_bytes());
+        h.update(data);
+        format!("{:x}", h.finalize())
+    } else {
+        let mut h = sha1::Sha1::new();
+        h.update(header.as_bytes());
+        h.update(data);
+        h.hex()
+    }
+}
+
+/// Largest working tree file hashed; a larger one counts as changed without being read.
+const MAX_HASHED: u64 = 1 << 30;
+
+/// The git blob id of a file's content as it is (no filters), in the repository's hash. The
+/// content is streamed in fixed-size pieces, so memory stays bounded; a file over MAX_HASHED
+/// returns an error, which the caller treats as changed.
+fn blob_id(path: &Path, sha256: bool) -> std::io::Result<String> {
+    let mut file = open_regular(path)?;
+    let len = file.metadata()?.len();
+    if len > MAX_HASHED {
+        return Err(std::io::Error::other("too large to hash"));
+    }
+    let header = format!("blob {len}\0");
+    let (mut s1, mut s2) = (sha1::Sha1::new(), Sha256::new());
+    let mut feed = |data: &[u8]| {
+        if sha256 {
+            s2.update(data)
+        } else {
+            s1.update(data)
+        }
+    };
+    feed(header.as_bytes());
+    let mut buf = vec![0u8; 64 << 10];
+    let mut read = 0u64;
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        read += n as u64;
+        if read > len {
+            return Err(std::io::Error::other("file grew while hashing"));
+        }
+        feed(&buf[..n]);
+    }
+    if read != len {
+        return Err(std::io::Error::other("file changed while hashing"));
+    }
+    Ok(if sha256 {
+        format!("{:x}", s2.finalize())
+    } else {
+        s1.hex()
+    })
+}
+
+/// Index entries whose working tree file differs, compared without filters.
+fn worktree_changes(root: &Path) -> Result<Vec<String>, String> {
+    if root.to_string_lossy().contains('\n') {
+        return Err("ROOT path contains a newline".into());
+    }
+    let (mut changed, mut regular, mut links) = (vec![], vec![], vec![]);
+    for entry in nul_list(git(root, &["ls-files", "-s", "-z"])?)? {
+        let Some((meta, path)) = entry.split_once('\t') else {
+            continue;
+        };
+        let [mode, sha, stage] = meta.split(' ').collect::<Vec<_>>()[..] else {
+            continue;
+        };
+        if mode == "160000" {
+            continue; // submodule
+        }
+        let kind = fs::symlink_metadata(root.join(path)).map(|m| m.file_type());
+        match (mode, kind) {
+            _ if stage != "0" => changed.push(path.to_string()),
+            ("120000", Ok(k)) if k.is_symlink() => links.push((path.to_string(), sha.to_string())),
+            (m, Ok(k)) if m != "120000" && k.is_file() && !path.contains('\n') => {
+                regular.push((path.to_string(), sha.to_string()))
+            }
+            _ => changed.push(path.to_string()),
+        }
+    }
+    if regular.is_empty() && links.is_empty() {
+        return Ok(changed);
+    }
+    // Hashed here rather than by git: a file is opened without blocking and checked to be
+    // regular through the open handle, so one swapped for a FIFO cannot stall the CLI, and a
+    // link is hashed from its target text, so no blob of any size is read from the object store.
+    let sha256 = String::from_utf8_lossy(&git(root, &["rev-parse", "--show-object-format"])?)
+        .trim()
+        == "sha256";
+    for (path, sha) in regular {
+        match blob_id(&root.join(&path), sha256) {
+            Ok(id) if id == sha => {}
+            _ => changed.push(path),
+        }
+    }
+    for (path, sha) in links {
+        let target = fs::read_link(root.join(&path)).map_err(|e| format!("{path}: {e}"))?;
+        if blob_id_of(target.as_os_str().as_encoded_bytes(), sha256) != sha {
+            changed.push(path);
+        }
+    }
+    Ok(changed)
+}
+
+fn untracked(root: &Path) -> Result<Vec<String>, String> {
+    nul_list(git(
+        root,
+        &["ls-files", "-z", "--others", "--exclude-standard"],
+    )?)
+}
+
+/// An ignored directory of generated build output that no selected analyzer reads. It is
+/// recognized by what the tools write, not by name: a Mix build (`_build/<env>/lib`, which go
+/// skips as `_`-prefixed and which is checked while it is copied) or, when go is not selected, a
+/// cargo or other cache directory (`.rustc_info.json`, `CACHEDIR.TAG`). A directory merely named
+/// `target` can hold workspace members cargo reads, so it is walked.
+fn build_output(dir: &Path, name: &std::ffi::OsStr, go: bool) -> bool {
+    let mix = name == "_build"
+        && fs::read_dir(dir)
+            .is_ok_and(|mut d| d.any(|e| e.is_ok_and(|e| e.path().join("lib").is_dir())));
+    let cache = dir.join(".rustc_info.json").is_file() || dir.join("CACHEDIR.TAG").is_file();
+    mix || (!go && cache)
+}
+
+/// Walks ROOT on disk (git does not list special files), calling `visit(rel, path, kind,
+/// ignored)` for each entry; a directory is entered when `visit` returns true. `.git` is
+/// skipped, and so are ignored directories no selected analyzer reads: `_build` (go skips
+/// `_`-prefixed directories, cargo and our Python script do not read it, and the Elixir build is
+/// checked while it is copied) and `target` unless go is selected (`go list ./...` reads it).
+fn walk(
+    root: &Path,
+    langs: &[String],
+    mut visit: impl FnMut(&str, &Path, fs::FileType, bool) -> Result<bool, String>,
+) -> Result<(), String> {
+    let ignored: BTreeSet<String> = nul_list(git(
+        root,
+        &[
+            "ls-files",
+            "-z",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--directory",
+        ],
+    )?)?
+    .into_iter()
+    .map(|p| p.trim_end_matches('/').to_string())
+    .collect();
+    let go = langs.iter().any(|l| l == "go");
+    let mut stack = vec![(root.to_path_buf(), false)];
+    while let Some((dir, in_ignored)) = stack.pop() {
+        let mut entries: Vec<_> = fs::read_dir(&dir)
+            .map_err(|e| format!("{}: {e}", dir.display()))?
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string())?;
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            let path = entry.path();
+            let rel = relative(root, &path).ok_or("non-UTF-8 path under ROOT")?;
+            let name = entry.file_name();
+            let is_ignored = in_ignored || ignored.contains(&rel);
+            if rel == ".git" || (is_ignored && build_output(&path, &name, go)) {
+                continue;
+            }
+            let kind = entry.file_type().map_err(|e| format!("{rel}: {e}"))?;
+            if visit(&rel, &path, kind, is_ignored)? {
+                stack.push((path, is_ignored));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Paths under ROOT that external analyzers (go, cargo, mix) may read without our listing them
+/// must not block them or exhaust memory. Tracked and untracked (not ignored) paths must be
+/// regular files, directories, or links to those inside ROOT. Ignored paths are read too
+/// (`go list` does not follow .gitignore) but hold local environments such as `.venv` whose file
+/// links leave ROOT, so there special files (FIFO, device, socket), links to them, and links to
+/// directories outside ROOT that go would enter are refused.
+/// Tracked paths are checked even inside skipped directories.
+fn scan_root(root: &Path, tracked: &[String], langs: &[String]) -> Result<(), String> {
+    let go = langs.iter().any(|l| l == "go");
+    let check =
+        |rel: &str, path: &Path, kind: fs::FileType, strict: bool| -> Result<bool, String> {
+            if kind.is_dir() {
+                return Ok(true);
+            }
+            if kind.is_symlink() {
+                let real = match path.canonicalize() {
+                    Ok(real) => real,
+                    // A dangling link in an ignored environment cannot be opened by anyone.
+                    Err(_) if !strict => return Ok(false),
+                    Err(e) => return Err(format!("{rel}: {e}")),
+                };
+                // A linked directory outside ROOT is never walked here, yet `go list ./...`
+                // enters it where go traverses (no `.`/`_`-prefixed or `testdata` component),
+                // so there it is refused even when ignored. Anything else an analyzer reads
+                // through such a link is bounded by the analyzer time limit and rejected by
+                // the analyzers' own inside-ROOT checks on what they report.
+                let go_walks = go
+                    && !rel
+                        .split('/')
+                        .any(|c| c.starts_with('.') || c.starts_with('_') || c == "testdata");
+                if (strict || (go_walks && real.is_dir())) && !real.starts_with(root) {
+                    return Err(format!("{rel} resolves outside ROOT"));
+                }
+                if !(real.is_file() || real.is_dir()) {
+                    return Err(format!("{rel} is not a regular file"));
+                }
+            } else if !kind.is_file() {
+                return Err(format!("{rel} is not a regular file"));
+            }
+            Ok(false)
+        };
+    for f in tracked {
+        if let Ok(meta) = fs::symlink_metadata(root.join(f)) {
+            check(f, &root.join(f), meta.file_type(), true)?;
+        }
+    }
+    walk(root, langs, |rel, path, kind, ignored| {
+        check(rel, path, kind, !ignored)
+    })
+}
+
+/// Whether a file is an input some selected analyzer reads. Go reads every source and module
+/// file it finds (ignored ones too), cargo and syn read manifests and `.rs` files, mix the
+/// project's Elixir sources; our Python script reads only tracked `.py` files and pyproject.
+fn is_input(rel: &str, ignored: bool, langs: &[String]) -> bool {
+    let name = rel.rsplit('/').next().unwrap_or(rel);
+    let ext = name.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
+    let under = |dir: &str| rel.split('/').any(|c| c == dir);
+    langs.iter().any(|l| match l.as_str() {
+        "go" => {
+            ["go", "s", "c", "h"].contains(&ext)
+                || ["go.mod", "go.sum", "go.work", "go.work.sum"].contains(&name)
+        }
+        // Build output is already skipped by the walk; a directory merely named `target` can
+        // hold workspace members.
+        "rust" => ext == "rs" || name == "Cargo.toml" || name == "Cargo.lock",
+        "elixir" => !under("deps") && (ext == "ex" || ext == "exs" || name == "mix.lock"),
+        "python" => !ignored && (ext == "py" || name == "pyproject.toml"),
+        _ => false,
+    })
+}
+
+/// Hash of every analyzer input under ROOT: files matching the language source patterns
+/// (untracked and ignored ones included) and the files analyzers reported reading (`read`), so
+/// impact can tell when anything the graph was built from has changed since. Files over
+/// MAX_SOURCE are hashed by size and modification time. Also returns the inputs that resolve
+/// outside ROOT: a tool reading one (a `go.mod` linked out of ROOT) brings outside content into
+/// the graph, so build fails on them.
+fn input_fingerprint(
+    root: &Path,
+    langs: &[String],
+    read: &[String],
+) -> Result<(String, Vec<String>), String> {
+    // An entry ending in `/` stands for every file in that directory tree (`//go:embed`).
+    let trees: Vec<String> = read
+        .iter()
+        .filter_map(|r| r.strip_suffix('/').map(String::from))
+        .collect();
+    let mut files: BTreeSet<String> = read.iter().filter(|r| !r.ends_with('/')).cloned().collect();
+    walk(root, langs, |rel, _, kind, ignored| {
+        if kind.is_dir() {
+            return Ok(true);
+        }
+        if is_input(rel, ignored, langs) {
+            files.insert(rel.to_string());
+        }
+        Ok(false)
+    })?;
+    // Embedded trees are walked on their own, without the build-output skip of `walk`:
+    // `//go:embed all:_build` reads what `walk` leaves out.
+    for t in &trees {
+        // The tree itself must stay inside ROOT (a graph file could name `../..`, or the
+        // directory may since have become a link out of ROOT).
+        match root.join(t).canonicalize() {
+            Ok(real) if real.starts_with(root) => {}
+            _ => continue,
+        }
+        let mut stack = vec![root.join(t)];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Some(rel) = relative(root, &path) else {
+                    continue;
+                };
+                match entry.file_type() {
+                    Ok(k) if k.is_dir() && rel != ".git" => stack.push(path),
+                    Ok(k) if !k.is_dir() => {
+                        files.insert(rel);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    let mut h = Sha256::new();
+    let mut outside = Vec::new();
+    for rel in &files {
+        h.update(rel.as_bytes());
+        h.update([0]);
+        let path = root.join(rel);
+        // A link counts by its target text too: retargeting it (to a directory, or to a file
+        // with the same content) changes what an analyzer resolved through it.
+        if let Ok(target) = fs::read_link(&path) {
+            h.update(b"link:");
+            h.update(target.as_os_str().as_encoded_bytes());
+            h.update([0]);
+        }
+        // Links are followed only to targets inside ROOT.
+        match path.canonicalize() {
+            Ok(real) if !real.starts_with(root) => {
+                h.update(b"outside ROOT");
+                h.update([0]);
+                outside.push(rel.clone());
+                continue;
+            }
+            _ => {}
+        }
+        match fs::metadata(&path) {
+            Ok(meta) if meta.is_file() && meta.len() > MAX_SOURCE => {
+                // Not read: identified by what the kernel keeps for it. The modification time
+                // can be set back by any user (`touch -m`), the change time cannot: any write
+                // updates it, so a same-size rewrite with the old mtime still changes this.
+                use std::os::unix::fs::MetadataExt;
+                h.update(
+                    format!(
+                        "size={} ino={} ctime={}.{} mtime={}.{}",
+                        meta.len(),
+                        meta.ino(),
+                        meta.ctime(),
+                        meta.ctime_nsec(),
+                        meta.mtime(),
+                        meta.mtime_nsec()
+                    )
+                    .as_bytes(),
+                );
+            }
+            Ok(meta) if meta.is_file() => {
+                // Opened without blocking and re-checked, in case it was swapped for a FIFO.
+                // The opened file's own path is checked against ROOT as well, in case a link
+                // was retargeted after the check above.
+                // The read is bounded too, in case the file grew after the size check.
+                match read_inside(root, &path, MAX_SOURCE) {
+                    Ok((_, data)) => h.update(Sha256::digest(&data)),
+                    Err(_) => h.update(b"unreadable or grew past the size bound"),
+                }
+            }
+            _ => h.update(b"absent"),
+        }
+        h.update([0]);
+    }
+    Ok((format!("sha256:{:x}", h.finalize()), outside))
+}
+
+/// Writes a new file next to `out` (already resolved to a real path by `output_path`) and renames
+/// it over `out`. On unix the directory is opened component by component from `/` without
+/// following links, and the file is created and renamed relative to that directory handle, so
+/// replacing the directory or any parent with a link after the checks cannot redirect the
+/// write; the rename replaces whatever `out` is (a link, a FIFO) instead of following it.
+fn write_replacing(out: &Path, text: &str) -> Result<(), String> {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let name = out
+        .file_name()
+        .ok_or_else(|| format!("{}: not a file path", out.display()))?;
+    let tmp = format!(
+        ".{}.{}.{nanos}.tmp",
+        name.to_string_lossy(),
+        std::process::id()
+    );
+    let dir = out.parent().unwrap_or(Path::new("/"));
+    write_in_dir(dir, &tmp, name, text.as_bytes()).map_err(|e| format!("{}: {e}", out.display()))
+}
+
+#[cfg(unix)]
+fn write_in_dir(dir: &Path, tmp: &str, name: &std::ffi::OsStr, data: &[u8]) -> std::io::Result<()> {
+    use std::{
+        ffi::CString,
+        io::Error,
+        os::{fd::FromRawFd, unix::ffi::OsStrExt},
+    };
+    let c = |s: &[u8]| CString::new(s).map_err(|_| Error::other("NUL in path"));
+    let open_dir = |at: libc::c_int, part: &[u8]| -> std::io::Result<libc::c_int> {
+        let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        // SAFETY: valid C string and descriptor; the result is checked.
+        let fd = unsafe { libc::openat(at, c(part)?.as_ptr(), flags) };
+        if fd < 0 {
+            Err(Error::last_os_error())
+        } else {
+            Ok(fd)
+        }
+    };
+    let close = |fd: libc::c_int| {
+        // SAFETY: fd was returned by openat and is closed once.
+        unsafe { libc::close(fd) };
+    };
+    if !dir.is_absolute() {
+        return Err(Error::other("output directory is not absolute"));
+    }
+    let mut fd = open_dir(libc::AT_FDCWD, b"/")?;
+    for part in dir.components().skip(1) {
+        let next = open_dir(fd, part.as_os_str().as_bytes());
+        close(fd);
+        fd = next?;
+    }
+    let result = (|| {
+        let tmp_c = c(tmp.as_bytes())?;
+        let flags =
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        // SAFETY: valid descriptor and C string; the result is checked.
+        let file_fd = unsafe { libc::openat(fd, tmp_c.as_ptr(), flags, 0o644 as libc::c_uint) };
+        if file_fd < 0 {
+            return Err(Error::last_os_error());
+        }
+        // SAFETY: file_fd is a fresh descriptor owned by this File from here on.
+        let mut file = unsafe { fs::File::from_raw_fd(file_fd) };
+        let written = file.write_all(data).and_then(|()| file.sync_all());
+        drop(file);
+        let renamed = written.and_then(|()| {
+            let name_c = c(name.as_bytes())?;
+            // SAFETY: both names are relative to the same open directory descriptor.
+            if unsafe { libc::renameat(fd, tmp_c.as_ptr(), fd, name_c.as_ptr()) } != 0 {
+                return Err(Error::last_os_error());
+            }
+            Ok(())
+        });
+        if renamed.is_err() {
+            // SAFETY: removes only the temporary name inside the same directory.
+            unsafe { libc::unlinkat(fd, tmp_c.as_ptr(), 0) };
+        }
+        renamed
+    })();
+    close(fd);
+    result
+}
+
+#[cfg(not(unix))]
+fn write_in_dir(dir: &Path, tmp: &str, name: &std::ffi::OsStr, data: &[u8]) -> std::io::Result<()> {
+    let tmp = dir.join(tmp);
+    let result = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+        .and_then(|mut f| f.write_all(data))
+        .and_then(|()| fs::rename(&tmp, dir.join(name)));
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
+}
+
+/// Resolves `--out` so that writing it cannot follow a link: an existing link is refused, and
+/// a path written inside ROOT must not leave ROOT through a linked directory.
+fn output_path(root: &Path, out: &Path) -> Result<PathBuf, String> {
+    let name = out
+        .file_name()
+        .ok_or_else(|| format!("{}: not a file path", out.display()))?;
+    let parent = match out.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    let real = parent
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", parent.display()))?
+        .join(name);
+    if fs::symlink_metadata(&real).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(format!(
+            "{} is a link; refusing to write through it",
+            out.display()
+        ));
+    }
+    let lexical = normalize(&env::current_dir().map_err(|e| e.to_string())?.join(out));
+    let lexical_root = lexical.ancestors().find_map(|a| {
+        a.canonicalize()
+            .ok()
+            .filter(|c| c == root)
+            .map(|_| a.to_path_buf())
+    });
+    if lexical_root.is_some() && !real.starts_with(root) {
+        return Err(format!("{} leaves ROOT through a link", out.display()));
+    }
+    Ok(real)
+}
+/// Files changed from BASE to the working tree: commits BASE..HEAD (tree comparison, no working
+/// tree file read) plus the working tree changes `dirty_paths` finds without filters.
+fn changed_since(root: &Path, base: &str) -> Result<Vec<String>, String> {
+    let mut paths = nul_list(git(
+        root,
+        &[
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--name-only",
+            "--relative",
+            "-z",
+            "--end-of-options",
+            base,
+            "HEAD",
+            "--",
+        ],
+    )?)?;
+    paths.extend(dirty_paths(root)?);
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+/// Relative path from `base` to `path` when `path` is inside `base`.
+/// The links inside ROOT that the OS follows to open `path` (ROOT-relative, in order; a link's
+/// own target path is walked too). An analyzer that resolved a file through a link records them
+/// in `read`, so retargeting a link changes the input fingerprint even when no file changed.
+pub(crate) fn links_followed(root: &Path, path: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    follow(root, path, &mut out, 0);
+    out
+}
+fn follow(root: &Path, path: &Path, out: &mut Vec<String>, depth: usize) {
+    let Ok(rest) = path.strip_prefix(root) else {
+        return;
+    };
+    let mut cur = root.to_path_buf();
+    for c in rest.components() {
+        match c {
+            Component::Normal(n) => {
+                cur.push(n);
+                if !fs::symlink_metadata(&cur).is_ok_and(|m| m.file_type().is_symlink()) {
+                    continue;
+                }
+                let Some(rel) = relative(root, &cur) else {
+                    return;
+                };
+                out.push(rel);
+                if depth >= 40 {
+                    return;
+                }
+                if let (Ok(target), Some(parent)) = (fs::read_link(&cur), cur.parent()) {
+                    follow(root, &parent.join(target), out, depth + 1);
+                }
+                match cur.canonicalize() {
+                    Ok(real) if real.starts_with(root) => cur = real,
+                    _ => return,
+                }
+            }
+            Component::ParentDir if !cur.pop() || !cur.starts_with(root) => return,
+            _ => {}
+        }
+    }
+}
+
+pub(crate) fn relative(base: &Path, path: &Path) -> Option<String> {
+    let rel = path.strip_prefix(base).ok()?;
+    let parts: Vec<_> = rel
+        .components()
+        .map(|c| c.as_os_str().to_str())
+        .collect::<Option<_>>()?;
+    Some(parts.join("/"))
+}
+/// Lexically normalize `a/b/../c` without touching the file system.
+pub(crate) fn normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Checks without opening (a FIFO would block on open) that `path` resolves to a regular file
+/// inside ROOT (canonical) within MAX_SOURCE, and returns the resolved path.
+pub(crate) fn check_source(root: &Path, path: &Path) -> Result<PathBuf, String> {
+    let shown = || relative(root, path).unwrap_or_else(|| path.display().to_string());
+    let real = path
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", shown()))?;
+    if !real.starts_with(root) {
+        return Err(format!("{} resolves outside ROOT", shown()));
+    }
+    let meta = fs::metadata(&real).map_err(|e| format!("{}: {e}", shown()))?;
+    if !meta.is_file() {
+        return Err(format!("{} is not a regular file", shown()));
+    }
+    if meta.len() > MAX_SOURCE {
+        return Err(format!("{} is larger than {MAX_SOURCE} bytes", shown()));
+    }
+    Ok(real)
+}
+/// Largest source file an analyzer reads.
+pub(crate) const MAX_SOURCE: u64 = 8 << 20;
+/// Reads a source file that resolves to a regular file inside ROOT (canonical), within MAX_SOURCE.
+/// Returns its canonical path with the text, so links cannot pull in files outside ROOT or devices.
+pub(crate) fn read_source(root: &Path, path: &Path) -> Result<(PathBuf, String), String> {
+    let (real, data) = read_inside(root, path, MAX_SOURCE)?;
+    let text = String::from_utf8(data).map_err(|_| {
+        format!(
+            "{} is not UTF-8",
+            relative(root, path).unwrap_or_else(|| path.display().to_string())
+        )
+    })?;
+    Ok((real, text))
+}
+
+/// Reads a regular file inside ROOT of at most `limit` bytes. The path is checked first, then
+/// the file is opened without blocking, and the path of the opened file itself (not the path
+/// that was checked) must still be inside ROOT: a file or parent replaced by a link out of ROOT
+/// between the check and the open is refused.
+pub(crate) fn read_inside(
+    root: &Path,
+    path: &Path,
+    limit: u64,
+) -> Result<(PathBuf, Vec<u8>), String> {
+    let shown = || relative(root, path).unwrap_or_else(|| path.display().to_string());
+    let real = path
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", shown()))?;
+    if !real.starts_with(root) {
+        return Err(format!("{} resolves outside ROOT", shown()));
+    }
+    let file = open_regular(&real).map_err(|e| format!("{}: {e}", shown()))?;
+    match opened_path(&file) {
+        Ok(opened) if opened.starts_with(root) => {}
+        Ok(_) => return Err(format!("{} was replaced by a link out of ROOT", shown())),
+        Err(e) => return Err(format!("{}: cannot confirm the opened file: {e}", shown())),
+    }
+    let mut data = Vec::new();
+    file.take(limit + 1)
+        .read_to_end(&mut data)
+        .map_err(|e| format!("{}: {e}", shown()))?;
+    if data.len() as u64 > limit {
+        return Err(format!("{} is larger than {limit} bytes", shown()));
+    }
+    Ok((real, data))
+}
+
+/// The path of an open file as the kernel reports it.
+#[cfg(target_os = "macos")]
+fn opened_path(file: &fs::File) -> std::io::Result<PathBuf> {
+    use std::os::{fd::AsRawFd, unix::ffi::OsStrExt};
+    let mut buf = vec![0u8; libc::PATH_MAX as usize];
+    // SAFETY: F_GETPATH writes a NUL-terminated path of at most PATH_MAX bytes into buf.
+    if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETPATH, buf.as_mut_ptr()) } == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+    Ok(PathBuf::from(std::ffi::OsStr::from_bytes(&buf[..end])))
+}
+#[cfg(target_os = "linux")]
+fn opened_path(file: &fs::File) -> std::io::Result<PathBuf> {
+    use std::os::fd::AsRawFd;
+    fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))
+}
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn opened_path(_: &fs::File) -> std::io::Result<PathBuf> {
+    Err(std::io::Error::other("not supported on this platform"))
+}
+
+pub(crate) struct TempDir(pub(crate) PathBuf);
+impl TempDir {
+    pub(crate) fn new(tag: &str) -> Result<Self, String> {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir =
+            env::temp_dir().join(format!("taeguk-graph-{tag}-{}-{nanos}", std::process::id()));
+        // Owner-only from creation: copies of the target's sources are written here.
+        let mut builder = fs::DirBuilder::new();
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        builder.create(&dir).map_err(|e| e.to_string())?;
+        Ok(TempDir(dir))
+    }
+}
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn detect(root: &Path, files: &[String]) -> Vec<String> {
+    let mut langs = Vec::new();
+    for (lang, marker) in [
+        ("elixir", "mix.exs"),
+        ("go", "go.mod"),
+        ("rust", "Cargo.toml"),
+    ] {
+        if root.join(marker).is_file() {
+            langs.push(lang.to_string());
+        }
+    }
+    if files.iter().any(|f| f.ends_with(".py")) {
+        langs.push("python".into());
+    }
+    langs.sort();
+    langs
+}
+
+/// Runs one analyzer in this process (`graph __analyze LANG ROOT`, used by `isolated`).
+fn analyze(root: &Path, lang: &str) -> Result<(Analyzer, Result<Partial, String>), String> {
+    let files = tracked(root)?;
+    Ok(match lang {
+        "elixir" => elixir::analyze(root, &files),
+        "go" => go::analyze(root),
+        "python" => python::analyze(root, &files),
+        "rust" => rust::analyze(root),
+        other => return Err(format!("unsupported language: {other}")),
+    })
+}
+
+/// Runs one analyzer as a child process of this binary, in its own process group, with a time
+/// bound. Whatever the input does to a parser or external tool (a crash such as stack
+/// exhaustion, or a wait that never ends), the result is that analyzer's FAIL, not a crashed or
+/// stuck CLI. The group is killed on timeout so tools it started (cargo, go, mix) end too.
+fn isolated(root: &Path, lang: &str) -> (Analyzer, Result<Partial, String>) {
+    let failed = |e: String| (Analyzer::new(lang, "-", &[]), Err(e));
+    let exe = match env::current_exe() {
+        Ok(exe) => exe,
+        Err(e) => return failed(format!("cannot locate taeguk executable: {e}")),
+    };
+    // The analyzer and the tools it runs keep their temporary files in a directory this process
+    // owns and removes, so nothing is left behind when the analyzer is killed on timeout.
+    let scratch = match TempDir::new(&format!("{lang}-run")) {
+        Ok(dir) => dir,
+        Err(e) => return failed(format!("cannot create a temporary directory: {e}")),
+    };
+    let mut cmd = Command::new(exe);
+    cmd.env("TMPDIR", &scratch.0)
+        .env(IN_ANALYZER, "1")
+        .args(["graph", "__analyze", lang])
+        .arg(root);
+    let o = match exec(&mut cmd) {
+        Ok(o) => o,
+        Err(e) => return failed(format!("analyzer process: {e}")),
+    };
+    let (out, err) = (o.stdout, o.stderr);
+    let reply: Option<Value> = serde_json::from_slice(&out).ok();
+    let parsed = reply.and_then(|v| {
+        let a: Analyzer = serde_json::from_value(v.get("analyzer")?.clone()).ok()?;
+        let result = match (v.get("partial"), v.get("error")) {
+            (Some(p), _) if !p.is_null() => Ok(serde_json::from_value(p.clone()).ok()?),
+            (_, Some(Value::String(e))) => Err(e.clone()),
+            _ => return None,
+        };
+        Some((a, result))
+    });
+    match parsed {
+        Some(r) if o.code == Some(0) => r,
+        _ => {
+            let tail: String = err.lines().rev().take(3).collect::<Vec<_>>().join(" | ");
+            failed(format!(
+                "analyzer process exited abnormally (exit code {:?}): {tail}",
+                o.code
+            ))
+        }
+    }
+}
+
+fn digest(g: &Graph) -> String {
+    let body = json!({"schema": g.schema, "commit": g.commit, "dirty": g.dirty,
+        "dirty_paths": g.dirty_paths, "read": g.read, "inputs": g.inputs, "status": g.status, "analyzers": g.analyzers,
+        "nodes": g.nodes, "edges": g.edges, "gaps": g.gaps});
+    format!("sha256:{:x}", Sha256::digest(body.to_string().as_bytes()))
+}
+
+fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", root.display()))?;
+    let commit = head(&root)?;
+    let files = tracked(&root)?;
+    let dirty_paths = dirty_paths(&root)?;
+    let langs = if langs.is_empty() {
+        detect(&root, &files)
+    } else {
+        langs.to_vec()
+    };
+    if langs.is_empty() {
+        return Err("no supported language detected; pass --lang".into());
+    }
+    let (mut analyzers, mut nodes, mut edges, mut gaps) = (vec![], vec![], vec![], vec![]);
+    let mut read: Vec<String> = vec![];
+    let out = output_path(&root, out)?;
+    let scanned = scan_root(&root, &files, &langs);
+    // The state of every entry under ROOT before the tools run; compared after they finish.
+    let before = tree_state(&root, &langs);
+    for lang in &langs {
+        if let Err(e) = &scanned {
+            // No tool runs once the scan fails; the version stays unknown.
+            let mut a = Analyzer::new(lang, "-", &[]);
+            a.error = Some(format!("ROOT scan: {e}"));
+            analyzers.push(a);
+            continue;
+        }
+        if !LANGS.contains(&lang.as_str()) {
+            return Err(format!("unsupported language: {lang}"));
+        }
+        let (mut a, result) = isolated(&root, lang);
+        match result {
+            Ok(p) => {
+                a.status = "PASS".into();
+                nodes.extend(p.nodes);
+                edges.extend(p.edges);
+                gaps.extend(p.gaps);
+                read.extend(p.read);
+            }
+            // A failed analyzer contributes nothing so a partial graph is never presented as complete.
+            Err(e) => {
+                a.status = "FAIL".into();
+                a.error = Some(e);
+            }
+        }
+        analyzers.push(a);
+    }
+    read.sort();
+    read.dedup();
+    if let Some(r) = read.iter().find(|r| !plain_relative(r)) {
+        return Err(format!(
+            "an analyzer reported a read path that is not a plain ROOT-relative path: {r:?}"
+        ));
+    }
+    let known: BTreeSet<_> = nodes.iter().map(|n| n.id.clone()).collect();
+    edges.retain(|e| e.from != e.to && known.contains(&e.from) && known.contains(&e.to));
+    nodes.sort();
+    nodes.dedup_by(|a, b| a.id == b.id);
+    edges.sort();
+    edges.dedup();
+    gaps.sort();
+    gaps.dedup();
+    // go and cargo read files themselves, after the ROOT checks and before the checks of what
+    // they report. A file swapped for a link out of ROOT in between and swapped back would
+    // leave no trace in the paths, but it does in the inode change time, which no user can
+    // set back: any change under ROOT while the tools ran fails every analyzer.
+    // The fingerprint is taken before the second state check, so an edit made while the
+    // analyzers ran or while the inputs were hashed (an editor saving during build) shows up
+    // there too instead of pairing old results with new input hashes.
+    let inputs = if scanned.is_ok() {
+        let (inputs, outside) = input_fingerprint(&root, &langs, &read)?;
+        // An input linked out of ROOT may have been read by a tool; no analyzer result is kept.
+        if let Some(first) = outside.first() {
+            for a in analyzers.iter_mut().filter(|a| a.status == "PASS") {
+                a.status = "FAIL".into();
+                a.error = Some(format!(
+                    "analyzer input {first} resolves outside ROOT ({} such inputs)",
+                    outside.len()
+                ));
+            }
+            nodes.clear();
+            edges.clear();
+            gaps.clear();
+        }
+        inputs
+    } else {
+        String::new()
+    };
+    let changed = match (&before, tree_state(&root, &langs)) {
+        (Ok(before), Ok(after)) => after.changed_from(before),
+        (Err(e), _) => Some(format!("its state could not be recorded: {e}")),
+        (_, Err(e)) => Some(format!("its state could not be recorded: {e}")),
+    };
+    if scanned.is_ok()
+        && let Some(changed) = changed
+    {
+        // Every analyzer, also one that already failed: its message may quote what a tool read
+        // while ROOT was in the changed state.
+        for a in analyzers.iter_mut() {
+            a.status = "FAIL".into();
+            a.error = Some(format!(
+                "ROOT changed while the graph was built ({changed}); build again"
+            ));
+        }
+        nodes.clear();
+        edges.clear();
+        gaps.clear();
+    }
+    let status = if analyzers.iter().all(|a| a.status == "PASS") {
+        "PASS"
+    } else {
+        "FAIL"
+    };
+    let mut g = Graph {
+        schema: SCHEMA.into(),
+        root: root.display().to_string(),
+        commit,
+        dirty: !dirty_paths.is_empty(),
+        dirty_paths,
+        inputs,
+        read,
+        generated_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+        status: status.into(),
+        analyzers,
+        nodes,
+        edges,
+        gaps,
+        digest: String::new(),
+    };
+    g.digest = digest(&g);
+    let text = serde_json::to_string_pretty(&g).map_err(|e| e.to_string())?;
+    write_replacing(&out, &(text + "\n"))?;
+    Ok(
+        json!({"status": g.status, "out": out.display().to_string(), "digest": g.digest,
+        "commit": g.commit, "dirty": g.dirty, "nodes": g.nodes.len(), "edges": g.edges.len(),
+        "gaps": g.gaps.len(), "analyzers": g.analyzers}),
+    )
+}
+
+/// Inode, change time, modification time, size and mode of every entry the ROOT walk visits
+/// (what the tools may read: links not followed, `.git` and unread build output left out),
+/// keyed by ROOT-relative path; `.` is ROOT itself.
+struct TreeState(BTreeMap<String, [i64; 7]>);
+fn tree_state(root: &Path, langs: &[String]) -> Result<TreeState, String> {
+    use std::os::unix::fs::MetadataExt;
+    let stat = |path: &Path| {
+        fs::symlink_metadata(path).map(|m| {
+            [
+                m.ino() as i64,
+                m.ctime(),
+                m.ctime_nsec(),
+                m.mtime(),
+                m.mtime_nsec(),
+                m.size() as i64,
+                m.mode() as i64,
+            ]
+        })
+    };
+    let mut map = BTreeMap::new();
+    map.insert(".".into(), stat(root).map_err(|e| e.to_string())?);
+    walk(root, langs, |rel, path, kind, _| {
+        if let Ok(s) = stat(path) {
+            map.insert(rel.to_string(), s);
+        }
+        Ok(kind.is_dir())
+    })?;
+    Ok(TreeState(map))
+}
+impl TreeState {
+    /// The first path that differs (added, removed or changed), if any.
+    fn changed_from(&self, before: &TreeState) -> Option<String> {
+        self.0
+            .iter()
+            .find(|(k, v)| before.0.get(*k) != Some(v))
+            .or_else(|| before.0.iter().find(|(k, _)| !self.0.contains_key(*k)))
+            .map(|(k, _)| k.clone())
+    }
+}
+
+/// Largest graph file read.
+const MAX_GRAPH: u64 = 256 << 20;
+
+/// Reads a graph file. The graph is input like any other: it must be a regular file within
+/// MAX_GRAPH (checked before opening, so a FIFO cannot block and a device cannot be read
+/// endlessly), and its structure is validated, because the digest is a plain hash anyone can
+/// recompute, not a signature.
+fn read_graph(path: &Path) -> Result<Graph, String> {
+    let shown = || path.display().to_string();
+    let meta = fs::metadata(path).map_err(|e| format!("{}: {e}", shown()))?;
+    if !meta.is_file() || meta.len() > MAX_GRAPH {
+        return Err(format!(
+            "{}: a graph must be a regular file of at most {MAX_GRAPH} bytes",
+            shown()
+        ));
+    }
+    let mut data = Vec::new();
+    open_regular(path)
+        .and_then(|f| f.take(MAX_GRAPH + 1).read_to_end(&mut data))
+        .map_err(|e| format!("{}: {e}", shown()))?;
+    if data.len() as u64 > MAX_GRAPH {
+        return Err(format!("{}: larger than {MAX_GRAPH} bytes", shown()));
+    }
+    let g: Graph = serde_json::from_slice(&data).map_err(|e| e.to_string())?;
+    if g.schema != SCHEMA {
+        return Err(format!("unsupported graph schema: {}", g.schema));
+    }
+    if digest(&g) != g.digest {
+        return Err("graph digest does not match its content".into());
+    }
+    // `read` names files impact hashes again: only plain ROOT-relative paths.
+    if let Some(r) = g.read.iter().find(|r| !plain_relative(r)) {
+        return Err(format!(
+            "graph read path is not a plain ROOT-relative path: {r:?}"
+        ));
+    }
+    let ids: BTreeSet<&str> = g.nodes.iter().map(|n| n.id.as_str()).collect();
+    if ids.len() != g.nodes.len() {
+        return Err("graph has duplicate node ids".into());
+    }
+    if let Some(e) = g
+        .edges
+        .iter()
+        .find(|e| !ids.contains(e.from.as_str()) || !ids.contains(e.to.as_str()))
+    {
+        return Err(format!(
+            "graph edge {} -> {} refers to an unknown node",
+            e.from, e.to
+        ));
+    }
+    Ok(g)
+}
+
+/// `a/b`, `a/b/` (a tree) or `./` (the ROOT tree): no absolute path, empty, `.` or `..`
+/// component otherwise. build checks what it records against this too, so impact never refuses
+/// a graph build wrote.
+fn plain_relative(r: &str) -> bool {
+    if r == "./" {
+        return true;
+    }
+    let body = r.strip_suffix('/').unwrap_or(r);
+    !body.is_empty()
+        && !body.contains('\0')
+        && body
+            .split('/')
+            .all(|c| !c.is_empty() && c != "." && c != "..")
+}
+
+fn impact(
+    g: &Graph,
+    root: &Path,
+    head: &str,
+    worktree_dirty: bool,
+    inputs: &str,
+    changed: &[String],
+    depth: Option<usize>,
+) -> Value {
+    // The graph is a structure-analysis aid, not a completeness proof: impact lists the static
+    // dependents it found and warns when the graph may not describe the current tree.
+    let mut reasons = Vec::new();
+    // Paths are ROOT-relative, so a graph of another directory must not be reused.
+    if root.display().to_string() != g.root {
+        reasons.push("graph_root_differs");
+    }
+    if g.analyzers
+        .iter()
+        .any(|a| a.version.is_none() || tool_version(&a.lang) != a.version)
+    {
+        reasons.push("analyzer_version_changed_or_unknown");
+    }
+    if g.status != "PASS" {
+        reasons.push("graph_status_not_pass");
+    }
+    if g.commit != head {
+        reasons.push("graph_commit_differs_from_head");
+    }
+    if g.dirty {
+        reasons.push("graph_built_from_dirty_tree");
+    }
+    // Uncommitted edits can add or drop imports the graph of HEAD does not have.
+    if worktree_dirty {
+        reasons.push("working_tree_differs_from_head");
+    }
+    // Files the analyzers read but git does not track (ignored sources) can change too.
+    if g.inputs != inputs {
+        reasons.push("analyzer_inputs_changed");
+    }
+    let mut owner: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for n in &g.nodes {
+        for f in &n.files {
+            owner.entry(f.as_str()).or_default().push(n.id.as_str());
+        }
+    }
+    let mut reverse: BTreeMap<&str, Vec<&Edge>> = BTreeMap::new();
+    for e in &g.edges {
+        reverse.entry(e.to.as_str()).or_default().push(e);
+    }
+    let mut dist: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut queue = VecDeque::new();
+    let mut unmapped = Vec::new();
+    for f in changed {
+        match owner.get(f.as_str()) {
+            Some(ids) => {
+                for id in ids {
+                    if dist.insert(id, 0).is_none() {
+                        queue.push_back(*id);
+                    }
+                }
+            }
+            None => unmapped.push(f.clone()),
+        }
+    }
+    if !unmapped.is_empty() {
+        reasons.push("changed_files_not_in_graph");
+    }
+    while let Some(id) = queue.pop_front() {
+        let d = dist[id];
+        if depth.is_some_and(|max| d >= max) {
+            continue;
+        }
+        for e in reverse.get(id).into_iter().flatten() {
+            if !dist.contains_key(e.from.as_str()) {
+                dist.insert(&e.from, d + 1);
+                queue.push_back(&e.from);
+            }
+        }
+    }
+    let by_id: BTreeMap<_, _> = g.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+    // A gap marks a file whose dependencies static analysis could not fully resolve, so it may
+    // depend on an impacted file without an edge: those outside the impacted set are listed as
+    // places worth a look.
+    let impacted_files: BTreeSet<&str> = dist
+        .keys()
+        .flat_map(|id| by_id[id].files.iter().map(String::as_str))
+        .chain(unmapped.iter().map(String::as_str))
+        .collect();
+    let check_also: Vec<&Gap> = g
+        .gaps
+        .iter()
+        .filter(|gap| {
+            gap.file
+                .as_deref()
+                .is_none_or(|f| !impacted_files.contains(f))
+        })
+        .collect();
+    let mut impacted: Vec<_> = dist.iter().map(|(id, d)| (*d, *id)).collect();
+    impacted.sort();
+    let impacted: Vec<Value> = impacted
+        .into_iter()
+        .map(|(d, id)| json!({"id": id, "distance": d, "files": by_id[id].files}))
+        .collect();
+    json!({"warnings": reasons, "graph_digest": g.digest, "graph_commit": g.commit,
+        "head": head, "changed": changed, "unmapped": unmapped, "depth_limit": depth,
+        "impacted": impacted, "check_also": check_also, "gaps": g.gaps,
+        "notes": ["a structure-analysis aid: impacted lists the static dependents the language tools show",
+            "check_also lists sites static analysis could not resolve outside the impacted files; they may depend on the changed files too",
+            "runtime, configuration, data and dynamic dispatch paths are not included",
+            "warnings say the graph may not describe the current tree (stale, dirty, failed analyzer, unmapped file); rebuild it"]})
+}
+
+fn usage() -> String {
+    "usage: taeguk graph build ROOT --out GRAPH.json [--lang elixir|go|python|rust]... | taeguk graph impact GRAPH.json ROOT (--changed PATH... | --git-diff BASE) [--depth N]".into()
+}
+
+pub(crate) fn run(args: &[String]) -> Result<Value, String> {
+    match args {
+        [cmd, lang, root] if cmd == "__analyze" => {
+            let (a, result) = analyze(Path::new(root), lang)?;
+            let (partial, error) = match result {
+                Ok(p) => (Some(p), None),
+                Err(e) => (None, Some(e)),
+            };
+            Ok(json!({"analyzer": a, "partial": partial, "error": error}))
+        }
+        [cmd, root, rest @ ..] if cmd == "build" => {
+            let (mut out, mut langs) = (None, vec![]);
+            let mut it = rest.iter();
+            while let Some(flag) = it.next() {
+                let value = it.next().ok_or_else(usage)?;
+                match flag.as_str() {
+                    "--out" => out = Some(PathBuf::from(value)),
+                    "--lang" if LANGS.contains(&value.as_str()) => langs.push(value.clone()),
+                    _ => return Err(usage()),
+                }
+            }
+            langs.sort();
+            langs.dedup();
+            build(Path::new(root), &langs, &out.ok_or_else(usage)?)
+        }
+        [cmd, graph, root, rest @ ..] if cmd == "impact" => {
+            let g = read_graph(Path::new(graph))?;
+            let root = Path::new(root)
+                .canonicalize()
+                .map_err(|e| format!("{root}: {e}"))?;
+            let root = root.as_path();
+            let (mut changed, mut base, mut depth) = (vec![], None, None);
+            let mut it = rest.iter().peekable();
+            while let Some(flag) = it.next() {
+                match flag.as_str() {
+                    "--changed" => {
+                        while let Some(p) = it.next_if(|a| !a.starts_with("--")) {
+                            let norm = normalize(Path::new(p));
+                            if norm.is_absolute() || p.split('/').any(|c| c == "..") {
+                                return Err(format!("changed path must be relative to ROOT: {p}"));
+                            }
+                            changed.push(norm.to_string_lossy().into_owned());
+                        }
+                    }
+                    "--git-diff" => base = Some(it.next().ok_or_else(usage)?.clone()),
+                    "--depth" => {
+                        depth = Some(it.next().and_then(|d| d.parse().ok()).ok_or_else(usage)?)
+                    }
+                    _ => return Err(usage()),
+                }
+            }
+            match (changed.is_empty(), base) {
+                (false, None) => {}
+                (true, Some(b)) => changed = changed_since(root, &b)?,
+                _ => return Err(usage()),
+            }
+            changed.sort();
+            changed.dedup();
+            let dirty = !dirty_paths(root)?.is_empty();
+            let langs: Vec<String> = g.analyzers.iter().map(|a| a.lang.clone()).collect();
+            let inputs = input_fingerprint(root, &langs, &g.read)
+                .map(|(inputs, _)| inputs)
+                .unwrap_or_default();
+            Ok(impact(
+                &g,
+                root,
+                &head(root)?,
+                dirty,
+                &inputs,
+                &changed,
+                depth,
+            ))
+        }
+        _ => Err(usage()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn temporary_directories_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = super::TempDir::new("mode").unwrap();
+        let mode = std::fs::metadata(&dir.0).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn swapping_a_file_out_and_back_is_seen() {
+        use std::fs;
+        // A tool could read `go.mod` while it is a link out of ROOT; putting the same file back
+        // afterwards still changes the change times of the file and its directory.
+        let dir = super::TempDir::new("state").unwrap();
+        let root = dir.0.canonicalize().unwrap();
+        assert!(
+            std::process::Command::new("git")
+                .args(["init", "-q"])
+                .arg(&root)
+                .env_remove("GIT_DIR")
+                .env_remove("GIT_WORK_TREE")
+                .status()
+                .unwrap()
+                .success()
+        );
+        fs::write(root.join("go.mod"), "module example.com/m\n").unwrap();
+        fs::write(root.join("outside.mod"), "module corp.example/x\n").unwrap();
+        let langs = vec!["go".to_string()];
+        let before = super::tree_state(&root, &langs).unwrap();
+        assert_eq!(
+            super::tree_state(&root, &langs)
+                .unwrap()
+                .changed_from(&before),
+            None
+        );
+        fs::rename(root.join("go.mod"), root.join("saved")).unwrap();
+        std::os::unix::fs::symlink(root.join("outside.mod"), root.join("go.mod")).unwrap();
+        fs::remove_file(root.join("go.mod")).unwrap();
+        fs::rename(root.join("saved"), root.join("go.mod")).unwrap();
+        let changed = super::tree_state(&root, &langs)
+            .unwrap()
+            .changed_from(&before);
+        assert!(changed.is_some());
+    }
+}
