@@ -4,7 +4,7 @@ Address the user as BOSS. Answer BOSS in Korean, and write human-facing document
 
 Use Elixir for the web app and API. Use SQLite for Taeguk local workflow state. Use Python for installation and automation scripts; Rust for CLI logic and complex option handling. Do not add a second backend stack.
 
-Before repository implementation or tracked documentation edits, apply the `worktree-first-dev` skill (`~/.codex/skills/worktree-first-dev/SKILL.md` when installed; it is not bundled here). Without it, create a dedicated `git worktree` and `<type>/<slug>` branch from the verified base before editing. Reuse the worktree assigned to the same task. Preserve unrelated changes.
+Before repository implementation or tracked documentation edits, create a dedicated `git worktree` and task branch per DEV-003 (`docs/rules/development.md`). The `worktree-first-dev` skill (`~/.codex/skills/worktree-first-dev/SKILL.md`, not bundled) adds detailed steps when installed. Preserve unrelated changes.
 
 Read `docs/rules/index.md` and applicable rules before planning. Rule bodies in `docs/rules/` are canonical; `registry.toml` records identity, version, status and approval references. Research archive proposals are not active rules.
 
