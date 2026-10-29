@@ -1125,6 +1125,7 @@ fn impact_follows_reverse_edges_and_reports_limits() {
             "tests/test_builtins.py",
             "tests/test_cond.py",
             "tests/test_exec.py",
+            "tests/test_file.py",
             "tests/test_fromexec.py",
             "tests/test_helper.py",
             "tests/test_nested.py",
@@ -1133,6 +1134,7 @@ fn impact_follows_reverse_edges_and_reports_limits() {
             "tests/test_paths.py",
             "tests/test_reload.py",
             "tests/test_shadow.py",
+            "tests/test_unpack.py",
             "tests/test_wild.py"
         ]
     );
@@ -1309,6 +1311,55 @@ fn impact_rejects_other_roots_and_tool_versions() {
     let v = impact(&w, &["--changed", "scripts/helper.py"]);
     assert_eq!(v["status"], "UNKNOWN");
     assert_eq!(other_reasons(&v), ["analyzer_version_changed_or_unknown"]);
+}
+
+#[test]
+fn graph_input_is_checked_before_use() {
+    if !available("python3", "--version") {
+        return;
+    }
+    let w = work("python");
+    build(&w, "python");
+    // A FIFO or device given as the graph is refused before it is opened.
+    let fifo = w.0.join("fifo.json");
+    assert!(
+        Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let (ok, v) = taeguk(&[
+        "graph",
+        "impact",
+        fifo.to_str().unwrap(),
+        w.repo().to_str().unwrap(),
+        "--changed",
+        "common.py",
+    ]);
+    assert!(!ok);
+    assert!(v["error"].as_str().unwrap().contains("regular file"), "{v}");
+    // An edge to an unknown node is an error, not a crash, even with a recomputed digest.
+    let mut g: Value = serde_json::from_slice(&fs::read(w.graph()).unwrap()).unwrap();
+    g["edges"].as_array_mut().unwrap().push(
+        serde_json::json!({"from": "python:ghost.py", "to": "python:common.py", "kind": "import"}),
+    );
+    fs::write(w.graph(), serde_json::to_string(&g).unwrap()).unwrap();
+    with_version(&w.graph(), g["analyzers"][0]["version"].as_str().unwrap());
+    let o = Command::new(env!("CARGO_BIN_EXE_taeguk"))
+        .args(["graph", "impact"])
+        .arg(w.graph())
+        .arg(w.repo())
+        .args(["--changed", "common.py"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        o.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert!(String::from_utf8_lossy(&o.stderr).contains("unknown node"));
 }
 
 #[test]

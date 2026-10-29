@@ -63,7 +63,7 @@ end
 /// variable, a module attribute, a parenthesized expression, map field access, which looks the
 /// same) is a gap, and so are `apply`, `Kernel.apply`, `:erlang.apply`, `Module.concat`,
 /// `Module.safe_concat`, `String.to_atom` and `String.to_existing_atom`, also through `alias ...,
-/// as:` or as imported local calls. A file that does not
+/// as:`, as imported local calls or as captures; so is every anonymous call `f.(...)`. A file that does not
 /// parse is a gap as a whole. Files arrive on stdin, one `ROOT-relative\tabsolute` per line, so
 /// no repository file name is ever a command-line argument.
 const SCAN: &str = r##"
@@ -176,11 +176,16 @@ for line <- String.split(IO.read(:stdio, :eof), "\n", trim: true),
             true -> :ok
           end
           node
-        # Local calls that `import Kernel/Module/String` make dynamic: `apply`, `concat`,
-        # `safe_concat`, `to_atom`, `to_existing_atom`.
+        # An anonymous function call `f.(...)` runs whatever `f` holds (`&apply/3`, a closure
+        # over a runtime module), which is not known here.
+        {{:., meta, [_callee]}, _, args} = node when is_list(args) ->
+          gap.(rel, meta[:line], "anonymous function call; its target is not known")
+          node
+        # Local calls (and captures such as `&apply/3`) that `import Kernel/Module/String` make
+        # dynamic: `apply`, `concat`, `safe_concat`, `to_atom`, `to_existing_atom`.
         {name, meta, args} = node
         when name in [:apply, :concat, :safe_concat, :to_atom, :to_existing_atom] and
-               is_list(args) ->
+               (is_list(args) or is_atom(args)) ->
           gap.(rel, meta[:line], "#{name} may pick its module at runtime")
           node
         node ->

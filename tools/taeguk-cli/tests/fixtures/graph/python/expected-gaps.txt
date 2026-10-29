@@ -19,3 +19,5 @@ python sys_path_unresolved tests/test_shadow.py
 python dynamic_import src/app/wilduser.py
 python sys_path_unresolved plug/run.py
 python sys_path_unresolved tests/test_wild.py
+python sys_path_unresolved tests/test_unpack.py
+python sys_path_unresolved tests/test_file.py

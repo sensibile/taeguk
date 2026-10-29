@@ -973,14 +973,49 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
     )
 }
 
+/// Largest graph file read.
+const MAX_GRAPH: u64 = 256 << 20;
+
+/// Reads a graph file. The graph is input like any other: it must be a regular file within
+/// MAX_GRAPH (checked before opening, so a FIFO cannot block and a device cannot be read
+/// endlessly), and its structure is validated, because the digest is a plain hash anyone can
+/// recompute, not a signature.
 fn read_graph(path: &Path) -> Result<Graph, String> {
-    let data = fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let shown = || path.display().to_string();
+    let meta = fs::metadata(path).map_err(|e| format!("{}: {e}", shown()))?;
+    if !meta.is_file() || meta.len() > MAX_GRAPH {
+        return Err(format!(
+            "{}: a graph must be a regular file of at most {MAX_GRAPH} bytes",
+            shown()
+        ));
+    }
+    let mut data = Vec::new();
+    fs::File::open(path)
+        .and_then(|f| f.take(MAX_GRAPH + 1).read_to_end(&mut data))
+        .map_err(|e| format!("{}: {e}", shown()))?;
+    if data.len() as u64 > MAX_GRAPH {
+        return Err(format!("{}: larger than {MAX_GRAPH} bytes", shown()));
+    }
     let g: Graph = serde_json::from_slice(&data).map_err(|e| e.to_string())?;
     if g.schema != SCHEMA {
         return Err(format!("unsupported graph schema: {}", g.schema));
     }
     if digest(&g) != g.digest {
         return Err("graph digest does not match its content".into());
+    }
+    let ids: BTreeSet<&str> = g.nodes.iter().map(|n| n.id.as_str()).collect();
+    if ids.len() != g.nodes.len() {
+        return Err("graph has duplicate node ids".into());
+    }
+    if let Some(e) = g
+        .edges
+        .iter()
+        .find(|e| !ids.contains(e.from.as_str()) || !ids.contains(e.to.as_str()))
+    {
+        return Err(format!(
+            "graph edge {} -> {} refers to an unknown node",
+            e.from, e.to
+        ));
     }
     Ok(g)
 }

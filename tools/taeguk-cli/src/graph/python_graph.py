@@ -133,8 +133,10 @@ def path_bindings(tree, shadowed):
             other.add(node.arg)
         elif isinstance(node, (ast.Global, ast.Nonlocal)):
             other.update(node.names)
+    CTX["file_rebound"] = "__file__" in other
     # A wildcard import (`from helper import *`) can rebind any name, so no binding is trusted.
     if any(isinstance(n, ast.ImportFrom) and any(a.name == "*" for a in n.names) for n in ast.walk(tree)):
+        CTX["file_rebound"] = True
         return {}, {}
     funcs = {k: v for k, v in funcs.items() if k not in other}
     modules = {k: v for k, v in modules.items() if k not in other}
@@ -179,6 +181,9 @@ def eval_path(node, path, env):
     """Repository-relative path parts for common `__file__`-based path expressions."""
     if isinstance(node, ast.Name):
         if node.id == "__file__":
+            # A module that rebinds __file__ anywhere no longer means its own path by it.
+            if CTX.get("file_rebound"):
+                raise Unresolved("__file__ is reassigned in this module")
             return norm(path.split("/"))
         if node.id in env:
             return env[node.id]
@@ -375,10 +380,11 @@ def sys_path_changes(tree, path, sys_names):
             else:
                 env.pop(name, None)
         else:
+            # Any other binding (tuple unpacking, augmented or annotated assignment, `for`,
+            # `with ... as`, walrus, `del`) leaves the name's value unknown.
             for node in ast.walk(stmt):
-                for t in getattr(node, "targets", None) or [getattr(node, "target", None)]:
-                    if isinstance(t, ast.Name):
-                        env.pop(t.id, None)
+                if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+                    env.pop(node.id, None)
     for stmt in later:
         changes(stmt, env, True)
     return front, back, unresolved
