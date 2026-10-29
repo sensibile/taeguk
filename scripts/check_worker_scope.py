@@ -76,6 +76,9 @@ def blob(sha):
 def protected(path):
     lower = path.lower()
     name = lower.rsplit('/', 1)[-1]
+    # Agents discover instruction directories below the root too.
+    if {'.github', '.taeguk', '.claude', '.codex', '.agents'} & set(lower.split('/')[:-1]):
+        return True
     return (lower.startswith(PROTECTED_PREFIXES) or name in PROTECTED_NAMES
             or lower in PROTECTED_FILES or (name.startswith('agents') and name.endswith('.md')))
 
