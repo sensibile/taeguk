@@ -63,7 +63,8 @@ def candidates(name, roots, files):
     hits = {}
     for r in roots:
         base = join(r, *parts)
-        target = next((f for f in (base + ".py", join(base, "__init__.py")) if f in files), None)
+        # A package directory wins over a module file of the same name, as in Python's finder.
+        target = next((f for f in (join(base, "__init__.py"), base + ".py") if f in files), None)
         if target:
             inits = [join(r, *parts[:i], "__init__.py") for i in range(1, len(parts))]
             hits[target] = [i for i in inits if i in files]

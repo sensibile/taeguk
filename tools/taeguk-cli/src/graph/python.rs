@@ -77,6 +77,12 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
             .join(",")
     ));
     Ok(Partial {
+        // pyproject.toml decides the package roots, also when git ignores it.
+        read: if root.join("pyproject.toml").is_file() {
+            vec!["pyproject.toml".into()]
+        } else {
+            vec![]
+        },
         nodes: files
             .iter()
             .map(|f| Node::new("python", f.as_str(), vec![f.to_string()]))

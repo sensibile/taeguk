@@ -51,6 +51,10 @@ pub(crate) struct Partial {
     nodes: Vec<Node>,
     edges: Vec<Edge>,
     gaps: Vec<Gap>,
+    /// ROOT-relative files the analyzer read beyond the language's source patterns (a Mix
+    /// manifest, a `#[path]` file with another extension); they join the input fingerprint.
+    #[serde(default)]
+    read: Vec<String>,
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -60,6 +64,9 @@ struct Graph {
     commit: String,
     dirty: bool,
     dirty_paths: Vec<String>,
+    /// Files analyzers reported reading beyond the source patterns, and the fingerprint of all
+    /// analyzer inputs.
+    read: Vec<String>,
     inputs: String,
     generated_at: u64,
     status: String,
@@ -147,7 +154,7 @@ pub(crate) fn version(root: &Path, tool: &str, args: &[&str]) -> Option<String> 
 /// Version of the tool an analyzer runs; impact compares it with the version in the graph.
 pub(crate) fn tool_version(root: &Path, lang: &str) -> Option<String> {
     match lang {
-        "elixir" => version(root, "mix", &["--version"]),
+        "elixir" => version(root, "elixir", &["--version"]),
         "go" => version(root, "go", &["version"]),
         "python" => version(root, "python3", &["--version"]),
         "rust" => version(root, "cargo", &["--version"])
@@ -336,43 +343,43 @@ fn is_input(rel: &str, ignored: bool, langs: &[String]) -> bool {
     })
 }
 
-/// Hash of every analyzer input under ROOT, so impact can tell when files the graph was built
-/// from (untracked and ignored ones included) have changed since. Files over MAX_SOURCE are
-/// hashed by size and modification time.
-fn input_fingerprint(root: &Path, langs: &[String]) -> Result<String, String> {
-    let mut h = Sha256::new();
-    walk(root, langs, |rel, path, kind, ignored| {
+/// Hash of every analyzer input under ROOT: files matching the language source patterns
+/// (untracked and ignored ones included) and the files analyzers reported reading (`read`), so
+/// impact can tell when anything the graph was built from has changed since. Files over
+/// MAX_SOURCE are hashed by size and modification time.
+fn input_fingerprint(root: &Path, langs: &[String], read: &[String]) -> Result<String, String> {
+    let mut files: BTreeSet<String> = read.iter().cloned().collect();
+    walk(root, langs, |rel, _, kind, ignored| {
         if kind.is_dir() {
             return Ok(true);
         }
-        if !is_input(rel, ignored, langs) {
-            return Ok(false);
+        if is_input(rel, ignored, langs) {
+            files.insert(rel.to_string());
         }
-        // Links are followed; the ROOT scan already limited where they may point.
-        let Ok(meta) = fs::metadata(path) else {
-            return Ok(false);
-        };
-        if !meta.is_file() {
-            return Ok(false);
-        }
-        h.update(rel.as_bytes());
-        h.update([0]);
-        if meta.len() > MAX_SOURCE {
-            let mtime = meta
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .map(|d| d.as_nanos())
-                .unwrap_or(0);
-            h.update(format!("size={} mtime={mtime}", meta.len()).as_bytes());
-        } else {
-            h.update(Sha256::digest(
-                fs::read(path).map_err(|e| format!("{rel}: {e}"))?,
-            ));
-        }
-        h.update([0]);
         Ok(false)
     })?;
+    let mut h = Sha256::new();
+    for rel in &files {
+        h.update(rel.as_bytes());
+        h.update([0]);
+        // Links are followed; the ROOT scan already limited where they may point.
+        match fs::metadata(root.join(rel)) {
+            Ok(meta) if meta.is_file() && meta.len() > MAX_SOURCE => {
+                let mtime = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0);
+                h.update(format!("size={} mtime={mtime}", meta.len()).as_bytes());
+            }
+            Ok(meta) if meta.is_file() => h.update(Sha256::digest(
+                fs::read(root.join(rel)).map_err(|e| format!("{rel}: {e}"))?,
+            )),
+            _ => h.update(b"absent"),
+        }
+        h.update([0]);
+    }
     Ok(format!("sha256:{:x}", h.finalize()))
 }
 
@@ -647,7 +654,7 @@ fn isolated(root: &Path, lang: &str) -> (Analyzer, Result<Partial, String>) {
 
 fn digest(g: &Graph) -> String {
     let body = json!({"schema": g.schema, "commit": g.commit, "dirty": g.dirty,
-        "dirty_paths": g.dirty_paths, "inputs": g.inputs, "status": g.status, "analyzers": g.analyzers,
+        "dirty_paths": g.dirty_paths, "read": g.read, "inputs": g.inputs, "status": g.status, "analyzers": g.analyzers,
         "nodes": g.nodes, "edges": g.edges, "gaps": g.gaps});
     format!("sha256:{:x}", Sha256::digest(body.to_string().as_bytes()))
 }
@@ -668,6 +675,7 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
         return Err("no supported language detected; pass --lang".into());
     }
     let (mut analyzers, mut nodes, mut edges, mut gaps) = (vec![], vec![], vec![], vec![]);
+    let mut read: Vec<String> = vec![];
     let out = output_path(&root, out)?;
     let scanned = scan_root(&root, &files, &langs);
     for lang in &langs {
@@ -688,6 +696,7 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
                 nodes.extend(p.nodes);
                 edges.extend(p.edges);
                 gaps.extend(p.gaps);
+                read.extend(p.read);
             }
             // A failed analyzer contributes nothing so a partial graph is never presented as complete.
             Err(e) => {
@@ -697,6 +706,8 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
         }
         analyzers.push(a);
     }
+    read.sort();
+    read.dedup();
     let known: BTreeSet<_> = nodes.iter().map(|n| n.id.clone()).collect();
     edges.retain(|e| e.from != e.to && known.contains(&e.from) && known.contains(&e.to));
     nodes.sort();
@@ -717,10 +728,11 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
         dirty: !dirty_paths.is_empty(),
         dirty_paths,
         inputs: if scanned.is_ok() {
-            input_fingerprint(&root, &langs)?
+            input_fingerprint(&root, &langs, &read)?
         } else {
             String::new()
         },
+        read,
         generated_at: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -937,7 +949,7 @@ pub(crate) fn run(args: &[String]) -> Result<Value, String> {
             changed.dedup();
             let dirty = !dirty_paths(root)?.is_empty();
             let langs: Vec<String> = g.analyzers.iter().map(|a| a.lang.clone()).collect();
-            let inputs = input_fingerprint(root, &langs).unwrap_or_default();
+            let inputs = input_fingerprint(root, &langs, &g.read).unwrap_or_default();
             Ok(impact(
                 &g,
                 root,

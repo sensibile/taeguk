@@ -1,6 +1,7 @@
 mod allow;
 mod cli;
 mod declared;
+mod derived;
 mod ext;
 mod facade_user;
 mod globbed;

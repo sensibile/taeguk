@@ -1,20 +1,51 @@
-use super::{Analyzer, Edge, Gap, Node, Partial, TempDir, exec, read_source, tool_version};
+use super::{
+    Analyzer, Edge, Gap, Node, Partial, TempDir, exec, read_source, relative, tool_version,
+};
 use std::{collections::BTreeSet, env, fs, path::Path, process::Command, time::UNIX_EPOCH};
+
+/// Reads the Mix compile manifest with the `elixir` executable only. `mix` is not run: it
+/// evaluates the project's `mix.exs`, which is code from the target repository. The manifest
+/// records, per source file, the modules it references at compile time, through exports and at
+/// runtime; that is what `mix xref graph` reports. Only manifest version 35 (Elixir 1.20) is
+/// understood; another version fails.
+const SCRIPT: &str = r#"
+[path] = System.argv()
+refs = fn r when is_map(r) -> Map.keys(r); r when is_list(r) -> r; _ -> [] end
+case :erlang.binary_to_term(File.read!(path)) do
+  {35, modules, sources, _, _, _, _, _, _, _, _} ->
+    files = fn m ->
+      case modules do
+        %{^m => m_info} when elem(m_info, 0) == :module -> elem(m_info, 2)
+        _ -> []
+      end
+    end
+    for {src, info} <- sources, elem(info, 0) == :source do
+      IO.puts("node\t" <> src)
+      edges =
+        for {kind, i} <- [compile: 4, export: 5, runtime: 6], m <- refs.(elem(info, i)),
+            to <- files.(m), to != src, reduce: %{} do
+          acc -> Map.put_new(acc, to, kind)
+        end
+      for {to, kind} <- edges, do: IO.puts("edge\t#{src}\t#{to}\t#{kind}")
+    end
+  other ->
+    IO.puts(:stderr, "unsupported Mix manifest version #{inspect(is_tuple(other) && elem(other, 0))}")
+    System.halt(3)
+end
+"#;
+
+/// Largest compile manifest read.
+const MAX_MANIFEST: u64 = 256 << 20;
 
 pub(super) fn analyze(root: &Path, tracked: &[String]) -> (Analyzer, Result<Partial, String>) {
     let mut a = Analyzer::new(
         "elixir",
-        "mix",
+        "elixir",
         &[
-            "mix",
-            "xref",
-            "graph",
-            "--no-compile",
-            "--no-deps-check",
-            "--format",
-            "dot",
-            "--output",
-            "<tmp>/xref.dot",
+            "elixir",
+            "-e",
+            "<embedded manifest reader>",
+            "_build/<env>/lib/<app>/.mix/compile.elixir",
         ],
     );
     a.version = tool_version(root, "elixir");
@@ -29,19 +60,13 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
     }
     let mix_env = env::var("MIX_ENV").unwrap_or_else(|_| "dev".into());
     let build = root.join("_build").join(&mix_env);
-    // The build is copied, so it must be the project's own directory, not a link out of ROOT.
-    if let Ok(real) = build.canonicalize()
-        && !real.starts_with(root)
-    {
-        return Err(format!("_build/{mix_env} resolves outside ROOT"));
-    }
     if !build.is_dir() {
         // Compiling here would create _build/deps in the target repository, so require an existing build.
         return Err(format!(
             "_build/{mix_env} not found; compile the project before building the graph"
         ));
     }
-    // xref reads the existing manifest without compiling, so a build older than the sources is stale.
+    // The app name is read from the text of mix.exs, which is never evaluated.
     let app = mix
         .split("app:")
         .nth(1)
@@ -54,11 +79,18 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
         .filter(|a| !a.is_empty())
         .ok_or("cannot find app name in mix.exs")?;
     let manifest = build.join("lib").join(&app).join(".mix/compile.elixir");
-    let built = modified(&manifest).ok_or_else(|| {
-        format!(
-            "_build/{mix_env}/lib/{app}/.mix/compile.elixir not found; compile the project first"
-        )
-    })?;
+    let shown = format!("_build/{mix_env}/lib/{app}/.mix/compile.elixir");
+    let real = manifest
+        .canonicalize()
+        .map_err(|_| format!("{shown} not found; compile the project first"))?;
+    let meta = fs::metadata(&real).map_err(|e| format!("{shown}: {e}"))?;
+    if !real.starts_with(root) || !meta.is_file() || meta.len() > MAX_MANIFEST {
+        return Err(format!(
+            "{shown} must be a regular file inside ROOT of at most {MAX_MANIFEST} bytes"
+        ));
+    }
+    // The manifest describes the last compile, so a build older than the sources is stale.
+    let built = modified(&real).ok_or_else(|| format!("{shown}: no modification time"))?;
     let newer: Vec<&String> = tracked
         .iter()
         .filter(|f| f.ends_with(".ex") || f.ends_with(".exs"))
@@ -72,44 +104,20 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
             newer[0]
         ));
     }
+    a.command[3] = shown.clone();
+    // Run outside ROOT so nothing from the target repository is picked up from the directory.
     let tmp = TempDir::new("elixir")?;
-    copy_tree(root, &build, &tmp.0.join("build"))?;
-    a.command.insert(
-        0,
-        format!("MIX_ENV={mix_env} MIX_BUILD_PATH=<tmp copy of _build/{mix_env}>"),
-    );
-    let dot = tmp.0.join("xref.dot");
     let o = exec(
-        Command::new("mix")
-            .args([
-                "xref",
-                "graph",
-                "--no-compile",
-                "--no-deps-check",
-                "--format",
-                "dot",
-                "--output",
-            ])
-            .arg(&dot)
-            .current_dir(root)
-            .env("MIX_ENV", &mix_env)
-            .env("MIX_BUILD_PATH", tmp.0.join("build")),
+        Command::new("elixir")
+            .args(["-e", SCRIPT])
+            .arg(&real)
+            .current_dir(&tmp.0),
     )?;
     a.exit_code = o.code;
     if o.code != Some(0) {
-        let text = format!("{}\n{}", String::from_utf8_lossy(&o.stdout), o.stderr);
-        let lines: Vec<_> = text
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .collect();
-        return Err(format!(
-            "mix xref graph failed: {}",
-            lines[lines.len().saturating_sub(5)..].join(" | ")
-        ));
+        return Err(format!("reading {shown} failed: {}", o.stderr.trim()));
     }
-    let text = fs::read_to_string(&dot).map_err(|e| format!("xref output: {e}"))?;
-    let mut out = parse_dot(&text)?;
+    let mut out = parse_refs(&String::from_utf8_lossy(&o.stdout))?;
     // The manifest still lists sources deleted since the last compile; their edges are stale.
     let current: BTreeSet<&str> = tracked.iter().map(String::as_str).collect();
     let gone: Vec<&str> = out
@@ -125,6 +133,7 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
             gone[0]
         ));
     }
+    out.read.push(relative(root, &real).unwrap_or(shown));
     for n in &out.nodes {
         let file = &n.files[0];
         let (_, source) = read_source(root, &root.join(file))?;
@@ -134,7 +143,10 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
                     "elixir",
                     "dynamic_call",
                     Some(file),
-                    format!("line {}: runtime dispatch is not observed by xref", i + 1),
+                    format!(
+                        "line {}: runtime dispatch is not observed in the manifest",
+                        i + 1
+                    ),
                 ));
             }
         }
@@ -218,27 +230,16 @@ fn modified(path: &Path) -> Option<u64> {
     t.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs())
 }
 
-/// Parses `mix xref graph --format dot`: `"a"` node lines and `"a" -> "b" [label="(compile)"]` edges.
-fn parse_dot(text: &str) -> Result<Partial, String> {
+/// Parses the reader output: `node\tFILE` and `edge\tFROM\tTO\tKIND` lines.
+fn parse_refs(text: &str) -> Result<Partial, String> {
     let mut files = BTreeSet::new();
     let mut out = Partial::default();
-    for line in text.lines().map(str::trim) {
-        if !line.starts_with('"') {
-            continue;
-        }
-        let quoted: Vec<&str> = line.split('"').collect();
-        match quoted.as_slice() {
-            [_, from, _] => {
-                files.insert(from.to_string());
+    for line in text.lines().filter(|l| !l.is_empty()) {
+        match line.split('\t').collect::<Vec<_>>().as_slice() {
+            ["node", f] => {
+                files.insert(f.to_string());
             }
-            [_, from, arrow, to, rest @ ..] if arrow.trim() == "->" => {
-                let label = rest.get(1).copied().unwrap_or("");
-                let kind = match label {
-                    "(compile)" => "compile",
-                    "(export)" => "export",
-                    "" => "runtime",
-                    other => return Err(format!("unknown xref label: {other}")),
-                };
+            ["edge", from, to, kind @ ("compile" | "export" | "runtime")] => {
                 files.insert(from.to_string());
                 files.insert(to.to_string());
                 out.edges.push(Edge::new(
@@ -247,7 +248,7 @@ fn parse_dot(text: &str) -> Result<Partial, String> {
                     kind,
                 ));
             }
-            _ => return Err(format!("unexpected xref line: {line}")),
+            _ => return Err(format!("unexpected manifest reader line: {line}")),
         }
     }
     out.nodes = files
@@ -257,62 +258,16 @@ fn parse_dot(text: &str) -> Result<Partial, String> {
     Ok(out)
 }
 
-/// Copies a build tree; symlinks are recreated as absolute links to their original targets.
-/// The build is ignored by git, so the ROOT scan does not cover it: links must stay inside ROOT
-/// and point at files or directories, and special files are refused (copying a FIFO blocks).
-fn copy_tree(root: &Path, from: &Path, to: &Path) -> Result<(), String> {
-    fs::create_dir_all(to).map_err(|e| e.to_string())?;
-    for entry in fs::read_dir(from).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let (src, dst) = (entry.path(), to.join(entry.file_name()));
-        let kind = entry.file_type().map_err(|e| e.to_string())?;
-        if kind.is_symlink() {
-            let target = fs::read_link(&src).map_err(|e| e.to_string())?;
-            let target = if target.is_absolute() {
-                target
-            } else {
-                from.join(target)
-            };
-            let real = target
-                .canonicalize()
-                .map_err(|e| format!("{}: {e}", src.display()))?;
-            if !real.starts_with(root) || !(real.is_file() || real.is_dir()) {
-                return Err(format!(
-                    "build link {} must point to a file or directory inside ROOT",
-                    src.display()
-                ));
-            }
-            #[cfg(unix)]
-            std::os::unix::fs::symlink(&target, &dst).map_err(|e| e.to_string())?;
-            #[cfg(not(unix))]
-            return Err(format!(
-                "symlinked build entries are not supported here: {}",
-                src.display()
-            ));
-        } else if kind.is_dir() {
-            copy_tree(root, &src, &dst)?;
-        } else if !kind.is_file() {
-            return Err(format!(
-                "build entry {} is not a regular file",
-                src.display()
-            ));
-        } else {
-            fs::copy(&src, &dst).map_err(|e| format!("{}: {e}", src.display()))?;
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn dot_labels_become_edge_kinds() {
-        let p = parse_dot("digraph \"xref graph\" {\n  \"lib/a.ex\"\n  \"lib/a.ex\" -> \"lib/b.ex\" [label=\"(compile)\"]\n  \"lib/b.ex\" -> \"lib/c.ex\"\n  \"lib/c.ex\" -> \"lib/a.ex\" [label=\"(export)\"]\n}\n").unwrap();
+    fn reader_lines_become_edges() {
+        let p = parse_refs("node\tlib/a.ex\nedge\tlib/a.ex\tlib/b.ex\tcompile\nedge\tlib/b.ex\tlib/c.ex\truntime\n").unwrap();
         let kinds: Vec<_> = p.edges.iter().map(|e| e.kind.as_str()).collect();
-        assert_eq!(kinds, ["compile", "runtime", "export"]);
+        assert_eq!(kinds, ["compile", "runtime"]);
         assert_eq!(p.nodes.len(), 3);
-        assert!(parse_dot("\"a\" -> \"b\" [label=\"(weird)\"]").is_err());
+        assert!(parse_refs("edge\ta\tb\tweird").is_err());
     }
     #[test]
     fn dynamic_calls_with_or_without_parentheses() {

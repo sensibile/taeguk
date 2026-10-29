@@ -444,7 +444,8 @@ fn analyzer_failures_mark_the_graph_failed() {
         git(&w.repo(), &["rm", "-q", "lib/fx/dyn.ex"]);
         git(&w.repo(), &["commit", "-qm", "delete"]);
         assert_fails(&w, "elixir", "no longer tracked");
-        // The ignored build is copied, not scanned; a FIFO there must fail instead of blocking.
+        // Only the compile manifest of the ignored build is read; a FIFO there fails instead of
+        // blocking.
         let w = work("elixir");
         let o = Command::new("mix")
             .arg("compile")
@@ -452,14 +453,16 @@ fn analyzer_failures_mark_the_graph_failed() {
             .output()
             .unwrap();
         assert!(o.status.success());
+        let manifest = w.repo().join("_build/dev/lib/fx/.mix/compile.elixir");
+        fs::remove_file(&manifest).unwrap();
         assert!(
             Command::new("mkfifo")
-                .arg(w.repo().join("_build/dev/lib/fx/pipe"))
+                .arg(&manifest)
                 .status()
                 .unwrap()
                 .success()
         );
-        assert_fails(&w, "elixir", "is not a regular file");
+        assert_fails(&w, "elixir", "must be a regular file inside ROOT");
         // The build directory itself must not be a link out of ROOT.
         let w = work("elixir");
         let o = Command::new("mix")
@@ -472,7 +475,7 @@ fn analyzer_failures_mark_the_graph_failed() {
         fs::rename(w.repo().join("_build/dev"), &outside).unwrap();
         #[cfg(unix)]
         std::os::unix::fs::symlink(&outside, w.repo().join("_build/dev")).unwrap();
-        assert_fails(&w, "elixir", "_build/dev resolves outside ROOT");
+        assert_fails(&w, "elixir", "must be a regular file inside ROOT");
     }
 }
 
@@ -669,6 +672,75 @@ fn standard_macro_names_redefined_in_the_crate_are_gaps() {
                     .contains("vec! may be redefined")),
         "{g}"
     );
+}
+
+#[test]
+fn mix_exs_is_never_executed() {
+    if !available("mix", "--version") {
+        return;
+    }
+    // mix.exs is project code; building the graph reads the manifest and must not run it.
+    let w = work("elixir");
+    let marker = w.0.join("executed");
+    let mix = w.repo().join("mix.exs");
+    let text = format!(
+        "File.write!({:?}, \"x\")\n{}",
+        marker.to_str().unwrap(),
+        fs::read_to_string(&mix).unwrap()
+    );
+    fs::write(&mix, text).unwrap();
+    git(&w.repo(), &["commit", "-qam", "marker"]);
+    let o = Command::new("mix")
+        .arg("compile")
+        .current_dir(w.repo())
+        .output()
+        .unwrap();
+    assert!(o.status.success());
+    assert!(marker.exists(), "mix compile itself runs mix.exs");
+    fs::remove_file(&marker).unwrap();
+    let g = build(&w, "elixir");
+    assert_eq!(g["status"], "PASS", "{g}");
+    assert!(!marker.exists());
+}
+
+#[test]
+fn files_analyzers_read_are_fingerprinted() {
+    if available("python3", "--version") {
+        // An ignored pyproject.toml still sets the package roots.
+        let w = work("python");
+        git(&w.repo(), &["rm", "-q", "--cached", "pyproject.toml"]);
+        fs::write(w.repo().join(".gitignore"), "/pyproject.toml\n").unwrap();
+        git(&w.repo(), &["add", "-A"]);
+        git(&w.repo(), &["commit", "-qm", "ignore pyproject"]);
+        build(&w, "python");
+        let v = impact(&w, &["--changed", "common.py"]);
+        assert_eq!(other_reasons(&v), Vec::<String>::new());
+        let p = w.repo().join("pyproject.toml");
+        fs::write(&p, fs::read_to_string(&p).unwrap() + "# changed\n").unwrap();
+        let v = impact(&w, &["--changed", "common.py"]);
+        assert_eq!(other_reasons(&v), ["analyzer_inputs_changed"]);
+    }
+    if available("cargo", "--version") {
+        // A `#[path]` module file with another extension, ignored by git, is read too.
+        let w = work("rust");
+        fs::write(
+            w.repo().join(".gitignore"),
+            "/target/\n/Cargo.lock\n/core/src/gen.inc\n",
+        )
+        .unwrap();
+        fs::write(w.repo().join("core/src/gen.inc"), "pub fn g() {}\n").unwrap();
+        let lib = w.repo().join("core/src/lib.rs");
+        let text = fs::read_to_string(&lib).unwrap() + "#[path = \"gen.inc\"]\nmod generated;\n";
+        fs::write(&lib, text).unwrap();
+        git(&w.repo(), &["add", "-A"]);
+        git(&w.repo(), &["commit", "-qm", "gen"]);
+        build(&w, "rust");
+        let v = impact(&w, &["--changed", "core/src/store.rs"]);
+        assert_eq!(other_reasons(&v), Vec::<String>::new());
+        fs::write(w.repo().join("core/src/gen.inc"), "pub fn h() {}\n").unwrap();
+        let v = impact(&w, &["--changed", "core/src/store.rs"]);
+        assert_eq!(other_reasons(&v), ["analyzer_inputs_changed"]);
+    }
 }
 
 #[test]
@@ -956,7 +1028,7 @@ fn with_version(graph: &Path, version: &str) {
     let mut g: Value = serde_json::from_slice(&fs::read(graph).unwrap()).unwrap();
     g["analyzers"][0]["version"] = version.into();
     let body = serde_json::json!({"schema": g["schema"], "commit": g["commit"], "dirty": g["dirty"],
-        "dirty_paths": g["dirty_paths"], "inputs": g["inputs"], "status": g["status"], "analyzers": g["analyzers"],
+        "dirty_paths": g["dirty_paths"], "read": g["read"], "inputs": g["inputs"], "status": g["status"], "analyzers": g["analyzers"],
         "nodes": g["nodes"], "edges": g["edges"], "gaps": g["gaps"]});
     use sha2::Digest;
     g["digest"] = format!(

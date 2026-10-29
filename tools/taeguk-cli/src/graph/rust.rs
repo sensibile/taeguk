@@ -209,6 +209,11 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
             }
         }
     }
+    // Module files (`#[path]` may name any extension) and manifests join the input fingerprint.
+    out.read.extend(files.iter().cloned());
+    for p in &meta.packages {
+        out.read.push(rel(&p.manifest_path)?);
+    }
     out.nodes = files
         .into_iter()
         .map(|f| Node::new("rust", f.clone(), vec![f]))
@@ -230,7 +235,13 @@ fn shadowed_macros(tree: &Tree, gaps: &mut Vec<Gap>, root: &Path) {
             .plain_macros
             .iter()
             .filter(|n| imports || defined.contains(n))
-            .map(|n| format!("{n}!"))
+            .map(|n| {
+                if n.starts_with("derive(") {
+                    format!("#[{n}]")
+                } else {
+                    format!("{n}!")
+                }
+            })
             .collect();
         if !hit.is_empty() {
             let shown = relative(root, &m.file).unwrap_or_else(|| m.file.display().to_string());
@@ -811,6 +822,23 @@ fn mentions_path_attribute(meta: &syn::Meta) -> bool {
     }
 }
 
+/// Single-segment trait names in a `derive` list.
+fn derive_names(meta: &syn::Meta) -> Vec<String> {
+    use syn::{Token, punctuated::Punctuated};
+    let syn::Meta::List(list) = meta else {
+        return vec![];
+    };
+    list.parse_args_with(Punctuated::<syn::Path, Token![,]>::parse_terminated)
+        .map(|traits| {
+            traits
+                .iter()
+                .filter(|t| t.segments.len() == 1)
+                .map(path_text)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn path_text(p: &syn::Path) -> String {
     p.segments
         .iter()
@@ -1129,6 +1157,16 @@ impl<'ast> Visit<'ast> for Paths {
         visit::visit_attribute(self, a);
         if let Some(name) = unanalyzed_attribute(&a.meta) {
             self.unanalyzed.insert(format!("#[{name}]"));
+        } else if a.path().is_ident("derive") {
+            // A standard trait name bound by `use` (`use x::Custom as Clone;`) is another derive;
+            // one imported by `#[macro_use] extern crate` is checked crate-wide.
+            for name in derive_names(&a.meta) {
+                if self.scopes.iter().any(|s| s.aliases.contains_key(&name)) {
+                    self.unanalyzed.insert(format!("#[derive({name})]"));
+                } else {
+                    self.plain_macros.insert(format!("derive({name})"));
+                }
+            }
         }
     }
     fn visit_path(&mut self, p: &'ast syn::Path) {
