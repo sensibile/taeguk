@@ -98,6 +98,14 @@ class WorkerScopeTest(unittest.TestCase):
         self.commit('second cfg')
         self.assert_rejected('test-gap', 'tools/taeguk-cli/src/main.rs', 'change outside the trailing #[cfg(test)] module')
 
+    def test_test_gap_rejects_cfg_test_item_that_is_not_a_module(self):
+        source = 'fn add() {}\n\n#[cfg(test)]\nfn helper() {\n    let _ = 1;\n}\n'
+        self.write('tools/taeguk-cli/src/lib.rs', source)
+        self.base = self.commit('cfg fn')
+        self.write('tools/taeguk-cli/src/lib.rs', source.replace('1;', '2;'))
+        self.commit('edit cfg fn')
+        self.assert_rejected('test-gap', 'tools/taeguk-cli/src/lib.rs', 'change outside the trailing #[cfg(test)] module')
+
     def test_test_gap_rejects_deleting_tests(self):
         (self.repo/'tests/test_a.py').unlink()
         self.commit('delete')
