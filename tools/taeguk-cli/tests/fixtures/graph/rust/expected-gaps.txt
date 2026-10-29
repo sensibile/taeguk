@@ -4,3 +4,5 @@ rust construct_not_analyzed app/src/macros.rs
 rust cfg_attr_path core/src/lib.rs
 rust construct_not_analyzed app/src/inc.rs
 rust construct_not_analyzed app/src/hidden.rs
+rust construct_not_analyzed app/src/used.rs
+rust cfg_attr_path app/src/main.rs

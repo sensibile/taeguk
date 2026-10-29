@@ -1,6 +1,7 @@
 mod allow;
 mod cli;
 mod declared;
+mod ext;
 mod facade_user;
 mod globbed;
 mod hidden;
@@ -8,9 +9,12 @@ mod inc;
 mod loop_;
 mod macros;
 mod many;
+#[cfg_attr(unix, cfg_attr(unix, path = "cli.rs"))]
+mod nested;
 mod ops;
 mod plat;
 mod scoped;
+mod used;
 
 fn main() {
     cli::run();

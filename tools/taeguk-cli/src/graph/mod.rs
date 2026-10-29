@@ -10,7 +10,7 @@ use std::{
     env, fs,
     io::{Read, Write},
     path::{Component, Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -46,7 +46,7 @@ pub(crate) struct Analyzer {
     status: String,
     error: Option<String>,
 }
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub(crate) struct Partial {
     nodes: Vec<Node>,
     edges: Vec<Edge>,
@@ -267,10 +267,12 @@ fn walk(
 /// Paths under ROOT that external analyzers (go, cargo, mix) may read without our listing them
 /// must not block them or exhaust memory. Tracked and untracked (not ignored) paths must be
 /// regular files, directories, or links to those inside ROOT. Ignored paths are read too
-/// (`go list` does not follow .gitignore) but hold local environments such as `.venv` whose links
-/// leave ROOT, so there only special files (FIFO, device, socket) and links to them are refused.
+/// (`go list` does not follow .gitignore) but hold local environments such as `.venv` whose file
+/// links leave ROOT, so there special files (FIFO, device, socket), links to them, and links to
+/// directories outside ROOT that go would enter are refused.
 /// Tracked paths are checked even inside skipped directories.
 fn scan_root(root: &Path, tracked: &[String], langs: &[String]) -> Result<(), String> {
+    let go = langs.iter().any(|l| l == "go");
     let check =
         |rel: &str, path: &Path, kind: fs::FileType, strict: bool| -> Result<bool, String> {
             if kind.is_dir() {
@@ -283,7 +285,16 @@ fn scan_root(root: &Path, tracked: &[String], langs: &[String]) -> Result<(), St
                     Err(_) if !strict => return Ok(false),
                     Err(e) => return Err(format!("{rel}: {e}")),
                 };
-                if strict && !real.starts_with(root) {
+                // A linked directory outside ROOT is never walked here, yet `go list ./...`
+                // enters it where go traverses (no `.`/`_`-prefixed or `testdata` component),
+                // so there it is refused even when ignored. Anything else an analyzer reads
+                // through such a link is bounded by the analyzer time limit and rejected by
+                // the analyzers' own inside-ROOT checks on what they report.
+                let go_walks = go
+                    && !rel
+                        .split('/')
+                        .any(|c| c.starts_with('.') || c.starts_with('_') || c == "testdata");
+                if (strict || (go_walks && real.is_dir())) && !real.starts_with(root) {
                     return Err(format!("{rel} resolves outside ROOT"));
                 }
                 if !(real.is_file() || real.is_dir()) {
@@ -528,6 +539,112 @@ fn detect(root: &Path, files: &[String]) -> Vec<String> {
     langs
 }
 
+/// Runs one analyzer in this process (`graph __analyze LANG ROOT`, used by `isolated`).
+fn analyze(root: &Path, lang: &str) -> Result<(Analyzer, Result<Partial, String>), String> {
+    let files = tracked(root)?;
+    Ok(match lang {
+        "elixir" => elixir::analyze(root, &files),
+        "go" => go::analyze(root),
+        "python" => python::analyze(root, &files),
+        "rust" => rust::analyze(root),
+        other => return Err(format!("unsupported language: {other}")),
+    })
+}
+
+/// Default bound on one analyzer process, overridable with TAEGUK_GRAPH_TIMEOUT_SECS.
+const ANALYZER_TIMEOUT_SECS: u64 = 600;
+
+/// Runs one analyzer as a child process of this binary, in its own process group, with a time
+/// bound. Whatever the input does to a parser or external tool (a crash such as stack
+/// exhaustion, or a wait that never ends), the result is that analyzer's FAIL, not a crashed or
+/// stuck CLI. The group is killed on timeout so tools it started (cargo, go, mix) end too.
+fn isolated(root: &Path, lang: &str) -> (Analyzer, Result<Partial, String>) {
+    let failed = |e: String| {
+        let mut a = Analyzer::new(lang, "-", &[]);
+        a.version = tool_version(root, lang);
+        (a, Err(e))
+    };
+    let exe = match env::current_exe() {
+        Ok(exe) => exe,
+        Err(e) => return failed(format!("cannot locate taeguk executable: {e}")),
+    };
+    let limit = env::var("TAEGUK_GRAPH_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(ANALYZER_TIMEOUT_SECS);
+    let mut cmd = Command::new(exe);
+    cmd.args(["graph", "__analyze", lang])
+        .arg(root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => return failed(format!("cannot start analyzer process: {e}")),
+    };
+    let read = |mut r: Box<dyn Read + Send>| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = r.read_to_end(&mut buf);
+            buf
+        })
+    };
+    let out = read(Box::new(child.stdout.take().expect("piped stdout")));
+    let err = read(Box::new(child.stderr.take().expect("piped stderr")));
+    let started = std::time::Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if started.elapsed().as_secs() >= limit => {
+                #[cfg(unix)]
+                let _ = Command::new("kill")
+                    .args(["-KILL", &format!("-{}", child.id())])
+                    .status();
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(20)),
+            Err(e) => return failed(format!("analyzer process: {e}")),
+        }
+    };
+    let (out, err) = (
+        out.join().unwrap_or_default(),
+        err.join().unwrap_or_default(),
+    );
+    let Some(status) = status else {
+        return failed(format!(
+            "analyzer did not finish within {limit} s and was stopped"
+        ));
+    };
+    let reply: Option<Value> = serde_json::from_slice(&out).ok();
+    let parsed = reply.and_then(|v| {
+        let a: Analyzer = serde_json::from_value(v.get("analyzer")?.clone()).ok()?;
+        let result = match (v.get("partial"), v.get("error")) {
+            (Some(p), _) if !p.is_null() => Ok(serde_json::from_value(p.clone()).ok()?),
+            (_, Some(Value::String(e))) => Err(e.clone()),
+            _ => return None,
+        };
+        Some((a, result))
+    });
+    match parsed {
+        Some(r) if status.success() => r,
+        _ => {
+            let tail: String = String::from_utf8_lossy(&err)
+                .lines()
+                .rev()
+                .take(3)
+                .collect::<Vec<_>>()
+                .join(" | ");
+            failed(format!(
+                "analyzer process exited abnormally ({status}): {tail}"
+            ))
+        }
+    }
+}
+
 fn digest(g: &Graph) -> String {
     let body = json!({"schema": g.schema, "commit": g.commit, "dirty": g.dirty,
         "dirty_paths": g.dirty_paths, "inputs": g.inputs, "status": g.status, "analyzers": g.analyzers,
@@ -561,14 +678,10 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
             analyzers.push(a);
             continue;
         }
-        let (a, result) = match lang.as_str() {
-            "elixir" => elixir::analyze(&root, &files),
-            "go" => go::analyze(&root),
-            "python" => python::analyze(&root, &files),
-            "rust" => rust::analyze(&root),
-            other => return Err(format!("unsupported language: {other}")),
-        };
-        let mut a = a;
+        if !LANGS.contains(&lang.as_str()) {
+            return Err(format!("unsupported language: {lang}"));
+        }
+        let (mut a, result) = isolated(&root, lang);
         match result {
             Ok(p) => {
                 a.status = "PASS".into();
@@ -766,6 +879,14 @@ fn usage() -> String {
 
 pub(crate) fn run(args: &[String]) -> Result<Value, String> {
     match args {
+        [cmd, lang, root] if cmd == "__analyze" => {
+            let (a, result) = analyze(Path::new(root), lang)?;
+            let (partial, error) = match result {
+                Ok(p) => (Some(p), None),
+                Err(e) => (None, Some(e)),
+            };
+            Ok(json!({"analyzer": a, "partial": partial, "error": error}))
+        }
         [cmd, root, rest @ ..] if cmd == "build" => {
             let (mut out, mut langs) = (None, vec![]);
             let mut it = rest.iter();

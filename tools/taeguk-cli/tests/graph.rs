@@ -315,6 +315,13 @@ fn analyzer_failures_mark_the_graph_failed() {
                 .success()
         );
         assert_fails(&w, "go", "target/blocked.go is not a regular file");
+        // An ignored link to a directory outside ROOT, where go walks, is refused.
+        let w = work("go");
+        fs::write(w.repo().join(".gitignore"), "/localdep\n").unwrap();
+        fs::create_dir_all(w.0.join("outside")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(w.0.join("outside"), w.repo().join("localdep")).unwrap();
+        assert_fails(&w, "go", "localdep resolves outside ROOT");
     }
     if available("cargo", "--version") {
         let w = work("rust");
@@ -573,6 +580,98 @@ fn ignored_rust_members_are_fingerprinted() {
 }
 
 #[test]
+fn analyzers_run_isolated_with_a_time_limit() {
+    if !available("cargo", "--version") {
+        return;
+    }
+    // A parser crash on hostile input is that analyzer's FAIL, not a crashed CLI.
+    let w = work("rust");
+    let deep = "mod a {\n".repeat(200_000) + &"}\n".repeat(200_000);
+    fs::write(w.repo().join("core/src/deep.rs"), deep).unwrap();
+    let lib = w.repo().join("core/src/lib.rs");
+    fs::write(&lib, fs::read_to_string(&lib).unwrap() + "mod deep;\n").unwrap();
+    git(&w.repo(), &["add", "-A"]);
+    git(&w.repo(), &["commit", "-qm", "deep"]);
+    let g = build(&w, "rust");
+    assert_eq!(g["status"], "FAIL", "{g}");
+    assert_eq!(g["nodes"].as_array().unwrap().len(), 0);
+    // A wait that never ends (a FIFO manifest cargo reads through an ignored link the scan
+    // allows) is stopped at the time limit.
+    let w = work("rust");
+    let outside = w.0.join("outside/m");
+    fs::create_dir_all(&outside).unwrap();
+    assert!(
+        Command::new("mkfifo")
+            .arg(outside.join("Cargo.toml"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    fs::write(w.repo().join(".gitignore"), "/.linked\n").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(w.0.join("outside"), w.repo().join(".linked")).unwrap();
+    let manifest = w.repo().join("Cargo.toml");
+    let text = fs::read_to_string(&manifest)
+        .unwrap()
+        .replace("\"app\"]", "\"app\", \".linked/m\"]");
+    fs::write(&manifest, text).unwrap();
+    git(&w.repo(), &["commit", "-qam", "linked"]);
+    let o = Command::new(env!("CARGO_BIN_EXE_taeguk"))
+        .args(["graph", "build"])
+        .arg(w.repo())
+        .arg("--out")
+        .arg(w.graph())
+        .args(["--lang", "rust"])
+        .env("TAEGUK_GRAPH_TIMEOUT_SECS", "3")
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let g: Value = serde_json::from_slice(&fs::read(w.graph()).unwrap()).unwrap();
+    assert_eq!(g["status"], "FAIL", "{g}");
+    assert!(
+        g["analyzers"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("did not finish within 3 s"),
+        "{g}"
+    );
+}
+
+#[test]
+fn standard_macro_names_redefined_in_the_crate_are_gaps() {
+    if !available("cargo", "--version") {
+        return;
+    }
+    let w = work("rust");
+    fs::write(
+        w.repo().join("core/src/shadow.rs"),
+        "macro_rules! vec {\n    () => {\n        0\n    };\n}\n\npub fn f() -> i32 {\n    vec!()\n}\n",
+    )
+    .unwrap();
+    let lib = w.repo().join("core/src/lib.rs");
+    fs::write(
+        &lib,
+        fs::read_to_string(&lib).unwrap() + "pub mod shadow;\n",
+    )
+    .unwrap();
+    git(&w.repo(), &["add", "-A"]);
+    git(&w.repo(), &["commit", "-qm", "shadow"]);
+    let g = build(&w, "rust");
+    assert!(
+        g["gaps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["file"] == "core/src/shadow.rs"
+                && x["detail"]
+                    .as_str()
+                    .unwrap()
+                    .contains("vec! may be redefined")),
+        "{g}"
+    );
+}
+
+#[test]
 fn glob_reexport_cycles_finish() {
     if !available("cargo", "--version") {
         return;
@@ -718,6 +817,7 @@ fn impact_follows_reverse_edges_and_reports_limits() {
             "tests/test_aliases.py",
             "tests/test_builtins.py",
             "tests/test_helper.py",
+            "tests/test_nested.py",
             "tests/test_order.py",
             "tests/test_param.py",
             "tests/test_paths.py",

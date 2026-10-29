@@ -1,5 +1,6 @@
 use super::{
-    Analyzer, Edge, Gap, Node, Partial, exec, normalize, read_source, relative, tool_version,
+    Analyzer, Edge, Gap, Node, Partial, check_source, exec, normalize, read_source, relative,
+    tool_version,
 };
 use serde::Deserialize;
 use std::{
@@ -52,6 +53,12 @@ struct Module {
     children: BTreeMap<String, Vec<String>>,
     paths: Vec<PathRef>,
     exports: Scope,
+    /// Standard-named macros used here, `macro_rules!` names defined here, and whether a
+    /// `#[macro_use] extern crate` imports macros of unknown names: a crate-wide check turns
+    /// a standard name defined or imported anywhere in the crate into a gap.
+    plain_macros: BTreeSet<String>,
+    defined_macros: BTreeSet<String>,
+    imports_macros: bool,
 }
 type Tree = BTreeMap<Vec<String>, Module>;
 /// A mentioned path with `use` aliases already expanded, and the glob imports in its scope.
@@ -93,6 +100,10 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
     }
     let meta: Metadata = serde_json::from_slice(&o.stdout)
         .map_err(|e| format!("cannot parse cargo metadata: {e}"))?;
+    // Manifests cargo read must be inside ROOT, also when reached through a linked directory.
+    for p in &meta.packages {
+        check_source(root, &p.manifest_path)?;
+    }
     // Code names a library by its target name (or a dependency rename), not the package name.
     let lib_of = |p: &Package| {
         p.targets
@@ -144,6 +155,7 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
                 let dir = t.src_path.parent().unwrap_or(root).to_path_buf();
                 w.file(&t.src_path, vec![], &dir)
                     .map_err(|e| format!("target {}: {e}", t.name))?;
+                shadowed_macros(&w.tree, w.gaps, root);
                 trees.insert(t.src_path.clone(), w.tree);
             }
             crates.push((t.src_path.clone(), externs));
@@ -206,6 +218,34 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
 
 /// A resolution state: crate root, module key and the path segments still to resolve.
 type State = (PathBuf, Vec<String>, Vec<String>);
+
+/// A standard macro name is trusted only if nothing in the crate can redefine it: a
+/// `macro_rules!` of that name anywhere in the crate, or a `#[macro_use] extern crate`, makes
+/// each module that uses the name a gap.
+fn shadowed_macros(tree: &Tree, gaps: &mut Vec<Gap>, root: &Path) {
+    let defined: BTreeSet<&String> = tree.values().flat_map(|m| &m.defined_macros).collect();
+    let imports = tree.values().any(|m| m.imports_macros);
+    for m in tree.values() {
+        let hit: Vec<String> = m
+            .plain_macros
+            .iter()
+            .filter(|n| imports || defined.contains(n))
+            .map(|n| format!("{n}!"))
+            .collect();
+        if !hit.is_empty() {
+            let shown = relative(root, &m.file).unwrap_or_else(|| m.file.display().to_string());
+            gaps.push(Gap::new(
+                "rust",
+                "construct_not_analyzed",
+                Some(&shown),
+                format!(
+                    "{} may be redefined in this crate; its expansion is not analyzed",
+                    hit.join(", ")
+                ),
+            ));
+        }
+    }
+}
 
 /// Resolves mentioned paths to module files. Trees and dependency names are keyed by crate
 /// root, so following a path into another crate also switches to that crate's dependencies.
@@ -452,15 +492,10 @@ impl Walk<'_> {
                         _ => None,
                     });
             // `cfg_attr(..., path = "...")` picks another file under some configurations.
-            let conditional_path = m.attrs.iter().any(|a| {
-                a.path().is_ident("cfg_attr")
-                    && a.meta.require_list().is_ok_and(|l| {
-                        l.tokens
-                            .clone()
-                            .into_iter()
-                            .any(|t| t.to_string() == "path")
-                    })
-            });
+            let conditional_path = m
+                .attrs
+                .iter()
+                .any(|a| a.path().is_ident("cfg_attr") && mentions_path_attribute(&a.meta));
             if conditional_path {
                 let shown = self.shown(file);
                 self.gaps.push(Gap::new(
@@ -517,6 +552,9 @@ impl Walk<'_> {
         m.children.extend(children);
         m.paths.extend(paths.paths);
         m.exports = paths.scopes.swap_remove(0);
+        m.plain_macros.extend(paths.plain_macros);
+        m.defined_macros.extend(paths.defined_macros);
+        m.imports_macros |= paths.imports_macros;
         if !paths.unanalyzed.is_empty() {
             let shown = self.shown(file);
             let names: Vec<&str> = paths.unanalyzed.iter().map(String::as_str).collect();
@@ -558,8 +596,24 @@ impl Scope {
     fn of<'a>(items: impl Iterator<Item = &'a syn::Item>, dropped: &Cell<bool>) -> Self {
         let mut scope = Scope::default();
         for i in items {
-            if let syn::Item::Use(u) = i {
-                scope.bind(&mut vec![], &u.tree, dropped);
+            match i {
+                syn::Item::Use(u) => scope.bind(&mut vec![], &u.tree, dropped),
+                // `extern crate fx_core as c;` binds `c` like `use fx_core as c;`.
+                syn::Item::ExternCrate(e) => {
+                    let name = if e.ident == "self" {
+                        "crate".to_string()
+                    } else {
+                        e.ident.to_string()
+                    };
+                    let bound = e
+                        .rename
+                        .as_ref()
+                        .map_or(name.clone(), |(_, r)| r.to_string());
+                    if bound != "_" {
+                        add(scope.aliases.entry(bound).or_default(), vec![name], dropped);
+                    }
+                }
+                _ => {}
             }
         }
         scope
@@ -619,6 +673,9 @@ struct Paths {
     /// to each other can otherwise branch exponentially before the result bound applies.
     steps: Cell<usize>,
     unanalyzed: BTreeSet<String>,
+    plain_macros: BTreeSet<String>,
+    defined_macros: BTreeSet<String>,
+    imports_macros: bool,
 }
 
 /// Built-in attributes that generate no code reaching other modules.
@@ -739,6 +796,21 @@ fn unanalyzed_attribute(meta: &syn::Meta) -> Option<String> {
     }
 }
 
+/// Whether a `cfg_attr` (at any nesting depth) applies a `path` attribute; one that cannot
+/// be parsed counts as applying it.
+fn mentions_path_attribute(meta: &syn::Meta) -> bool {
+    use syn::{Meta, Token, punctuated::Punctuated};
+    match meta {
+        Meta::NameValue(nv) => nv.path.is_ident("path"),
+        Meta::List(list) if list.path.is_ident("cfg_attr") => list
+            .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+            .map_or(true, |parts| {
+                parts.iter().skip(1).any(mentions_path_attribute)
+            }),
+        _ => false,
+    }
+}
+
 fn path_text(p: &syn::Path) -> String {
     p.segments
         .iter()
@@ -812,6 +884,9 @@ impl Paths {
             dropped: Cell::new(false),
             steps: Cell::new(0),
             unanalyzed: BTreeSet::new(),
+            plain_macros: BTreeSet::new(),
+            defined_macros: BTreeSet::new(),
+            imports_macros: false,
         };
         p.enter(items.iter());
         p
@@ -963,7 +1038,44 @@ impl<'ast> Visit<'ast> for Paths {
             .insert(format!("mod {} inside a block", m.ident));
     }
     fn visit_item_use(&mut self, u: &'ast syn::ItemUse) {
+        u.attrs.iter().for_each(|a| self.visit_attribute(a));
         self.use_tree(&mut vec![], &u.tree);
+    }
+    /// `extern crate` binds a name (see `Scope::of`) and records its path; with
+    /// `#[macro_use]` it also imports macros whose names are not known here.
+    fn visit_item_extern_crate(&mut self, e: &'ast syn::ItemExternCrate) {
+        visit::visit_item_extern_crate(self, e);
+        if e.attrs.iter().any(|a| a.path().is_ident("macro_use")) {
+            self.imports_macros = true;
+        }
+        self.push(vec![e.ident.to_string()]);
+    }
+    fn visit_item_macro(&mut self, m: &'ast syn::ItemMacro) {
+        if m.mac.path.is_ident("macro_rules")
+            && let Some(name) = &m.ident
+        {
+            self.defined_macros.insert(name.to_string());
+        }
+        visit::visit_item_macro(self, m);
+    }
+    /// syn keeps tokens it cannot parse as `Verbatim`; they are not analyzed.
+    fn visit_item(&mut self, i: &'ast syn::Item) {
+        if matches!(i, syn::Item::Verbatim(_)) {
+            self.unanalyzed.insert("an unparsed item".into());
+        }
+        visit::visit_item(self, i);
+    }
+    fn visit_expr(&mut self, e: &'ast syn::Expr) {
+        if matches!(e, syn::Expr::Verbatim(_)) {
+            self.unanalyzed.insert("an unparsed expression".into());
+        }
+        visit::visit_expr(self, e);
+    }
+    fn visit_type(&mut self, t: &'ast syn::Type) {
+        if matches!(t, syn::Type::Verbatim(_)) {
+            self.unanalyzed.insert("an unparsed type".into());
+        }
+        visit::visit_type(self, t);
     }
     fn visit_block(&mut self, b: &'ast syn::Block) {
         self.enter(b.stmts.iter().filter_map(|s| match s {
@@ -998,7 +1110,13 @@ impl<'ast> Visit<'ast> for Paths {
                 .segments
                 .first()
                 .is_some_and(|s| s.ident == "std" || s.ident == "core" || s.ident == "alloc");
-        let plain = std_path && PLAIN_MACROS.contains(&name.as_str());
+        // A `use` binding of the same name (`use other::vec;`) means another macro.
+        let bound =
+            m.path.segments.len() == 1 && self.scopes.iter().any(|s| s.aliases.contains_key(&name));
+        let plain = std_path && !bound && PLAIN_MACROS.contains(&name.as_str());
+        if plain && m.path.segments.len() == 1 {
+            self.plain_macros.insert(name.clone());
+        }
         let parsed = plain && self.plain_arguments(m, &name);
         if !parsed {
             self.unanalyzed.insert(format!("{name}!"));

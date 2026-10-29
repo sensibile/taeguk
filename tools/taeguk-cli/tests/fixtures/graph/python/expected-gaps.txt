@@ -8,3 +8,4 @@ python sys_path_unresolved tests/test_aliases.py
 python dynamic_import tests/test_reload.py
 python dynamic_import tests/test_builtins.py
 python sys_path_unresolved tests/test_param.py
+python sys_path_unresolved tests/test_nested.py

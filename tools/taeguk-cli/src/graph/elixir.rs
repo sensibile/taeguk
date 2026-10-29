@@ -154,14 +154,12 @@ const DYNAMIC: [&str; 4] = [
 /// `mod.execute`, `state.mod.run x`, `@impl.call()`): with or without parentheses this may be a
 /// call on a module chosen at runtime, which xref cannot record. Map field access looks the
 /// same and is matched too (allow-list: only what is known to be static passes). Anonymous calls
-/// `fun.(x)`, aliases (`Enum.map`), atoms (`:ets.new`) and comments are not matched.
+/// `fun.(x)`, aliases (`Enum.map`) and atoms (`:ets.new`) are not matched; text in comments and
+/// strings is matched too.
 fn variable_call(line: &str) -> bool {
-    // A comment starts at `#` that does not open an interpolation (`#{`).
-    let cut = line
-        .match_indices('#')
-        .find(|(i, _)| !line[i + 1..].starts_with('{'))
-        .map_or(line.len(), |(i, _)| i);
-    let b = &line.as_bytes()[..cut];
+    // Comments are not cut off: `#` also appears in strings and sigils, and telling them apart
+    // needs a tokenizer. A match inside a comment only adds a gap.
+    let b = line.as_bytes();
     let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
     (1..b.len()).any(|i| {
         if b[i] != b'.' || !ident(b[i - 1]) {
@@ -346,17 +344,13 @@ mod tests {
             "state.count + 1",
             "x = map.value",
             "\"#{x}\" <> mod.run()",
+            "_label = \"#\"; mod.execute()",
+            "# mod.run()",
             "@impl.call()",
         ] {
             assert!(variable_call(line), "{line}");
         }
-        for line in [
-            "Enum.map(xs, f)",
-            ":ets.new(:t, [])",
-            "fun.(x)",
-            "# mod.run()",
-            "Fx.B.b()",
-        ] {
+        for line in ["Enum.map(xs, f)", ":ets.new(:t, [])", "fun.(x)", "Fx.B.b()"] {
             assert!(!variable_call(line), "{line}");
         }
     }

@@ -175,6 +175,10 @@ def sys_path_changes(tree, path, sys_names):
     classes run later with values not known statically (parameters, locals, reassignments), so
     each one is unresolved."""
     env, front, back, unresolved = {}, [], [], []
+    # Nodes inside any function, lambda or class body, wherever it is nested (`if`, `try` ...).
+    inside = {id(n) for f in ast.walk(tree)
+              if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef))
+              for n in ast.walk(f) if n is not f}
 
     def changes(scope, current, deferred):
         for node in ast.walk(scope):
@@ -200,7 +204,7 @@ def sys_path_changes(tree, path, sys_names):
             try:
                 if arg is None:
                     raise Unresolved(f"sys.path.{method}")
-                if deferred:
+                if deferred or id(node) in inside:
                     # Inside a function or class the values at call time (parameters, locals,
                     # later reassignments) are not known statically.
                     raise Unresolved(f"sys.path.{method} inside a function or class")
