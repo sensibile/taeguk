@@ -1097,6 +1097,90 @@ fn go_embed_at_module_root_can_be_queried() {
 }
 
 #[test]
+fn rust_path_attribute_walks_links_like_the_os() {
+    if !available("cargo", "--version") {
+        return;
+    }
+    // `lnk/..` after a link to `real/deep` is `real`, as the kernel walks it, not `.`.
+    let w = work("rust");
+    let src = w.repo().join("app/src");
+    fs::create_dir_all(src.join("real/deep")).unwrap();
+    fs::write(
+        src.join("real/choice.rs"),
+        "use fx_core::model::Item;\npub fn take(_: Item) {}\n",
+    )
+    .unwrap();
+    fs::write(src.join("choice.rs"), "pub fn take() {}\n").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("real/deep", src.join("lnk")).unwrap();
+    let main = fs::read_to_string(src.join("main.rs")).unwrap();
+    fs::write(
+        src.join("main.rs"),
+        format!("#[path = \"lnk/../choice.rs\"]\nmod choice;\n{main}"),
+    )
+    .unwrap();
+    git(&w.repo(), &["add", "-A"]);
+    git(&w.repo(), &["commit", "-qm", "path link"]);
+    let g = build(&w, "rust");
+    assert_eq!(g["status"], "PASS", "{g}");
+    let ids: Vec<&str> = g["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["id"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains(&"rust:app/src/real/choice.rs"), "{ids:?}");
+    assert!(!ids.contains(&"rust:app/src/choice.rs"), "{ids:?}");
+    assert!(
+        g["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["from"] == "rust:app/src/real/choice.rs"
+                && e["to"] == "rust:core/src/model.rs"),
+        "{g}"
+    );
+}
+
+#[test]
+fn go_configuration_outside_root_is_not_read() {
+    if !available("go", "version") {
+        return;
+    }
+    // An ignored go.mod linked to another project's manifest: its module path must not reach
+    // the graph, and the graph is FAIL.
+    let w = work("go");
+    let outside = w.0.join("outside.mod");
+    fs::write(&outside, "module corp.example/secret\n\ngo 1.22\n").unwrap();
+    git(&w.repo(), &["rm", "-q", "--cached", "go.mod"]);
+    fs::write(w.repo().join(".gitignore"), "/go.mod\n").unwrap();
+    git(&w.repo(), &["add", "-A"]);
+    git(&w.repo(), &["commit", "-qm", "ignore go.mod"]);
+    fs::remove_file(w.repo().join("go.mod")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, w.repo().join("go.mod")).unwrap();
+    let (ok, v) = taeguk(&[
+        "graph",
+        "build",
+        w.repo().to_str().unwrap(),
+        "--out",
+        w.graph().to_str().unwrap(),
+        "--lang",
+        "go",
+    ]);
+    assert!(ok, "{v}");
+    let graph = fs::read_to_string(w.graph()).unwrap();
+    assert!(!graph.contains("corp.example"), "{graph}");
+    let g: Value = serde_json::from_str(&graph).unwrap();
+    assert_eq!(g["status"], "FAIL", "{g}");
+    // A go.work above ROOT is not used (go would otherwise search parent directories for it).
+    let w = work("go");
+    fs::write(w.0.join("go.work"), "this is not a go.work file\n").unwrap();
+    let g = build(&w, "go");
+    assert_eq!(g["status"], "PASS", "{g}");
+}
+
+#[test]
 fn git_waiting_on_a_fifo_is_bounded() {
     if !available("python3", "--version") {
         return;

@@ -1,6 +1,6 @@
 use super::{
-    Analyzer, Edge, Gap, Node, Partial, TempDir, check_source, exec, normalize, read_source,
-    relative, tool_version,
+    Analyzer, Edge, Gap, Node, Partial, TempDir, check_source, exec, read_source, relative,
+    tool_version,
 };
 use serde::Deserialize;
 use std::{
@@ -577,18 +577,17 @@ impl Walk<'_> {
                 continue;
             }
             let found = match &attr_path {
-                Some(p) => Some(normalize(&if file_level {
+                Some(p) => physical(&if file_level {
                     file_dir.join(p)
                 } else {
                     mod_dir.join(p)
-                }))
-                .filter(|f| f.is_file()),
+                }),
                 None => [
                     mod_dir.join(format!("{name}.rs")),
                     mod_dir.join(&name).join("mod.rs"),
                 ]
-                .into_iter()
-                .find(|f| f.is_file()),
+                .iter()
+                .find_map(|f| physical(f)),
             };
             let Some(child) = found else {
                 let shown = self.shown(file);
@@ -1271,6 +1270,15 @@ impl<'ast> Visit<'ast> for Paths {
         ));
         visit::visit_path(self, p);
     }
+}
+
+/// The module file as the OS opens it: the directories resolved (links first, then `..`, as
+/// the kernel walks `link/..`), the file name kept, so a linked module file is still named by
+/// its own path. None when that is not a regular file.
+fn physical(path: &Path) -> Option<PathBuf> {
+    let name = path.file_name()?;
+    let dir = path.parent()?.canonicalize().ok()?;
+    Some(dir.join(name)).filter(|f| f.is_file())
 }
 
 #[cfg(test)]

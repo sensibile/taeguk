@@ -2,7 +2,7 @@ use super::{
     Analyzer, Edge, Gap, Node, Partial, TempDir, check_source, exec, relative, tool_version,
 };
 use serde::Deserialize;
-use std::{collections::BTreeSet, path::Path, process::Command};
+use std::{collections::BTreeSet, fs, path::Path, process::Command};
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "PascalCase", default)]
@@ -31,6 +31,7 @@ struct Package {
 #[serde(rename_all = "PascalCase", default)]
 struct Module {
     main: bool,
+    go_mod: String,
 }
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "PascalCase", default)]
@@ -56,6 +57,14 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
     // `go -C ROOT` runs from a directory outside ROOT, so a version manager picks go from the
     // user's environment, not from files in the target repository.
     let dir = TempDir::new("go")?;
+    // go looks for go.work in ROOT and every directory above it; only one inside ROOT is used.
+    let work = root.join("go.work");
+    let gowork = if fs::symlink_metadata(&work).is_ok() {
+        check_source(root, &work)?;
+        work.into_os_string()
+    } else {
+        "off".into()
+    };
     let o = exec(
         Command::new("go")
             .arg("-C")
@@ -69,7 +78,8 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
             .env("GOSUMDB", "off")
             .env("GOVCS", "*:off")
             .env("GOTOOLCHAIN", "local")
-            .env("GOFLAGS", "-mod=readonly"),
+            .env("GOFLAGS", "-mod=readonly")
+            .env("GOWORK", gowork),
     )?;
     a.exit_code = o.code;
     let mut packages = Vec::new();
@@ -83,6 +93,9 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
     // resolve inside ROOT (an ignored `.go` link could bring an outside file's imports).
     let inside = |p: &Package| {
         Path::new(&p.dir).starts_with(root)
+            && p.module.as_ref().is_none_or(|m| {
+                m.go_mod.is_empty() || check_source(root, Path::new(&m.go_mod)).is_ok()
+            })
             && [
                 &p.go_files,
                 &p.cgo_files,
@@ -158,6 +171,10 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
                 format!("{rel_dir}/{f}")
             }
         };
+        // The module's go.mod names the package; it must resolve inside ROOT like the sources.
+        if let Some(m) = p.module.as_ref().filter(|m| !m.go_mod.is_empty()) {
+            check_source(root, Path::new(&m.go_mod))?;
+        }
         // Untracked files in a package directory are read by go too; they must also stay inside ROOT.
         for f in [
             &p.go_files,

@@ -81,6 +81,18 @@ def candidates(name, roots, files):
         if target:
             inits = [join(r, *parts[:i], "__init__.py") for i in range(1, len(parts))]
             hits[target] = [i for i in inits if i in files]
+    if hits or len(parts) < 2:
+        return hits
+    # A submodule that is a directory without __init__.py is a namespace package: importing it
+    # still runs the enclosing packages' __init__.py, which are what it depends on here. (A
+    # top-level directory can lose to an installed module of the same name, and has no
+    # __init__.py to depend on anyway.)
+    for r in roots:
+        if os.path.isdir(os.path.join(CTX["root"], join(r, *parts))):
+            inits = [join(r, *parts[:i], "__init__.py") for i in range(1, len(parts))]
+            inits = [i for i in inits if i in files]
+            if inits:
+                hits[inits[-1]] = inits[:-1]
     return hits
 
 

@@ -604,8 +604,14 @@ fn is_input(rel: &str, ignored: bool, langs: &[String]) -> bool {
 /// Hash of every analyzer input under ROOT: files matching the language source patterns
 /// (untracked and ignored ones included) and the files analyzers reported reading (`read`), so
 /// impact can tell when anything the graph was built from has changed since. Files over
-/// MAX_SOURCE are hashed by size and modification time.
-fn input_fingerprint(root: &Path, langs: &[String], read: &[String]) -> Result<String, String> {
+/// MAX_SOURCE are hashed by size and modification time. Also returns the inputs that resolve
+/// outside ROOT: a tool reading one (a `go.mod` linked out of ROOT) brings outside content into
+/// the graph, so build fails on them.
+fn input_fingerprint(
+    root: &Path,
+    langs: &[String],
+    read: &[String],
+) -> Result<(String, Vec<String>), String> {
     // An entry ending in `/` stands for every file in that directory tree (`//go:embed`).
     let trees: Vec<String> = read
         .iter()
@@ -651,6 +657,7 @@ fn input_fingerprint(root: &Path, langs: &[String], read: &[String]) -> Result<S
         }
     }
     let mut h = Sha256::new();
+    let mut outside = Vec::new();
     for rel in &files {
         h.update(rel.as_bytes());
         h.update([0]);
@@ -667,6 +674,7 @@ fn input_fingerprint(root: &Path, langs: &[String], read: &[String]) -> Result<S
             Ok(real) if !real.starts_with(root) => {
                 h.update(b"outside ROOT");
                 h.update([0]);
+                outside.push(rel.clone());
                 continue;
             }
             _ => {}
@@ -695,7 +703,7 @@ fn input_fingerprint(root: &Path, langs: &[String], read: &[String]) -> Result<S
         }
         h.update([0]);
     }
-    Ok(format!("sha256:{:x}", h.finalize()))
+    Ok((format!("sha256:{:x}", h.finalize()), outside))
 }
 
 /// Writes a new file next to `out` (already resolved to a real path by `output_path`) and renames
@@ -1133,6 +1141,25 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
     edges.dedup();
     gaps.sort();
     gaps.dedup();
+    let inputs = if scanned.is_ok() {
+        let (inputs, outside) = input_fingerprint(&root, &langs, &read)?;
+        // An input linked out of ROOT may have been read by a tool; no analyzer result is kept.
+        if let Some(first) = outside.first() {
+            for a in analyzers.iter_mut().filter(|a| a.status == "PASS") {
+                a.status = "FAIL".into();
+                a.error = Some(format!(
+                    "analyzer input {first} resolves outside ROOT ({} such inputs)",
+                    outside.len()
+                ));
+            }
+            nodes.clear();
+            edges.clear();
+            gaps.clear();
+        }
+        inputs
+    } else {
+        String::new()
+    };
     let status = if analyzers.iter().all(|a| a.status == "PASS") {
         "PASS"
     } else {
@@ -1144,11 +1171,7 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
         commit,
         dirty: !dirty_paths.is_empty(),
         dirty_paths,
-        inputs: if scanned.is_ok() {
-            input_fingerprint(&root, &langs, &read)?
-        } else {
-            String::new()
-        },
+        inputs,
         read,
         generated_at: SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1422,7 +1445,9 @@ pub(crate) fn run(args: &[String]) -> Result<Value, String> {
             changed.dedup();
             let dirty = !dirty_paths(root)?.is_empty();
             let langs: Vec<String> = g.analyzers.iter().map(|a| a.lang.clone()).collect();
-            let inputs = input_fingerprint(root, &langs, &g.read).unwrap_or_default();
+            let inputs = input_fingerprint(root, &langs, &g.read)
+                .map(|(inputs, _)| inputs)
+                .unwrap_or_default();
             Ok(impact(
                 &g,
                 root,
