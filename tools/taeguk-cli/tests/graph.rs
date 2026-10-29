@@ -425,13 +425,10 @@ fn analyzer_failures_mark_the_graph_failed() {
             .set_modified(UNIX_EPOCH + Duration::from_millis(second * 1000 + 900))
             .unwrap();
         assert_eq!(build(&w, "elixir")["status"], "PASS");
-        let touched = Command::new("touch")
-            .args(["-t", "209901010000"])
-            .arg(w.repo().join("lib/fx/a.ex"))
-            .status()
-            .unwrap();
-        assert!(touched.success());
-        assert_fails(&w, "elixir", "older than 1 source file");
+        // An edit after the compile (same second or not) is seen through the content digest.
+        let a = w.repo().join("lib/fx/a.ex");
+        fs::write(&a, fs::read_to_string(&a).unwrap() + "\n# edited\n").unwrap();
+        assert_fails(&w, "elixir", "changed since the last compile");
         assert_eq!(fs::metadata(&manifest).unwrap().modified().unwrap(), before);
         // A source deleted after the last compile is still in the manifest, so the build is stale.
         let w = work("elixir");
@@ -1128,9 +1125,11 @@ fn impact_follows_reverse_edges_and_reports_limits() {
             "tests/test_file.py",
             "tests/test_fromexec.py",
             "tests/test_helper.py",
+            "tests/test_match.py",
             "tests/test_nested.py",
             "tests/test_order.py",
             "tests/test_param.py",
+            "tests/test_patch.py",
             "tests/test_paths.py",
             "tests/test_reload.py",
             "tests/test_shadow.py",

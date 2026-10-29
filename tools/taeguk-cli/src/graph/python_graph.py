@@ -125,15 +125,12 @@ def path_bindings(tree, shadowed):
                     modules[bound] = "os.path"
                 else:
                     other.add(bound)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            other.add(node.name)
-        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
-            other.add(node.id)
-        elif isinstance(node, ast.arg):
-            other.add(node.arg)
-        elif isinstance(node, (ast.Global, ast.Nonlocal)):
-            other.update(node.names)
+        else:
+            other.update(bound_names(node))
     CTX["file_rebound"] = "__file__" in other
+    # A patched module attribute (`pathlib.Path = fake`) changes what its functions do.
+    if module_patched(tree, set(modules) | {"pathlib", "os"}):
+        return {}, {}
     # A wildcard import (`from helper import *`) can rebind any name, so no binding is trusted.
     if any(isinstance(n, ast.ImportFrom) and any(a.name == "*" for a in n.names) for n in ast.walk(tree)):
         CTX["file_rebound"] = True
@@ -235,6 +232,42 @@ SYS_IMPORT_STATE = ("meta_path", "path_hooks", "path_importer_cache")
 DYNAMIC_MODULES = ("importlib", "runpy", "pkgutil", "imp", "zipimport")
 # Builtins that run code given as data; what that code imports is not seen statically.
 CODE_EXEC = ("exec", "eval", "compile")
+
+
+def bound_names(node):
+    """Names a node binds: assignment and deletion targets, parameters, definitions, imports,
+    `except ... as`, and match patterns (`case p`, `case [*rest]`, `case {**rest}`)."""
+    if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        return [node.id]
+    if isinstance(node, ast.arg):
+        return [node.arg]
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return [node.name]
+    if isinstance(node, (ast.Global, ast.Nonlocal)):
+        return list(node.names)
+    if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+        return [node.name]
+    if isinstance(node, ast.MatchMapping) and node.rest:
+        return [node.rest]
+    if isinstance(node, ast.ExceptHandler) and node.name:
+        return [node.name]
+    return []
+
+
+def module_patched(tree, modules):
+    """Whether code changes an attribute of one of `modules` (`pathlib.Path = ...`,
+    `setattr(os.path, ...)`, `del pathlib.Path`), which makes its functions unknown."""
+    def is_module(node):
+        if isinstance(node, ast.Name):
+            return node.id in modules
+        return isinstance(node, ast.Attribute) and is_module(node.value)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)) and is_module(node.value):
+            return True
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ("setattr", "delattr")
+                and node.args and is_module(node.args[0])):
+            return True
+    return False
 
 
 def assigned_names(node):
@@ -383,8 +416,8 @@ def sys_path_changes(tree, path, sys_names):
             # Any other binding (tuple unpacking, augmented or annotated assignment, `for`,
             # `with ... as`, walrus, `del`) leaves the name's value unknown.
             for node in ast.walk(stmt):
-                if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
-                    env.pop(node.id, None)
+                for name in bound_names(node):
+                    env.pop(name, None)
     for stmt in later:
         changes(stmt, env, True)
     return front, back, unresolved

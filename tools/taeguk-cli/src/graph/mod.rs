@@ -2,6 +2,7 @@ mod elixir;
 mod go;
 mod python;
 mod rust;
+mod sha1;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -259,6 +260,33 @@ fn dirty_paths(root: &Path) -> Result<Vec<String>, String> {
     paths.dedup();
     Ok(paths)
 }
+/// Opens a file for reading without blocking (a FIFO swapped in after a check returns at once)
+/// and confirms through the open handle that it is a regular file.
+pub(crate) fn open_regular(path: &Path) -> std::io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK);
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::other("not a regular file"));
+    }
+    Ok(file)
+}
+
+/// The git blob id of a file's content as it is (no filters), in the repository's hash.
+fn blob_id(path: &Path, sha256: bool) -> std::io::Result<String> {
+    let mut data = Vec::new();
+    open_regular(path)?.read_to_end(&mut data)?;
+    let mut object = format!("blob {}\0", data.len()).into_bytes();
+    object.extend_from_slice(&data);
+    Ok(if sha256 {
+        format!("{:x}", Sha256::digest(&object))
+    } else {
+        sha1::hex(&object)
+    })
+}
+
 /// Index entries whose working tree file differs, compared without filters.
 fn worktree_changes(root: &Path) -> Result<Vec<String>, String> {
     if root.to_string_lossy().contains('\n') {
@@ -286,26 +314,15 @@ fn worktree_changes(root: &Path) -> Result<Vec<String>, String> {
         }
     }
     if !regular.is_empty() {
-        // Absolute paths: git reads --stdin-paths relative to the repository top, not ROOT.
-        let input: String = regular
-            .iter()
-            .map(|(p, _)| format!("{}\n", root.join(p).display()))
-            .collect();
-        let out = git_input(
-            root,
-            &["hash-object", "--no-filters", "--stdin-paths"],
-            input.as_bytes(),
-        )?;
-        let hashes: Vec<&str> = std::str::from_utf8(&out)
-            .map_err(|_| "git returned a non-UTF-8 hash")?
-            .lines()
-            .collect();
-        if hashes.len() != regular.len() {
-            return Err("git hash-object returned an unexpected number of hashes".into());
-        }
-        for ((path, sha), hash) in regular.into_iter().zip(hashes) {
-            if sha != hash {
-                changed.push(path);
+        // Hashed here rather than by git: the file is opened without blocking and checked to
+        // be regular through the open handle, so one swapped for a FIFO cannot stall the CLI.
+        let sha256 = String::from_utf8_lossy(&git(root, &["rev-parse", "--show-object-format"])?)
+            .trim()
+            == "sha256";
+        for (path, sha) in regular {
+            match blob_id(&root.join(&path), sha256) {
+                Ok(id) if id == sha => {}
+                _ => changed.push(path),
             }
         }
     }
@@ -509,9 +526,14 @@ fn input_fingerprint(root: &Path, langs: &[String], read: &[String]) -> Result<S
                     .unwrap_or(0);
                 h.update(format!("size={} mtime={mtime}", meta.len()).as_bytes());
             }
-            Ok(meta) if meta.is_file() => h.update(Sha256::digest(
-                fs::read(root.join(rel)).map_err(|e| format!("{rel}: {e}"))?,
-            )),
+            Ok(meta) if meta.is_file() => {
+                // Opened without blocking and re-checked, in case it was swapped for a FIFO.
+                let mut data = Vec::new();
+                match open_regular(&root.join(rel)).and_then(|mut f| f.read_to_end(&mut data)) {
+                    Ok(_) => h.update(Sha256::digest(&data)),
+                    Err(_) => h.update(b"unreadable"),
+                }
+            }
             _ => h.update(b"absent"),
         }
         h.update([0]);
@@ -723,7 +745,7 @@ pub(crate) fn read_source(root: &Path, path: &Path) -> Result<(PathBuf, String),
     let shown = || relative(root, path).unwrap_or_else(|| path.display().to_string());
     let real = check_source(root, path)?;
     let mut text = String::new();
-    fs::File::open(&real)
+    open_regular(&real)
         .and_then(|f| f.take(MAX_SOURCE + 1).read_to_string(&mut text))
         .map_err(|e| format!("{}: {e}", shown()))?;
     if text.len() as u64 > MAX_SOURCE {
@@ -990,7 +1012,7 @@ fn read_graph(path: &Path) -> Result<Graph, String> {
         ));
     }
     let mut data = Vec::new();
-    fs::File::open(path)
+    open_regular(path)
         .and_then(|f| f.take(MAX_GRAPH + 1).read_to_end(&mut data))
         .map_err(|e| format!("{}: {e}", shown()))?;
     if data.len() as u64 > MAX_GRAPH {

@@ -2,7 +2,12 @@ use super::{
     Analyzer, Edge, Gap, Node, Partial, TempDir, check_source, exec_input, read_source, relative,
     tool_version,
 };
-use std::{collections::BTreeSet, env, fs, path::Path, process::Command, time::UNIX_EPOCH};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    env, fs,
+    path::Path,
+    process::Command,
+};
 
 /// Reads the Mix compile manifest with the `elixir` executable only. `mix` is not run: it
 /// evaluates the project's `mix.exs`, which is code from the target repository. The manifest
@@ -41,6 +46,8 @@ case :erlang.binary_to_term(File.read!(path)) do
     for {src, info} <- sources, is_binary(src), is_tuple(info), tuple_size(info) > 6,
         elem(info, 0) == :source do
       IO.puts("node\t" <> src)
+      # The content digest Mix recorded at the last compile, compared with the file now.
+      if is_binary(elem(info, 3)), do: IO.puts("digest\t#{src}\t#{Base.encode16(elem(info, 3))}")
       edges =
         for {kind, i} <- [compile: 4, export: 5, runtime: 6], m <- atoms.(elem(info, i)),
             to <- files.(m), to != src, reduce: %{} do
@@ -70,11 +77,23 @@ const SCAN: &str = r##"
 gap = fn rel, line, detail -> IO.puts("gap\t#{rel}\t#{line || 0}\t#{detail}") end
 dynamic = [
   {[:Kernel], :apply}, {[:Module], :concat}, {[:Module], :safe_concat},
-  {[:String], :to_atom}, {[:String], :to_existing_atom}
+  {[:String], :to_atom}, {[:String], :to_existing_atom}, {[:Function], :capture}
 ]
 for line <- String.split(IO.read(:stdio, :eof), "\n", trim: true),
     [rel, file] = String.split(line, "\t", parts: 2) do
-  case Code.string_to_quoted(File.read!(file), columns: false, emit_warnings: false) do
+  contents = File.read!(file)
+  # The same digest Mix computes for a source (Mix.Compilers.Elixir.digest_contents/1).
+  digest =
+    try do
+      case :erlang.system_info(:wordsize) do
+        8 -> :crypto.hash(:blake2b, contents)
+        _ -> :crypto.hash(:blake2s, contents)
+      end
+    rescue
+      _ -> :erlang.md5(contents)
+    end
+  IO.puts("digest\t#{rel}\t#{Base.encode16(digest)}")
+  case Code.string_to_quoted(contents, columns: false, emit_warnings: false) do
     {:ok, ast} ->
       # `alias Kernel, as: K` and `alias Mod.{A, B}` make short names stand for full ones.
       aliases =
@@ -191,6 +210,32 @@ for line <- String.split(IO.read(:stdio, :eof), "\n", trim: true),
         node ->
           node
       end)
+      # Module, function and arguments passed as data (`spawn(m, :run, [])`,
+      # `Task.start(m, :run, [])`, `{m, :run, []}` in a child spec) may be called by the
+      # receiving code: any argument list or 3-tuple with a runtime module, then an atom, then
+      # a list or variable, is a gap.
+      runtime = fn
+        {name, _, ctx} when is_atom(name) and is_atom(ctx) -> true
+        {:@, _, _} -> true
+        _ -> false
+      end
+      mfa? = fn items ->
+        items
+        |> Enum.chunk_every(3, 1, :discard)
+        |> Enum.any?(fn [m, f, a] ->
+          runtime.(m) and is_atom(f) and f not in [true, false, nil] and
+            (is_list(a) or runtime.(a))
+        end)
+      end
+      Macro.prewalk(ast, fn
+        {:{}, meta, items} = node when is_list(items) ->
+          if mfa?.(items), do: gap.(rel, meta[:line], "module and function passed at runtime")
+          node
+        {_, meta, args} = node when is_list(args) and is_list(meta) ->
+          if mfa?.(args), do: gap.(rel, meta[:line], "module and function passed at runtime")
+          node
+        node -> node
+      end)
     {:error, _} ->
       gap.(rel, 0, "file does not parse; its calls are not analyzed")
   end
@@ -252,21 +297,6 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
             "{shown} must be a regular file inside ROOT of at most {MAX_MANIFEST} bytes"
         ));
     }
-    // The manifest describes the last compile, so a build older than the sources is stale.
-    let built = modified(&real).ok_or_else(|| format!("{shown}: no modification time"))?;
-    let newer: Vec<&String> = tracked
-        .iter()
-        .filter(|f| f.ends_with(".ex") || f.ends_with(".exs"))
-        .filter(|f| !f.starts_with("deps/") && !f.starts_with("test/"))
-        .filter(|f| modified(&root.join(f)).is_some_and(|m| m > built))
-        .collect();
-    if !newer.is_empty() {
-        return Err(format!(
-            "_build/{mix_env} is older than {} source file(s), e.g. {}; compile the project first",
-            newer.len(),
-            newer[0]
-        ));
-    }
     a.command[3] = shown.clone();
     // Run outside ROOT so nothing from the target repository is picked up from the directory.
     let tmp = TempDir::new("elixir")?;
@@ -280,7 +310,22 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
     if o.code != Some(0) {
         return Err(format!("reading {shown} failed: {}", o.stderr.trim()));
     }
-    let mut out = parse_refs(&String::from_utf8_lossy(&o.stdout))?;
+    let (mut out, recorded) = parse_refs(&String::from_utf8_lossy(&o.stdout))?;
+    // The manifest describes the last compile. A tracked `.ex` source in a directory the
+    // build compiles (the top-level directories of the sources it lists, `lib` by default) that
+    // it does not list was added since; one whose content digest differs from the recorded one
+    // was edited since. Vendored code elsewhere is not part of this build.
+    let listed: BTreeSet<&str> = out.nodes.iter().map(|n| n.files[0].as_str()).collect();
+    let top = |f: &str| f.split('/').next().unwrap_or(f).to_string();
+    let compiled: BTreeSet<String> = listed.iter().map(|f| top(f)).collect();
+    if let Some(new) = tracked
+        .iter()
+        .find(|f| f.ends_with(".ex") && compiled.contains(&top(f)) && !listed.contains(f.as_str()))
+    {
+        return Err(format!(
+            "_build/{mix_env} does not include {new}; compile the project first"
+        ));
+    }
     // The manifest still lists sources deleted since the last compile; their edges are stale.
     let current: BTreeSet<&str> = tracked.iter().map(String::as_str).collect();
     let gone: Vec<&str> = out
@@ -319,6 +364,14 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
         return Err(format!("scanning sources failed: {}", o.stderr.trim()));
     }
     for line in String::from_utf8_lossy(&o.stdout).lines() {
+        if let ["digest", file, now] = line.split('\t').collect::<Vec<_>>()[..] {
+            if recorded.get(file).map(String::as_str) != Some(now) {
+                return Err(format!(
+                    "{file} changed since the last compile of _build/{mix_env}; compile the project first"
+                ));
+            }
+            continue;
+        }
         let [_, file, line_no, detail] = line.splitn(4, '\t').collect::<Vec<_>>()[..] else {
             return Err(format!("unexpected source scan line: {line}"));
         };
@@ -332,19 +385,19 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
     Ok(out)
 }
 
-fn modified(path: &Path) -> Option<u64> {
-    let t = fs::metadata(path).and_then(|m| m.modified()).ok()?;
-    t.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs())
-}
-
 /// Parses the reader output: `node\tFILE` and `edge\tFROM\tTO\tKIND` lines.
-fn parse_refs(text: &str) -> Result<Partial, String> {
+/// Also returns the content digest the manifest recorded per source (`digest\tFILE\tHEX`).
+fn parse_refs(text: &str) -> Result<(Partial, BTreeMap<String, String>), String> {
     let mut files = BTreeSet::new();
     let mut out = Partial::default();
+    let mut digests = BTreeMap::new();
     for line in text.lines().filter(|l| !l.is_empty()) {
         match line.split('\t').collect::<Vec<_>>().as_slice() {
             ["node", f] => {
                 files.insert(f.to_string());
+            }
+            ["digest", f, hex] => {
+                digests.insert(f.to_string(), hex.to_string());
             }
             ["edge", from, to, kind @ ("compile" | "export" | "runtime")] => {
                 files.insert(from.to_string());
@@ -362,7 +415,7 @@ fn parse_refs(text: &str) -> Result<Partial, String> {
         .into_iter()
         .map(|f| Node::new("elixir", f.clone(), vec![f]))
         .collect();
-    Ok(out)
+    Ok((out, digests))
 }
 
 #[cfg(test)]
@@ -370,7 +423,7 @@ mod tests {
     use super::*;
     #[test]
     fn reader_lines_become_edges() {
-        let p = parse_refs("node\tlib/a.ex\nedge\tlib/a.ex\tlib/b.ex\tcompile\nedge\tlib/b.ex\tlib/c.ex\truntime\n").unwrap();
+        let (p, _) = parse_refs("node\tlib/a.ex\nedge\tlib/a.ex\tlib/b.ex\tcompile\nedge\tlib/b.ex\tlib/c.ex\truntime\n").unwrap();
         let kinds: Vec<_> = p.edges.iter().map(|e| e.kind.as_str()).collect();
         assert_eq!(kinds, ["compile", "runtime"]);
         assert_eq!(p.nodes.len(), 3);

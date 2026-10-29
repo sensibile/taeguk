@@ -8,6 +8,7 @@ use std::{collections::BTreeSet, path::Path, process::Command};
 #[serde(rename_all = "PascalCase", default)]
 struct Package {
     import_path: String,
+    name: String,
     for_test: String,
     dir: String,
     standard: bool,
@@ -91,8 +92,15 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
     let main: Vec<&Package> = packages
         .iter()
         // Test variants ("p [p.test]") and generated test mains repeat the packages listed plainly.
+        // A generated test main is recognized by its generated source in the build cache (an
+        // absolute file name), not by a `.test` suffix a real package path may also have.
         .filter(|p| !p.standard && p.module.as_ref().is_some_and(|m| m.main))
-        .filter(|p| p.for_test.is_empty() && !p.import_path.ends_with(".test"))
+        .filter(|p| p.for_test.is_empty())
+        .filter(|p| {
+            !(p.name == "main"
+                && p.import_path.ends_with(".test")
+                && p.go_files.iter().any(|f| Path::new(f).is_absolute()))
+        })
         .collect();
     let ids: BTreeSet<&str> = main.iter().map(|p| p.import_path.as_str()).collect();
     let mut out = Partial::default();
