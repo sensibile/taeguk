@@ -1,5 +1,10 @@
 name: Checks
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  # Weekly validation of main without changes: Monday 08:17 KST (validation-health).
+  schedule:
+    - cron: '17 23 * * 0'
 permissions:
   contents: read
 jobs:

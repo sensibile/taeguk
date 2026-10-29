@@ -53,6 +53,17 @@ GitHub의 Codex 자동 리뷰는 저장소가 아니라 Codex 설정에서 켜�
 - 커버리지 수치는 결과나 목표로 보고하지 않는다. "커버리지는 측정 도구이지 목표가 아니다"를 규칙으로 고정할지는 [커버리지 측정 도구 개정안](rules/proposals/coverage-as-instrument.md)에서 확인을 기다린다.
 - 측정 도구는 Python `coverage`(`.taeguk/test-gap/venv`에 격리 설치), Rust `cargo-llvm-cov`(`llvm-tools-preview` 필요), Elixir 내장 `mix test --cover`다. 저장소 의존성에는 넣지 않았다.
 
+## 검증 건강도 점검
+
+CI는 push와 PR 때만 돌아서 변경이 없는 날의 `main`은 검증을 받지 않는다. 주기 워커는 이 Mac의 로컬 툴체인으로 검증하는데, 코드가 그대로여도 툴체인이 바뀌면 검증이 깨질 수 있다. 2026-10-29 BOSS가 이 점검을 주기 워커로 두는 데 동의했고 제안한 기본값(매일 정리 전 실행, 보고만, 주간 CI 스케줄, 후속 워커 게이트 없음)으로 진행하라고 했다. AGENTS.md상 실행 권한 변경은 BOSS 확인 사항이며 이 지시가 그 확인이다. 의존성·보안 점검은 hoplites의 역할이라 여기서 다루지 않는다.
+
+- 절차는 [`taeguk-validation-health`](../codex/skills/taeguk-validation-health/SKILL.md) 스킬이다. 이 Mac의 로컬 예약 작업으로 매일 08:31, 데일리 정리 전에 돈다. 실행 보고는 main checkout의 `.taeguk/validation-health/`(Git 무시 대상)에 남긴다.
+- 최신 `origin/main` SHA의 분리된 worktree에서 AGENTS.md 검증 전체를 돌린다. DB 기반 `mix test`는 임시 DB와 일회용 token을 쓰고 기존 상태 DB를 건드리지 않는다. 스위트별 상태(PASS, FAIL, UNKNOWN, NOT_RUN), 툴체인 버전, 소요 시간을 남긴다.
+- 실패한 스위트는 같은 SHA에서 한 번 더 돌린다. 다시 실패하면 결정적 실패, 통과하면 간헐 실패 의심이다. 보고 두 건 이상에 나온 간헐 실패는 후보로 보고한다.
+- 보고만 한다. 코드, 테스트, lockfile, 툴체인, 재시도 설정을 바꾸지 않고 PR도 열지 않는다. 정리·테스트 보강 워커의 실행을 막지 않는다.
+- CI에도 주간 스케줄을 둔다. `.github/workflows/rules.yml`이 매주 월요일 08:17(KST)에 `main`을 검증한다. 로컬 점검과 달리 GitHub runner의 툴체인 변화를 본다.
+- 범위는 이 저장소뿐이다. 적용 프로젝트는 그 프로젝트가 BOSS 승인을 기록한 경우에만 돈다.
+
 ## 적용 프로젝트의 정리·테스트 보강
 
 같은 날 BOSS가 "이 정리/테스트 보강 에이전트는 태극을 적용하는 쪽에도 들어가면 좋겠고"라고 했고, 적용 대상과 머지 방식은 제안한 기본값을 골랐다. archon을 먼저 적용하고, 태극과 같이 Codex가 동의한 항목을 자동 머지한다.
