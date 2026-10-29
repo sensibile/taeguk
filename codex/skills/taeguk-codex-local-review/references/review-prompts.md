@@ -94,7 +94,7 @@ Do not modify files.
 
 ## Prior adjudications
 
-Add on a rerun for the same PR or worker run, listing every earlier Codex finding that was not fixed, with the reviewed head SHA, its status and the reason. Fixed findings need no entry; the new diff shows them. Worker items removed after Codex judged them unneeded are not findings and need no entry.
+Add on a rerun for the same PR or worker run, listing every earlier Codex finding that was not fixed, with the reviewed head SHA, its status and the reason. Name in the reason the callers, entry points or sources it relies on. Fixed findings need no entry; the new diff shows them. Worker items removed after Codex judged them unneeded are not findings and need no entry.
 
 ```text
 Earlier rounds on this change produced these findings, already assessed:
