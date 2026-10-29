@@ -46,3 +46,5 @@ rust:app/src/loop_/m1.rs rust:app/src/loop_/m0.rs use
 rust:app/src/loop_/m1.rs rust:app/src/loop_/m2.rs use
 rust:app/src/loop_/m2.rs rust:app/src/loop_/m0.rs use
 rust:app/src/loop_/m2.rs rust:app/src/loop_/m1.rs use
+rust:app/src/allow.rs rust:app/src/cli/widgets.rs use
+rust:app/src/allow.rs rust:core/src/model.rs use

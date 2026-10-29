@@ -1,7 +1,9 @@
+mod allow;
 mod cli;
 mod declared;
 mod facade_user;
 mod globbed;
+mod hidden;
 mod inc;
 mod loop_;
 mod macros;

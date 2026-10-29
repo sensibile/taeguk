@@ -316,7 +316,9 @@ fn is_input(rel: &str, ignored: bool, langs: &[String]) -> bool {
             ["go", "s", "c", "h"].contains(&ext)
                 || ["go.mod", "go.sum", "go.work", "go.work.sum"].contains(&name)
         }
-        "rust" => !under("target") && (ext == "rs" || name == "Cargo.toml" || name == "Cargo.lock"),
+        // Build output is already skipped by the walk; a directory merely named `target` can
+        // hold workspace members.
+        "rust" => ext == "rs" || name == "Cargo.toml" || name == "Cargo.lock",
         "elixir" => !under("deps") && (ext == "ex" || ext == "exs" || name == "mix.lock"),
         "python" => !ignored && (ext == "py" || name == "pyproject.toml"),
         _ => false,

@@ -170,18 +170,11 @@ def is_sys_path(node, sys_names):
 
 
 def sys_path_changes(tree, path, sys_names):
-    """Directories added to sys.path. Module-level statements are evaluated in order, so a
+    """Directories added to sys.path. Only module-level statements are evaluated, in order, so a
     change sees the path variables as they are at that point. Changes inside functions and
-    classes run later; they use the final values, unless a variable they use is assigned more
-    than once at module level, which leaves the value unknown."""
+    classes run later with values not known statically (parameters, locals, reassignments), so
+    each one is unresolved."""
     env, front, back, unresolved = {}, [], [], []
-    assigned = {}
-    for stmt in tree.body:
-        for node in ast.walk(stmt):
-            if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
-                for t in node.targets if isinstance(node, ast.Assign) else [node.target]:
-                    if isinstance(t, ast.Name):
-                        assigned[t.id] = assigned.get(t.id, 0) + 1
 
     def changes(scope, current, deferred):
         for node in ast.walk(scope):
@@ -208,9 +201,9 @@ def sys_path_changes(tree, path, sys_names):
                 if arg is None:
                     raise Unresolved(f"sys.path.{method}")
                 if deferred:
-                    names = [n.id for n in ast.walk(arg) if isinstance(n, ast.Name) and assigned.get(n.id, 0) > 1]
-                    if names:
-                        raise Unresolved(f"{names[0]} is reassigned at module level")
+                    # Inside a function or class the values at call time (parameters, locals,
+                    # later reassignments) are not known statically.
+                    raise Unresolved(f"sys.path.{method} inside a function or class")
                 value = eval_path(arg, path, current)
                 if not isinstance(value, list):
                     raise Unresolved(ast.unparse(arg))

@@ -61,6 +61,8 @@ struct PathRef {
 }
 /// Files one target may expand to; repeated `#[path]` reuse can otherwise grow exponentially.
 const MAX_MODULE_FILES: usize = 10_000;
+/// Module nesting the walk follows; a longer `#[path]` chain would exhaust the stack.
+const MAX_MODULE_DEPTH: usize = 64;
 /// Bounds on alias chains and on the paths one mention may expand to (cfg branches multiply).
 const MAX_ALIAS_DEPTH: usize = 8;
 const MAX_EXPANSIONS: usize = 16;
@@ -375,6 +377,24 @@ impl Walk<'_> {
             ));
         }
         let ast = syn::parse_file(&text).map_err(|e| format!("{}: {e}", self.shown(file)))?;
+        let inner: Vec<String> = ast
+            .attrs
+            .iter()
+            .filter_map(|a| unanalyzed_attribute(&a.meta))
+            .map(|n| format!("#![{n}]"))
+            .collect();
+        if !inner.is_empty() {
+            let shown = self.shown(file);
+            self.gaps.push(Gap::new(
+                "rust",
+                "construct_not_analyzed",
+                Some(&shown),
+                format!(
+                    "code generated or hidden by {} is not analyzed",
+                    inner.join(", ")
+                ),
+            ));
+        }
         let file_dir = file.parent().unwrap_or(self.root).to_path_buf();
         self.active.push(real);
         let result = self.items(&ast.items, path, file, &file_dir, mod_dir, true);
@@ -393,11 +413,22 @@ impl Walk<'_> {
     ) -> Result<(), String> {
         let mut paths = Paths::new(list);
         let mut children: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        if path.len() > MAX_MODULE_DEPTH {
+            return Err(format!(
+                "{}: modules nested deeper than {MAX_MODULE_DEPTH}",
+                self.shown(file)
+            ));
+        }
         for item in list {
             let syn::Item::Mod(m) = item else {
                 paths.visit_item(item);
                 continue;
             };
+            for a in &m.attrs {
+                if let Some(n) = unanalyzed_attribute(&a.meta) {
+                    paths.unanalyzed.insert(format!("#[{n}]"));
+                }
+            }
             let name = m.ident.to_string();
             let ids = children.entry(name.clone()).or_default();
             let id = match ids.len() {
@@ -486,18 +517,17 @@ impl Walk<'_> {
         m.children.extend(children);
         m.paths.extend(paths.paths);
         m.exports = paths.scopes.swap_remove(0);
-        if !paths.opaque_macros.is_empty() {
+        if !paths.unanalyzed.is_empty() {
             let shown = self.shown(file);
-            let names: Vec<String> = paths
-                .opaque_macros
-                .iter()
-                .map(|n| format!("{n}!"))
-                .collect();
+            let names: Vec<&str> = paths.unanalyzed.iter().map(String::as_str).collect();
             self.gaps.push(Gap::new(
                 "rust",
-                "macro_body_not_analyzed",
+                "construct_not_analyzed",
                 Some(&shown),
-                format!("paths inside {} are not resolved", names.join(", ")),
+                format!(
+                    "code generated or hidden by {} is not analyzed",
+                    names.join(", ")
+                ),
             ));
         }
         if paths.dropped.get() {
@@ -579,8 +609,8 @@ fn add(list: &mut Vec<Vec<String>>, path: Vec<String>, dropped: &Cell<bool>) {
 /// Collects `use` trees and expression/type paths of one module with aliases expanded;
 /// nested modules are walked separately. Each scope stores bindings already expanded in the
 /// scope that declared them, so a later inner binding of the same name cannot change them.
-/// `dropped` records that a bound discarded an alias expansion, and `opaque_macros` the macros
-/// whose bodies mention paths that were not analyzed; both become gaps.
+/// `dropped` records that a bound discarded an alias expansion, and `unanalyzed` the constructs
+/// outside the allow-lists (macros, attributes, modules in blocks); both become gaps.
 struct Paths {
     paths: Vec<PathRef>,
     scopes: Vec<Scope>,
@@ -588,7 +618,133 @@ struct Paths {
     /// Expansion steps left for the current binding or mention: cfg branches that bind names
     /// to each other can otherwise branch exponentially before the result bound applies.
     steps: Cell<usize>,
-    opaque_macros: BTreeSet<String>,
+    unanalyzed: BTreeSet<String>,
+}
+
+/// Built-in attributes that generate no code reaching other modules.
+const PLAIN_ATTRIBUTES: [&str; 42] = [
+    "allow",
+    "automatically_derived",
+    "cfg",
+    "cold",
+    "crate_name",
+    "crate_type",
+    "default",
+    "deny",
+    "deprecated",
+    "doc",
+    "expect",
+    "export_name",
+    "forbid",
+    "global_allocator",
+    "ignore",
+    "inline",
+    "instruction_set",
+    "link",
+    "link_name",
+    "link_section",
+    "macro_export",
+    "macro_use",
+    "must_use",
+    "no_builtins",
+    "no_implicit_prelude",
+    "no_main",
+    "no_mangle",
+    "no_std",
+    "non_exhaustive",
+    "panic_handler",
+    "path",
+    "recursion_limit",
+    "repr",
+    "should_panic",
+    "target_feature",
+    "test",
+    "track_caller",
+    "type_length_limit",
+    "unsafe",
+    "used",
+    "warn",
+    "windows_subsystem",
+];
+/// Standard traits whose derives generate code only against the standard library.
+const PLAIN_DERIVES: [&str; 9] = [
+    "Clone",
+    "Copy",
+    "Debug",
+    "Default",
+    "Eq",
+    "Hash",
+    "Ord",
+    "PartialEq",
+    "PartialOrd",
+];
+/// Tool namespaces whose attributes only configure lints and formatting.
+const PLAIN_TOOLS: [&str; 3] = ["clippy", "diagnostic", "rustfmt"];
+
+/// The name of an attribute outside the allow-lists, if any. `derive` is checked per trait and
+/// `cfg_attr` per attribute it applies.
+fn unanalyzed_attribute(meta: &syn::Meta) -> Option<String> {
+    use syn::{Meta, Token, punctuated::Punctuated};
+    let path = meta.path();
+    let name = path
+        .segments
+        .last()
+        .map(|s| s.ident.to_string())
+        .unwrap_or_default();
+    if path.segments.len() > 1 {
+        let tool = path.segments.first().map(|s| s.ident.to_string());
+        return (!tool.is_some_and(|t| PLAIN_TOOLS.contains(&t.as_str()))).then(|| path_text(path));
+    }
+    match name.as_str() {
+        "derive" => {
+            let Meta::List(list) = meta else {
+                return Some(name);
+            };
+            let Ok(traits) =
+                list.parse_args_with(Punctuated::<syn::Path, Token![,]>::parse_terminated)
+            else {
+                return Some(name);
+            };
+            traits
+                .iter()
+                .find(|t| {
+                    let last = t.segments.last().map(|s| s.ident.to_string());
+                    let std = t.segments.len() == 1
+                        || t.segments
+                            .first()
+                            .is_some_and(|s| s.ident == "std" || s.ident == "core");
+                    !(std && last.is_some_and(|l| PLAIN_DERIVES.contains(&l.as_str())))
+                })
+                .map(|t| format!("derive({})", path_text(t)))
+        }
+        "cfg_attr" => {
+            let Meta::List(list) = meta else {
+                return Some(name);
+            };
+            let Ok(parts) = list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+            else {
+                return Some(name);
+            };
+            parts.iter().skip(1).find_map(unanalyzed_attribute)
+        }
+        "unsafe" => {
+            let Meta::List(list) = meta else {
+                return None;
+            };
+            list.parse_args::<Meta>()
+                .map_or(Some(name), |inner| unanalyzed_attribute(&inner))
+        }
+        n if PLAIN_ATTRIBUTES.contains(&n) => None,
+        _ => Some(name),
+    }
+}
+
+fn path_text(p: &syn::Path) -> String {
+    p.segments
+        .iter()
+        .map(|s| s.ident.to_string())
+        .collect::<Vec<_>>()
+        .join("::")
 }
 
 /// Standard macros that expand only to their arguments plus standard library code.
@@ -655,7 +811,7 @@ impl Paths {
             scopes: vec![],
             dropped: Cell::new(false),
             steps: Cell::new(0),
-            opaque_macros: BTreeSet::new(),
+            unanalyzed: BTreeSet::new(),
         };
         p.enter(items.iter());
         p
@@ -759,9 +915,53 @@ impl Paths {
             syn::UseTree::Group(g) => g.items.iter().for_each(|t| self.use_tree(prefix, t)),
         }
     }
+    /// Visits the arguments of a standard macro: comma-separated expressions, `vec![x; n]` or
+    /// `matches!(x, Pattern if guard)`. False when they do not parse in any of those forms.
+    fn plain_arguments(&mut self, m: &syn::Macro, name: &str) -> bool {
+        use syn::{Expr, Pat, Token, parse::ParseStream, punctuated::Punctuated};
+        if let Ok(args) = m.parse_body_with(Punctuated::<Expr, Token![,]>::parse_terminated) {
+            args.iter().for_each(|e| self.visit_expr(e));
+            return true;
+        }
+        if name == "vec"
+            && let Ok(args) = m.parse_body_with(Punctuated::<Expr, Token![;]>::parse_terminated)
+        {
+            args.iter().for_each(|e| self.visit_expr(e));
+            return true;
+        }
+        if name == "matches" {
+            let parsed = m.parse_body_with(|input: ParseStream| {
+                let value: Expr = input.parse()?;
+                input.parse::<Token![,]>()?;
+                let pattern = Pat::parse_multi_with_leading_vert(input)?;
+                let guard = if input.peek(Token![if]) {
+                    input.parse::<Token![if]>()?;
+                    Some(input.parse::<Expr>()?)
+                } else {
+                    None
+                };
+                if input.peek(Token![,]) {
+                    input.parse::<Token![,]>()?;
+                }
+                Ok((value, pattern, guard))
+            });
+            if let Ok((value, pattern, guard)) = parsed {
+                self.visit_expr(&value);
+                self.visit_pat(&pattern);
+                guard.iter().for_each(|g| self.visit_expr(g));
+                return true;
+            }
+        }
+        false
+    }
 }
 impl<'ast> Visit<'ast> for Paths {
-    fn visit_item_mod(&mut self, _: &'ast syn::ItemMod) {}
+    /// Module-level `mod` items are walked by `Walk::items`; one reached here sits inside a
+    /// block or other item, which the walk does not enter, so it is a gap.
+    fn visit_item_mod(&mut self, m: &'ast syn::ItemMod) {
+        self.unanalyzed
+            .insert(format!("mod {} inside a block", m.ident));
+    }
     fn visit_item_use(&mut self, u: &'ast syn::ItemUse) {
         self.use_tree(&mut vec![], &u.tree);
     }
@@ -773,12 +973,12 @@ impl<'ast> Visit<'ast> for Paths {
         visit::visit_block(self, b);
         self.scopes.pop();
     }
-    /// Macro arguments are token streams. Those that parse as comma-separated expressions
-    /// (`println!`, `vec!`, `assert!` ...) are visited like code; any other body that mentions a
-    /// path (`a::b`) is recorded so the call site becomes a gap.
-    /// Only standard macros whose expansion uses nothing beyond their arguments are treated as
-    /// fully analyzed; any other macro (`include!`, `json!`, the crate's own) may expand to code
-    /// that reaches other modules, so its call site is a gap even when its arguments parse.
+    /// Allow-list: only standard macros that expand to their arguments plus standard library
+    /// code (`println!`, `vec!`, `assert!` ...) and whose arguments parse here are analyzed;
+    /// their arguments are visited like code. Every other macro call (`include!`, `json!`, the
+    /// crate's own, a standard macro whose arguments do not parse) is recorded as a gap, since
+    /// its expansion may reach other modules. A `macro_rules!` definition is a gap when its
+    /// body mentions a path.
     fn visit_macro(&mut self, m: &'ast syn::Macro) {
         visit::visit_macro(self, m);
         let name = m
@@ -787,25 +987,30 @@ impl<'ast> Visit<'ast> for Paths {
             .last()
             .map(|s| s.ident.to_string())
             .unwrap_or_default();
+        if name == "macro_rules" {
+            if has_path(m.tokens.clone()) {
+                self.unanalyzed.insert(format!("{name}!"));
+            }
+            return;
+        }
         let std_path = m.path.segments.len() == 1
             || m.path
                 .segments
                 .first()
                 .is_some_and(|s| s.ident == "std" || s.ident == "core" || s.ident == "alloc");
         let plain = std_path && PLAIN_MACROS.contains(&name.as_str());
-        let parsed = m.parse_body_with(
-            syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated,
-        );
-        if let Ok(args) = &parsed {
-            args.iter().for_each(|e| self.visit_expr(e));
+        let parsed = plain && self.plain_arguments(m, &name);
+        if !parsed {
+            self.unanalyzed.insert(format!("{name}!"));
         }
-        let opaque = if name == "macro_rules" || plain {
-            parsed.is_err() && has_path(m.tokens.clone())
-        } else {
-            true
-        };
-        if opaque {
-            self.opaque_macros.insert(name);
+    }
+    /// Allow-list for attributes: built-in attributes and derives of standard traits only.
+    /// Anything else (`#[serde(...)]`, `#[derive(Serialize)]`, attribute macros) may generate
+    /// code that reaches other modules, so it is recorded as a gap.
+    fn visit_attribute(&mut self, a: &'ast syn::Attribute) {
+        visit::visit_attribute(self, a);
+        if let Some(name) = unanalyzed_attribute(&a.meta) {
+            self.unanalyzed.insert(format!("#[{name}]"));
         }
     }
     fn visit_path(&mut self, p: &'ast syn::Path) {

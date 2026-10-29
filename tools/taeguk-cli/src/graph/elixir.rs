@@ -150,58 +150,48 @@ const DYNAMIC: [&str; 4] = [
     "String.to_existing_atom",
 ];
 
-/// Whether `line` calls a function on a variable (`mod.execute()`, `state.mod.run(x)`): the
-/// module is a runtime value, so xref cannot record the edge. Without parentheses
-/// (`mod.execute x`) an argument must follow; map field access (`state.count + 1`) and an
-/// anonymous call `fun.(x)` are not matched.
+/// Whether `line` has a dot access on a variable or module attribute (`mod.execute()`,
+/// `mod.execute`, `state.mod.run x`, `@impl.call()`): with or without parentheses this may be a
+/// call on a module chosen at runtime, which xref cannot record. Map field access looks the
+/// same and is matched too (allow-list: only what is known to be static passes). Anonymous calls
+/// `fun.(x)`, aliases (`Enum.map`), atoms (`:ets.new`) and comments are not matched.
 fn variable_call(line: &str) -> bool {
-    let code = line.split('#').next().unwrap_or(line);
-    let b = code.as_bytes();
+    // A comment starts at `#` that does not open an interpolation (`#{`).
+    let cut = line
+        .match_indices('#')
+        .find(|(i, _)| !line[i + 1..].starts_with('{'))
+        .map_or(line.len(), |(i, _)| i);
+    let b = &line.as_bytes()[..cut];
     let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
-    (0..b.len()).any(|i| {
-        if b[i] != b'.' || i == 0 || !ident(b[i - 1]) {
+    (1..b.len()).any(|i| {
+        if b[i] != b'.' || !ident(b[i - 1]) {
             return false;
         }
-        // The receiver starts with a lowercase letter or `_` and is not an atom (`:ets.new`).
         let mut start = i;
         while start > 0 && ident(b[start - 1]) {
             start -= 1;
         }
         let head = b[start];
-        let atom = start > 0 && b[start - 1] == b':';
-        if !(head.is_ascii_lowercase() || head == b'_') || atom {
+        let before = start.checked_sub(1).map(|j| b[j]);
+        let variable = head.is_ascii_lowercase() || head == b'_';
+        // A receiver right after `.` belongs to a longer chain that started elsewhere.
+        if !variable || before == Some(b':') || before == Some(b'.') && !chain_is_variable(b, start)
+        {
             return false;
         }
-        let mut end = i + 1;
-        if end >= b.len() || !(b[end].is_ascii_lowercase() || b[end] == b'_') {
-            return false;
-        }
-        while end < b.len() && (ident(b[end]) || b[end] == b'?' || b[end] == b'!') {
-            end += 1;
-        }
-        if end < b.len() && b[end] == b'(' {
-            return true;
-        }
-        // Without parentheses (`mod.execute x`) an argument follows after spaces; an operator,
-        // separator or block keyword there means field access instead.
-        let rest = code[end..].trim_start_matches([' ', '\t']);
-        if rest.len() == code.len() - end {
-            return false;
-        }
-        let word: String = rest
-            .chars()
-            .take_while(|c| c.is_alphanumeric() || *c == '_')
-            .collect();
-        let starts_arg = rest
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_alphanumeric() || "_:\"'[{%@&".contains(c));
-        starts_arg
-            && ![
-                "do", "end", "and", "or", "when", "in", "not", "else", "after", "rescue", "catch",
-            ]
-            .contains(&word.as_str())
+        b.get(i + 1)
+            .is_some_and(|c| c.is_ascii_lowercase() || *c == b'_')
     })
+}
+
+/// Whether the dotted chain ending just before `start` begins with a variable or `@attribute`.
+fn chain_is_variable(b: &[u8], start: usize) -> bool {
+    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'.';
+    let mut s = start;
+    while s > 0 && ident(b[s - 1]) {
+        s -= 1;
+    }
+    b[s].is_ascii_lowercase() || b[s] == b'_' || (s > 0 && b[s - 1] == b'@')
 }
 
 /// Whether `line` calls `name`, with or without parentheses (`apply(m, f, a)`, `apply m, f, a`,
@@ -352,6 +342,11 @@ mod tests {
             "_m.f(1)",
             "def run(mod, x), do: mod.execute x",
             "mod.start :normal, []",
+            "def run(mod), do: mod.execute",
+            "state.count + 1",
+            "x = map.value",
+            "\"#{x}\" <> mod.run()",
+            "@impl.call()",
         ] {
             assert!(variable_call(line), "{line}");
         }
@@ -359,11 +354,6 @@ mod tests {
             "Enum.map(xs, f)",
             ":ets.new(:t, [])",
             "fun.(x)",
-            "state.count + 1",
-            "if state.ok do",
-            "x = map.value",
-            "f(map.a, map.b)",
-            "state.items |> Enum.map(&f/1)",
             "# mod.run()",
             "Fx.B.b()",
         ] {

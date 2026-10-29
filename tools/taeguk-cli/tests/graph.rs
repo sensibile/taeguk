@@ -346,6 +346,23 @@ fn analyzer_failures_mark_the_graph_failed() {
         git(&w.repo(), &["add", "-A"]);
         git(&w.repo(), &["commit", "-qm", "wide"]);
         assert_fails(&w, "rust", "module expansion exceeds");
+        // A long chain of distinct files would exhaust the stack before the file count bound.
+        let w = work("rust");
+        let lib = w.repo().join("core/src/lib.rs");
+        let text = fs::read_to_string(&lib).unwrap();
+        fs::write(&lib, text + "#[path = \"chain/c0.rs\"]\nmod chain;\n").unwrap();
+        fs::create_dir_all(w.repo().join("core/src/chain")).unwrap();
+        for i in 0..80 {
+            fs::write(
+                w.repo().join(format!("core/src/chain/c{i}.rs")),
+                format!("#[path = \"c{}.rs\"]\nmod next;\n", i + 1),
+            )
+            .unwrap();
+        }
+        fs::write(w.repo().join("core/src/chain/c80.rs"), "").unwrap();
+        git(&w.repo(), &["add", "-A"]);
+        git(&w.repo(), &["commit", "-qm", "chain"]);
+        assert_fails(&w, "rust", "nested deeper than");
         // cargo reads member manifests itself; a device link must fail before it runs.
         let w = work("rust");
         fs::remove_file(w.repo().join("app/Cargo.toml")).unwrap();
@@ -526,6 +543,36 @@ fn ignored_inputs_make_impact_unknown() {
 }
 
 #[test]
+fn ignored_rust_members_are_fingerprinted() {
+    if !available("cargo", "--version") {
+        return;
+    }
+    // A workspace member under an ignored directory named `target` is read by cargo.
+    let w = work("rust");
+    let manifest = w.repo().join("Cargo.toml");
+    let text = fs::read_to_string(&manifest)
+        .unwrap()
+        .replace("\"app\"]", "\"app\", \"target/member\"]");
+    fs::write(&manifest, text).unwrap();
+    git(&w.repo(), &["commit", "-qam", "member"]);
+    let member = w.repo().join("target/member");
+    fs::create_dir_all(member.join("src")).unwrap();
+    fs::write(
+        member.join("Cargo.toml"),
+        "[package]\nname = \"member\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    fs::write(member.join("src/lib.rs"), "pub fn m() {}\n").unwrap();
+    let g = build(&w, "rust");
+    assert_eq!(g["status"], "PASS", "{g}");
+    let v = impact(&w, &["--changed", "core/src/store.rs"]);
+    assert_eq!(other_reasons(&v), Vec::<String>::new());
+    fs::write(member.join("src/lib.rs"), "pub fn m() {}\npub fn n() {}\n").unwrap();
+    let v = impact(&w, &["--changed", "core/src/store.rs"]);
+    assert_eq!(other_reasons(&v), ["analyzer_inputs_changed"]);
+}
+
+#[test]
 fn glob_reexport_cycles_finish() {
     if !available("cargo", "--version") {
         return;
@@ -672,6 +719,7 @@ fn impact_follows_reverse_edges_and_reports_limits() {
             "tests/test_builtins.py",
             "tests/test_helper.py",
             "tests/test_order.py",
+            "tests/test_param.py",
             "tests/test_paths.py",
             "tests/test_reload.py"
         ]
