@@ -12,9 +12,9 @@ Taeguk 저장소의 [기존 규칙 목록](https://github.com/sensibile/taeguk/b
 
 커버리지를 빈 곳을 찾는 측정 도구로만 쓰고 목표·수용 기준으로 쓰지 않는 규칙 후보다. [커버리지 측정 도구 개정안](coverage-as-instrument.md)이 BOSS 확인을 기다린다.
 
-## DEV-003 후보
+## DEV-003
 
-저장소 파일을 바꾸는 개발 작업을 작업 전용 git worktree에서 하는 규칙 후보다. 설치된 프로젝트에도 적용해 번들로 전달한다. [작업 전용 워크트리 개정안](worktree-first.md)이 BOSS 확인을 기다린다.
+2026-10-29 승인되어 DEV-003 1.0으로 현행 규칙에 반영했다. [작업 전용 워크트리 개정안](worktree-first.md)은 개정 근거로 보존한다.
 
 ## archon 시험 프로젝트 추가
 
