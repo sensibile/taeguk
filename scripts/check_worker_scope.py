@@ -27,6 +27,7 @@ PROTECTED_NAMES = {
 PROTECTED_FILES = {
     'scripts/check_worker_scope.py', 'tests/test_check_worker_scope.py',
     'scripts/check_rules.py', 'tests/test_rules.py',
+    'scripts/check_doc_drift.py', 'tests/test_doc_drift.py',  # input of the daily cleanup itself
     'docs/repository-operations.md',
 }
 

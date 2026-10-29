@@ -175,7 +175,7 @@ class WorkerScopeTest(unittest.TestCase):
     def test_protected_paths_are_rejected_for_both_workers_in_any_case(self):
         for path in ('AGENTS.md', 'docs/Agents.md', '.GitHub/workflows/x.yml', 'codex/skills/x/SKILL.md',
                      'Docs/Rules/registry.toml', 'tools/taeguk-cli/Cargo.lock', 'tests/.gitattributes',
-                     'scripts/check_worker_scope.py', 'docs/repository-operations.md',
+                     'scripts/check_worker_scope.py', 'docs/repository-operations.md', 'scripts/check_doc_drift.py',
                      'tests/.agents/skills/x/SKILL.md', 'apps/taeguk/test/.Claude/agents/x.md'):
             with self.subTest(path=path):
                 self.git('reset', '-q', '--hard', self.base)
