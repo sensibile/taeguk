@@ -39,7 +39,10 @@ def scan(root):
         for number, line in enumerate(text.splitlines(), 1):
             def add(kind, value, detail):
                 findings.append({'kind': kind, 'file': rel, 'line': number, 'value': value, 'detail': detail})
-            for value in re.findall(r'\]\(([^)\s]+)\)', line):
+            # Inline links with an optional title, and reference definitions ([ref]: target).
+            links = re.findall(r'\]\(<?([^)\s>]+)>?(?:\s+"[^"]*")?\)', line)
+            links += re.findall(r'^\s{0,3}\[[^\]]+\]:\s*<?([^\s>]+)>?', line)
+            for value in links:
                 parts = urlsplit(value)
                 if parts.scheme or parts.netloc:
                     continue
