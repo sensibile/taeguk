@@ -218,7 +218,9 @@ for line <- String.split(IO.read(:stdio, :eof), "\n", trim: true),
       # Module, function and arguments passed as data (`spawn(m, :run, [])`,
       # `Task.start(m, :run, [])`, `{m, :run, []}` in a child spec) may be called by the
       # receiving code: any argument list or 3-tuple with a runtime module, then an atom, then
-      # a list or variable, is a gap.
+      # a list or variable, is a gap. When the function name is a runtime value as well
+      # (`spawn(m, f, a)`), the shape alone is ordinary data, so it counts in 3-tuples and in
+      # the arguments of calls known to call an MFA (`spawn*`, `apply*`, `Task.start`, ...).
       # Allow-list: only an alias, an atom or `__MODULE__` is a module known here; any other
       # expression (a variable, an attribute, `List.first(mods)`) is a runtime value.
       runtime = fn
@@ -238,12 +240,28 @@ for line <- String.split(IO.read(:stdio, :eof), "\n", trim: true),
             (is_list(a) or runtime.(a))
         end)
       end
+      runtime_mfa? = fn items ->
+        items
+        |> Enum.chunk_every(3, 1, :discard)
+        |> Enum.any?(fn [m, f, a] -> runtime.(m) and runtime.(f) and (is_list(a) or runtime.(a)) end)
+      end
+      consumers = [:spawn, :spawn_link, :spawn_monitor, :spawn_opt, :apply, :apply_after,
+                   :apply_interval, :apply_repeatedly, :hibernate, :async, :async_nolink,
+                   :async_stream, :start, :start_link, :start_child, :start_monitor]
       Macro.prewalk(ast, fn
         {:{}, meta, items} = node when is_list(items) ->
-          if mfa?.(items), do: gap.(rel, meta[:line], "module and function passed at runtime")
+          if mfa?.(items) or (length(items) == 3 and runtime_mfa?.(items)),
+            do: gap.(rel, meta[:line], "module and function passed at runtime")
           node
-        {_, meta, args} = node when is_list(args) and is_list(meta) ->
-          if mfa?.(args), do: gap.(rel, meta[:line], "module and function passed at runtime")
+        {callee, meta, args} = node when is_list(args) and is_list(meta) ->
+          name =
+            case callee do
+              name when is_atom(name) -> name
+              {:., _, [_, name]} when is_atom(name) -> name
+              _ -> nil
+            end
+          if mfa?.(args) or (name in consumers and runtime_mfa?.(args)),
+            do: gap.(rel, meta[:line], "module and function passed at runtime")
           node
         node -> node
       end)

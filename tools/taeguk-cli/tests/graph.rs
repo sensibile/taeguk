@@ -1056,6 +1056,46 @@ fn go_embed_of_build_output_is_fingerprinted() {
 }
 
 #[test]
+fn python_path_links_are_fingerprinted() {
+    if !available("python3", "--version") {
+        return;
+    }
+    // An ignored link a `sys.path` entry goes through decides which `helper` is imported;
+    // retargeting it must make the graph stale even though no file content changed.
+    let w = work("python");
+    for d in ["ta", "tb", "tr"] {
+        fs::create_dir_all(w.repo().join(d)).unwrap();
+    }
+    fs::write(w.repo().join("ta/helper.py"), "X = 1\n").unwrap();
+    fs::write(w.repo().join("tb/helper.py"), "X = 1\n").unwrap();
+    fs::write(
+        w.repo().join("tr/run.py"),
+        "import sys\nfrom pathlib import Path\n\nsys.path.insert(0, str(Path(__file__).parent.parent / \"alias\"))\nimport helper\n",
+    )
+    .unwrap();
+    fs::write(w.repo().join(".gitignore"), "/alias\n").unwrap();
+    git(&w.repo(), &["add", "-A"]);
+    git(&w.repo(), &["commit", "-qm", "alias"]);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("ta", w.repo().join("alias")).unwrap();
+    let g = build(&w, "python");
+    assert_eq!(g["status"], "PASS", "{g}");
+    let edges: Vec<_> = g["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["from"] == "python:tr/run.py")
+        .map(|e| e["to"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(edges, ["python:ta/helper.py"]);
+    fs::remove_file(w.repo().join("alias")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("tb", w.repo().join("alias")).unwrap();
+    let v = impact(&w, &["--changed", "common.py"]);
+    assert_eq!(other_reasons(&v), ["analyzer_inputs_changed"]);
+}
+
+#[test]
 fn tool_diagnostics_do_not_carry_outside_content() {
     if !available("cargo", "--version") {
         return;
@@ -1238,6 +1278,7 @@ fn impact_follows_reverse_edges_and_reports_limits() {
         review_files(&v),
         [
             "plug/run.py",
+            "plugrun/run.py",
             "src/app/nspkg/__init__.py",
             "src/app/wilduser.py",
             "tests/test_aliases.py",
@@ -1487,6 +1528,24 @@ fn graph_input_is_checked_before_use() {
         String::from_utf8_lossy(&o.stderr)
     );
     assert!(String::from_utf8_lossy(&o.stderr).contains("unknown node"));
+    // `read` paths are hashed again by impact; one leaving ROOT is refused, not walked.
+    for bad in ["../", "/etc/", "a/../../b", ""] {
+        build(&w, "python");
+        let mut g: Value = serde_json::from_slice(&fs::read(w.graph()).unwrap()).unwrap();
+        g["read"].as_array_mut().unwrap().push(Value::from(bad));
+        fs::write(w.graph(), serde_json::to_string(&g).unwrap()).unwrap();
+        with_version(&w.graph(), g["analyzers"][0]["version"].as_str().unwrap());
+        let (ok, v) = taeguk(&[
+            "graph",
+            "impact",
+            w.graph().to_str().unwrap(),
+            w.repo().to_str().unwrap(),
+            "--changed",
+            "common.py",
+        ]);
+        assert!(!ok, "{bad}: {v}");
+        assert!(v["error"].as_str().unwrap().contains("read path"), "{v}");
+    }
 }
 
 #[test]

@@ -546,6 +546,12 @@ fn input_fingerprint(root: &Path, langs: &[String], read: &[String]) -> Result<S
     // Embedded trees are walked on their own, without the build-output skip of `walk`:
     // `//go:embed all:_build` reads what `walk` leaves out.
     for t in &trees {
+        // The tree itself must stay inside ROOT (a graph file could name `../..`, or the
+        // directory may since have become a link out of ROOT).
+        match root.join(t).canonicalize() {
+            Ok(real) if real.starts_with(root) => {}
+            _ => continue,
+        }
         let mut stack = vec![root.join(t)];
         while let Some(dir) = stack.pop() {
             let Ok(entries) = fs::read_dir(&dir) else {
@@ -570,8 +576,24 @@ fn input_fingerprint(root: &Path, langs: &[String], read: &[String]) -> Result<S
     for rel in &files {
         h.update(rel.as_bytes());
         h.update([0]);
-        // Links are followed; the ROOT scan already limited where they may point.
-        match fs::metadata(root.join(rel)) {
+        let path = root.join(rel);
+        // A link counts by its target text too: retargeting it (to a directory, or to a file
+        // with the same content) changes what an analyzer resolved through it.
+        if let Ok(target) = fs::read_link(&path) {
+            h.update(b"link:");
+            h.update(target.as_os_str().as_encoded_bytes());
+            h.update([0]);
+        }
+        // Links are followed only to targets inside ROOT.
+        match path.canonicalize() {
+            Ok(real) if !real.starts_with(root) => {
+                h.update(b"outside ROOT");
+                h.update([0]);
+                continue;
+            }
+            _ => {}
+        }
+        match fs::metadata(&path) {
             Ok(meta) if meta.is_file() && meta.len() > MAX_SOURCE => {
                 let mtime = meta
                     .modified()
@@ -582,15 +604,13 @@ fn input_fingerprint(root: &Path, langs: &[String], read: &[String]) -> Result<S
                 h.update(format!("size={} mtime={mtime}", meta.len()).as_bytes());
             }
             Ok(meta) if meta.is_file() => {
-                // Opened without blocking and re-checked, in case it was swapped for a FIFO;
-                // the read itself is bounded too, in case the file grew after the size check.
-                let mut data = Vec::new();
-                match open_regular(&root.join(rel))
-                    .and_then(|f| f.take(MAX_SOURCE + 1).read_to_end(&mut data))
-                {
-                    Ok(n) if n as u64 <= MAX_SOURCE => h.update(Sha256::digest(&data)),
-                    Ok(_) => h.update(b"grew past the size bound"),
-                    Err(_) => h.update(b"unreadable"),
+                // Opened without blocking and re-checked, in case it was swapped for a FIFO.
+                // The opened file's own path is checked against ROOT as well, in case a link
+                // was retargeted after the check above.
+                // The read is bounded too, in case the file grew after the size check.
+                match read_inside(root, &path, MAX_SOURCE) {
+                    Ok((_, data)) => h.update(Sha256::digest(&data)),
+                    Err(_) => h.update(b"unreadable or grew past the size bound"),
                 }
             }
             _ => h.update(b"absent"),
@@ -1147,6 +1167,12 @@ fn read_graph(path: &Path) -> Result<Graph, String> {
     if digest(&g) != g.digest {
         return Err("graph digest does not match its content".into());
     }
+    // `read` names files impact hashes again: only plain ROOT-relative paths.
+    if let Some(r) = g.read.iter().find(|r| !plain_relative(r)) {
+        return Err(format!(
+            "graph read path is not a plain ROOT-relative path: {r:?}"
+        ));
+    }
     let ids: BTreeSet<&str> = g.nodes.iter().map(|n| n.id.as_str()).collect();
     if ids.len() != g.nodes.len() {
         return Err("graph has duplicate node ids".into());
@@ -1162,6 +1188,16 @@ fn read_graph(path: &Path) -> Result<Graph, String> {
         ));
     }
     Ok(g)
+}
+
+/// `a/b` or `a/b/` (a tree): no absolute path, empty, `.` or `..` component.
+fn plain_relative(r: &str) -> bool {
+    let body = r.strip_suffix('/').unwrap_or(r);
+    !body.is_empty()
+        && !body.contains('\0')
+        && body
+            .split('/')
+            .all(|c| !c.is_empty() && c != "." && c != "..")
 }
 
 fn impact(

@@ -103,7 +103,7 @@ def norm(parts):
 
 
 # Per-file context: the ROOT and the names bound to known path functions and modules.
-CTX = {"root": "", "funcs": {}, "modules": {}}
+CTX = {"root": "", "funcs": {}, "modules": {}, "links": set()}
 PATH_FUNCS = {("pathlib", "Path"): "Path", ("pathlib", "PurePath"): "Path",
               ("pathlib", "PosixPath"): "Path", ("os.path", "dirname"): "dirname",
               ("os.path", "join"): "join", ("os.path", "abspath"): "abspath",
@@ -177,13 +177,35 @@ def known_function(func):
 
 
 def real_parts(parts):
-    """`resolve()`/`realpath`: follow links inside ROOT; a path that leaves ROOT is unresolved."""
+    """`resolve()`/`realpath`: follow links inside ROOT; a path that leaves ROOT is unresolved.
+    Every link followed is recorded, so retargeting it later changes the input fingerprint."""
     root = CTX["root"]
-    real = os.path.realpath(os.path.join(root, *parts))
-    if os.path.commonpath([root, real]) != root:
-        raise Unresolved("resolved path leaves ROOT")
-    rel = os.path.relpath(real, root)
-    return [] if rel == "." else rel.split(os.sep)
+    out, todo, hops = [], list(parts), 0
+    while todo:
+        p = todo.pop(0)
+        if p in ("", "."):
+            continue
+        if p == "..":
+            if not out:
+                raise Unresolved("resolved path leaves ROOT")
+            out.pop()
+            continue
+        here = out + [p]
+        full = os.path.join(root, *here)
+        if not os.path.islink(full):
+            out = here
+            continue
+        hops += 1
+        if hops > 40:
+            raise Unresolved("too many levels of symbolic links")
+        CTX["links"].add("/".join(here))
+        target = os.readlink(full)
+        if os.path.isabs(target):
+            if os.path.commonpath([root, target]) != root:
+                raise Unresolved("resolved path leaves ROOT")
+            out, target = [], os.path.relpath(target, root)
+        todo = target.split(os.sep) + todo
+    return out
 
 
 def physical(base, more):
@@ -431,7 +453,9 @@ def sys_path_changes(tree, path, sys_names):
                 value = eval_path(arg, path, current)
                 if not isinstance(value, list):
                     raise Unresolved(ast.unparse(arg))
-                (front if method == "insert" else back).append("/".join(value))
+                # Python finds modules through the entry as the OS walks it: links in it are
+                # followed (and recorded), so the files reached are the ROOT files they name.
+                (front if method == "insert" else back).append("/".join(real_parts(value)))
             except Unresolved as e:
                 unresolved.append(f"line {node.lineno}: {e}")
 
@@ -497,7 +521,15 @@ def main():
                        for n in ast.walk(tree)
                        if (isinstance(n, ast.Name) and n.id == "__path__")
                        or (isinstance(n, ast.Attribute) and n.attr == "__path__")]
+        added = [d for d in front + back if d not in search]
         search = list(dict.fromkeys(front + search + back))
+        # Path functions were trusted under the search path before these additions; a directory
+        # added here that holds `os`/`pathlib` may replace them for later imports.
+        for top in ("os", "pathlib"):
+            if candidates(top, added, files):
+                gaps.append({"kind": "sys_path_unresolved", "file": path,
+                             "detail": f"a sys.path entry added here holds a project '{top}' that may"
+                                       " replace the standard one; path values are not trusted"})
         for detail in unresolved:
             gaps.append({"kind": "sys_path_unresolved", "file": path,
                          "detail": f"{detail}; imports resolved through it may be missing"})
@@ -586,7 +618,8 @@ def main():
                     for f in [target] + inits:
                         if f != path:
                             edges.add((path, f))
-    json.dump({"roots": roots, "edges": sorted(edges), "gaps": gaps, "errors": errors}, sys.stdout)
+    json.dump({"roots": roots, "edges": sorted(edges), "gaps": gaps, "errors": errors,
+               "links": sorted(CTX["links"])}, sys.stdout)
 
 
 main()

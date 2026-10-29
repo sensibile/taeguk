@@ -14,6 +14,9 @@ struct Report {
     edges: Vec<(String, String)>,
     gaps: Vec<ReportGap>,
     errors: Vec<String>,
+    /// Links inside ROOT followed while resolving paths.
+    #[serde(default)]
+    links: Vec<String>,
 }
 #[derive(Deserialize)]
 struct ReportGap {
@@ -81,7 +84,10 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
     Ok(Partial {
         // pyproject.toml decides the package roots, also when git ignores it; recorded even when
         // absent, so adding one later changes the fingerprint.
-        read: vec!["pyproject.toml".into()],
+        // Links followed while resolving `sys.path` entries are recorded by their target text.
+        read: std::iter::once("pyproject.toml".to_string())
+            .chain(r.links)
+            .collect(),
         nodes: files
             .iter()
             .map(|f| Node::new("python", f.as_str(), vec![f.to_string()]))
