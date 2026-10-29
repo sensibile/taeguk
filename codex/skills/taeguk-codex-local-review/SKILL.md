@@ -19,10 +19,11 @@ Running the CLI sends the diff and repository context to OpenAI. On 2026-10-28 B
    ```sh
    { git diff HEAD --binary; git ls-files -o --exclude-standard -z | xargs -0 shasum -a 256 --; } | shasum -a 256
    ```
-3. Read the diff and the prompt file that will be sent. If it contains secrets, credentials, tokens or personal data, do not run; report NOT_RUN and the location without repeating the value.
+3. Read the diff that will be sent. If it contains secrets, credentials, tokens or personal data, do not run; report NOT_RUN and the location without repeating the value.
 4. Check `codex --version`. A missing CLI or failed login is NOT_RUN, not a product failure.
 5. Write the purpose context from [review prompts](references/review-prompts.md): purpose, requirements, expected-value source, out-of-scope items with their decision records, and reachability. Take purpose, requirements, expected-value source and out-of-scope items from the work contract, approved requirements and decision records, not from the implementation; for a scheduled worker run, the worker skill and the BOSS decision it records are the work contract, and the expected-value source is "no behavior change" for cleanup items and the cited source of each test for test-gap tests. Take reachability from observed callers, routes and entry points with their paths, since decision records rarely state it. Without this context Codex reviews against generic practice and its findings cannot be assessed against what the change is for. If the purpose or expected-value source is not recorded anywhere, do not invent one; ask the assigner, and record the review as NOT_RUN if it stays missing.
 6. On a rerun for the same PR or worker run, add the prior adjudications: every earlier Codex finding that was not fixed, with its head SHA, status and reason. Worker items removed after Codex judged them unneeded are not findings and need no entry.
+7. Apply the check of step 3 to the finished prompt file as well.
 
 ## Run
 
@@ -42,9 +43,9 @@ In codex-cli 0.164.0 the target flags `--base`, `--commit` and `--uncommitted` c
 - Record command, CLI version, target SHAs, exit code, prompt path and its `shasum -a 256`, output path, start and end time, and put the prompt hash in the PR body or worker run report. Without the prompt it cannot be checked later what purpose Codex was given.
 - Exit 0 with no findings means "Codex reported no findings for this target". It is not PASS for correctness or security. A non-zero exit, timeout or empty output is NOT_RUN or UNKNOWN.
 - Report each finding with location, Codex's claim, severity and your assessment: reproduced, plausible, rejected with reason, or needs reproduction. Send claims needing execution to `taeguk_tool_verifier`.
-- A finding matches a prior adjudication only when it makes the same claim and `git diff <adjudicated_head>..<head> -- <file>` shows no change near the cited lines; record it as a repeat of that entry. Otherwise, or when Codex says it is reopening an entry, assess it again. A repeat is still the same finding recurring for VER-005, so its escalation to BOSS applies unchanged.
-- Assess findings Codex lists as inherited or deferred risks like other findings; matching the expected-value source or a deferral does not by itself reject them.
-- Report purpose challenges separately. They question the purpose, expected-value source or a deferral, which only BOSS can change, so do not reject them yourself; pass them to BOSS with your view. Until BOSS answers, do not enable auto-merge on that head; a worker run drops the affected item and reports the challenge.
+- A finding matches a prior adjudication only when it makes the same claim and `git diff <adjudicated_head>..<head> -- <file>` shows no change near the cited lines; record it as a repeat of that entry. Otherwise, or when Codex says it is reopening an entry, assess it again. The unchanged-lines test only decides whether to skip reassessment: for VER-005 any recurrence of the same claim counts, recorded as a repeat or reassessed, so its escalation to BOSS applies unchanged.
+- Assess findings Codex lists as inherited or deferred risks like other findings; matching the expected-value source or a deferral does not by itself reject them. When a confirmed one can only be fixed by departing from the expected-value source or a deferral, treat it as a purpose challenge.
+- Report purpose challenges separately. They question the purpose, expected-value source or a deferral, which only BOSS can change, so do not reject them yourself; pass them to BOSS with your view. An item Codex filed there that does not question the purpose, expected-value source or a deferral may be moved to the ordinary findings with the reason recorded. Until BOSS answers, do not enable auto-merge on that head; a worker run drops the affected item and reports the challenge.
 - When the target changes, rerun on the new range. Do not reuse a result from an older head.
 
 Agreement between Codex and another model is supporting analysis, not independent execution evidence. When Codex also implemented the change, state that this was not a cross-model review.
