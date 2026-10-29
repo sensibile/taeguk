@@ -106,6 +106,35 @@ class WorkerScopeTest(unittest.TestCase):
         self.commit('edit cfg fn')
         self.assert_rejected('test-gap', 'tools/taeguk-cli/src/lib.rs', 'change outside the trailing #[cfg(test)] module')
 
+    def test_test_gap_rejects_code_after_module_on_closing_line(self):
+        self.write('tools/taeguk-cli/src/main.rs', RUST[:-2] + '} impl Drop for X { fn drop(&mut self) {\n    std::process::exit(0); } }\n')
+        self.commit('code on closing line')
+        self.assert_rejected('test-gap', 'tools/taeguk-cli/src/main.rs', 'change outside the trailing #[cfg(test)] module')
+
+    def test_test_gap_braces_in_comments_do_not_move_the_boundary(self):
+        self.write('tools/taeguk-cli/src/main.rs', RUST.replace('    }\n}\n', '    }\n    /* { */\n}\nfn outside() {}\n/* } */\n'))
+        self.commit('comment braces')
+        self.assert_rejected('test-gap', 'tools/taeguk-cli/src/main.rs', 'change outside the trailing #[cfg(test)] module')
+
+    def test_test_gap_accepts_multiline_and_raw_strings_in_tests(self):
+        self.write('tools/taeguk-cli/src/main.rs', RUST.replace('    }\n}\n', '    }\n\n    #[test]\n    fn text() {\n        let a = "line one {\n}";\n        let b = r#"raw "}" {"#;\n        let c: &\'static str = "x";\n        assert!(a.len() + b.len() + c.len() > 0); // }\n    }\n}\n'))
+        self.commit('strings')
+        code, result = self.run_check('test-gap')
+        self.assertEqual((code, result['status']), (0, 'PASS'), result)
+
+    def test_isolated_checker_ignores_modules_added_by_the_pr(self):
+        self.write('scripts/json.py', 'import os\nprint(\'{"status": "PASS"}\')\nos._exit(0)\n')
+        self.write('AGENTS.md', 'changed\n')
+        self.commit('shadow json')
+        trusted = Path(self.tmp.name + '-trusted')
+        trusted.mkdir()
+        self.addCleanup(lambda: __import__('shutil').rmtree(trusted))
+        (trusted/'check_worker_scope.py').write_text(SCRIPT.read_text())
+        out = subprocess.run([sys.executable, '-I', str(trusted/'check_worker_scope.py'), 'daily-cleanup',
+                              '--base', self.base, '--head', 'HEAD'], cwd=self.repo, capture_output=True, text=True)
+        self.assertEqual(out.returncode, 1, out.stdout)
+        self.assertIn({'path': 'AGENTS.md', 'reason': 'protected path'}, json.loads(out.stdout)['rejected'])
+
     def test_test_gap_rejects_deleting_tests(self):
         (self.repo/'tests/test_a.py').unlink()
         self.commit('delete')

@@ -6,6 +6,7 @@ This checks paths, file modes and, for Rust sources, that test-gap edits stay in
 """
 import argparse
 import json
+import re
 import subprocess
 import sys
 
@@ -74,63 +75,97 @@ def protected(path):
             or lower in PROTECTED_FILES or (name.startswith('agents') and name.endswith('.md')))
 
 
-def test_module_start(lines):
-    """Index of the `#[cfg(test)]` line opening the trailing test module, or None.
+def significant(src):
+    """Positions of code characters outside comments and literals; a literal counts as one `L`.
 
-    The module must be the last item: from its `mod ... {` line the brace depth, counted outside
-    strings, chars and comments, returns to zero only at the last non-blank line.
+    Handles line and nested block comments, strings with escapes over several lines, raw and
+    byte strings, char literals and lifetimes. An unterminated comment or literal raises.
     """
-    starts = [i for i, line in enumerate(lines) if line.strip() == '#[cfg(test)]']
-    if len(starts) != 1:
+    out, i, n = [], 0, len(src)
+    while i < n:
+        c = src[i]
+        if c.isspace():
+            i += 1
+        elif src.startswith('//', i):
+            j = src.find('\n', i)
+            i = n if j < 0 else j
+        elif src.startswith('/*', i):
+            depth, i = 1, i + 2
+            while depth:
+                if i >= n:
+                    raise ValueError('unterminated block comment')
+                if src.startswith('/*', i):
+                    depth, i = depth + 1, i + 2
+                elif src.startswith('*/', i):
+                    depth, i = depth - 1, i + 2
+                else:
+                    i += 1
+        elif raw := re.match(r'b?r(#*)"', src[i:]) if (c in 'br' and (i == 0 or not (src[i-1].isalnum() or src[i-1] == '_'))) else None:
+            close = '"' + raw.group(1)
+            j = src.find(close, i + raw.end())
+            if j < 0:
+                raise ValueError('unterminated raw string')
+            out.append((i, 'L'))
+            i = j + len(close)
+        elif c == '"':
+            j = i + 1
+            while j < n and src[j] != '"':
+                j += 2 if src[j] == '\\' else 1
+            if j >= n:
+                raise ValueError('unterminated string')
+            out.append((i, 'L'))
+            i = j + 1
+        elif c == "'":
+            if src.startswith('\\', i + 1):
+                j = src.find("'", i + 3)
+                if j < 0:
+                    raise ValueError('unterminated char literal')
+                out.append((i, 'L'))
+                i = j + 1
+            elif i + 2 < n and src[i+2] == "'":
+                out.append((i, 'L'))
+                i += 3
+            else:
+                out.append((i, c))  # lifetime marker
+                i += 1
+        else:
+            out.append((i, c))
+            i += 1
+    return out
+
+
+def test_module_open(src):
+    """Offset of the `{` opening the trailing `#[cfg(test)] mod name {`, or None.
+
+    The module must be the only `#[cfg(test)]` item and the last item: nothing but whitespace and
+    comments may follow its closing brace.
+    """
+    tokens = significant(src)
+    text = ''.join(c for _, c in tokens)
+    attr = '#[cfg(test)]'
+    if text.count(attr) != 1:
         return None
-    start = starts[0]
-    if start + 1 >= len(lines) or not lines[start+1].strip().startswith('mod ') or not lines[start+1].rstrip().endswith('{'):
+    k = text.index(attr) + len(attr)
+    after_attr = tokens[k-1][0] + 1
+    opening = next((j for j in range(k, len(tokens)) if tokens[j][1] in '{;'), None)
+    if opening is None or tokens[opening][1] != '{' or not re.fullmatch(r'\s*mod\s+[A-Za-z_]\w*\s*', src[after_attr:tokens[opening][0]]):
         return None
-    last = max((i for i, line in enumerate(lines) if line.strip()), default=-1)
     depth = 0
-    for i in range(start + 1, len(lines)):
-        depth += brace_delta(lines[i])
-        if depth < 0:
-            return None
+    for j in range(opening, len(tokens)):
+        depth += {'{': 1, '}': -1}.get(tokens[j][1], 0)
         if depth == 0:
-            return start if i == last else None
+            return tokens[opening][0] if j == len(tokens) - 1 else None
     return None
 
 
-def brace_delta(line):
-    """Net braces in a line outside string and char literals and line comments."""
-    delta, i, quote = 0, 0, None
-    while i < len(line):
-        c = line[i]
-        if quote:
-            if c == '\\':
-                i += 1
-            elif c == quote:
-                quote = None
-        elif c == '/' and line[i:i+2] == '//':
-            break
-        elif c == '"':
-            quote = '"'
-        elif c == "'" and (line[i+2:i+3] == "'" or line[i+1:i+2] == '\\'):
-            quote = "'"
-        elif c == '{':
-            delta += 1
-        elif c == '}':
-            delta -= 1
-        i += 1
-    if quote == '"':
-        raise ValueError('multi-line string literal')
-    return delta
-
-
 def rust_test_only(old, new):
-    """True when only lines inside the trailing test module differ."""
+    """True when old and new are identical up to the trailing test module's opening brace."""
     try:
-        old_lines, new_lines = old.decode().split('\n'), new.decode().split('\n')
-        old_start, new_start = test_module_start(old_lines), test_module_start(new_lines)
+        old_src, new_src = old.decode(), new.decode()
+        old_open, new_open = test_module_open(old_src), test_module_open(new_src)
     except (UnicodeDecodeError, ValueError):
         return False
-    return old_start is not None and new_start is not None and old_lines[:old_start+2] == new_lines[:new_start+2]
+    return old_open is not None and new_open is not None and old_src[:old_open+1] == new_src[:new_open+1]
 
 
 def violation(worker, entry):
