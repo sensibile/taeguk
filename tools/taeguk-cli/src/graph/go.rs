@@ -2,7 +2,12 @@ use super::{
     Analyzer, Edge, Gap, Node, Partial, TempDir, check_source, exec, relative, tool_version,
 };
 use serde::Deserialize;
-use std::{collections::BTreeSet, fs, path::Path, process::Command};
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "PascalCase", default)]
@@ -91,22 +96,33 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
     // name itself comes from ROOT: a package inside ROOT, or one that such a package imports.
     // A package counts as from ROOT only when its directory and every file go read for it
     // resolve inside ROOT (an ignored `.go` link could bring an outside file's imports).
-    let inside = |p: &Package| {
-        Path::new(&p.dir).starts_with(root)
-            && p.module.as_ref().is_none_or(|m| {
-                m.go_mod.is_empty() || check_source(root, Path::new(&m.go_mod)).is_ok()
-            })
-            && [
-                &p.go_files,
-                &p.cgo_files,
-                &p.test_go_files,
-                &p.x_test_go_files,
-                &p.ignored_go_files,
-            ]
-            .into_iter()
-            .flatten()
-            .all(|f| check_source(root, &Path::new(&p.dir).join(f)).is_ok())
+    // Every file go read for the package: its sources (untracked and ignored ones included) and
+    // its module's go.mod. The first one that is not a regular file inside ROOT, with a message
+    // safe to show: one naming a path given inside ROOT, or None for a path outside ROOT.
+    let problem = |p: &Package| -> Option<Option<String>> {
+        let dir = Path::new(&p.dir);
+        let go_mod = p
+            .module
+            .as_ref()
+            .filter(|m| !m.go_mod.is_empty())
+            .map(|m| PathBuf::from(&m.go_mod));
+        let files = [
+            &p.go_files,
+            &p.cgo_files,
+            &p.test_go_files,
+            &p.x_test_go_files,
+            &p.ignored_go_files,
+        ]
+        .into_iter()
+        .flatten()
+        .map(|f| dir.join(f));
+        go_mod.into_iter().chain(files).find_map(|f| {
+            check_source(root, &f)
+                .err()
+                .map(|e| f.starts_with(root).then_some(e))
+        })
     };
+    let inside = |p: &Package| Path::new(&p.dir).starts_with(root) && problem(p).is_none();
     let named: BTreeSet<&str> = packages
         .iter()
         .filter(|p| inside(p))
@@ -161,6 +177,22 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
     let ids: BTreeSet<&str> = main.iter().map(|p| p.import_path.as_str()).collect();
     let mut out = Partial::default();
     for p in main {
+        // A main-module package outside ROOT (a go.work `use ../other`) or reading a file there:
+        // its name and paths come from outside ROOT, so the message carries them only when a
+        // package inside ROOT names it too.
+        if !inside(p) {
+            let name = if named.contains(p.import_path.as_str()) {
+                p.import_path.as_str()
+            } else {
+                "(name withheld)"
+            };
+            return Err(match problem(p) {
+                Some(Some(e)) if Path::new(&p.dir).starts_with(root) => {
+                    format!("package {name}: {e}")
+                }
+                _ => format!("main-module package {name} reads files outside ROOT"),
+            });
+        }
         let dir = Path::new(&p.dir);
         let rel_dir = relative(root, dir)
             .ok_or_else(|| format!("package {} is outside ROOT", p.import_path))?;
@@ -171,23 +203,6 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
                 format!("{rel_dir}/{f}")
             }
         };
-        // The module's go.mod names the package; it must resolve inside ROOT like the sources.
-        if let Some(m) = p.module.as_ref().filter(|m| !m.go_mod.is_empty()) {
-            check_source(root, Path::new(&m.go_mod))?;
-        }
-        // Untracked files in a package directory are read by go too; they must also stay inside ROOT.
-        for f in [
-            &p.go_files,
-            &p.cgo_files,
-            &p.test_go_files,
-            &p.x_test_go_files,
-            &p.ignored_go_files,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            check_source(root, &dir.join(f))?;
-        }
         let mut files: Vec<String> = [
             &p.go_files,
             &p.cgo_files,

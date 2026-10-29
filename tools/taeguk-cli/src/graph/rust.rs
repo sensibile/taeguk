@@ -9,6 +9,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
+use syn::ext::IdentExt;
 use syn::visit::{self, Visit};
 
 const COMMAND: [&str; 8] = [
@@ -532,7 +533,7 @@ impl Walk<'_> {
                     paths.unanalyzed.insert(format!("#[{n}]"));
                 }
             }
-            let name = m.ident.to_string();
+            let name = ident_name(&m.ident);
             let ids = children.entry(name.clone()).or_default();
             let id = match ids.len() {
                 0 => name.clone(),
@@ -540,25 +541,25 @@ impl Walk<'_> {
             };
             ids.push(id.clone());
             let child_path = [path.clone(), vec![id]].concat();
-            let attr_path =
-                m.attrs
-                    .iter()
-                    .find(|a| a.path().is_ident("path"))
-                    .and_then(|a| match &a.meta {
-                        syn::Meta::NameValue(nv) => match &nv.value {
-                            syn::Expr::Lit(syn::ExprLit {
-                                lit: syn::Lit::Str(s),
-                                ..
-                            }) => Some(s.value()),
-                            _ => None,
-                        },
+            let attr_path = m
+                .attrs
+                .iter()
+                .find(|a| is_named(a.path(), "path"))
+                .and_then(|a| match &a.meta {
+                    syn::Meta::NameValue(nv) => match &nv.value {
+                        syn::Expr::Lit(syn::ExprLit {
+                            lit: syn::Lit::Str(s),
+                            ..
+                        }) => Some(s.value()),
                         _ => None,
-                    });
+                    },
+                    _ => None,
+                });
             // `cfg_attr(..., path = "...")` picks another file under some configurations.
             let conditional_path = m
                 .attrs
                 .iter()
-                .any(|a| a.path().is_ident("cfg_attr") && mentions_path_attribute(&a.meta));
+                .any(|a| is_named(a.path(), "cfg_attr") && mentions_path_attribute(&a.meta));
             if conditional_path {
                 let shown = self.shown(file);
                 self.gaps.push(Gap::new(
@@ -591,7 +592,7 @@ impl Walk<'_> {
             };
             let Some(child) = found else {
                 let shown = self.shown(file);
-                if m.attrs.iter().any(|a| a.path().is_ident("cfg")) {
+                if m.attrs.iter().any(|a| is_named(a.path(), "cfg")) {
                     self.gaps.push(Gap::new(
                         "rust",
                         "cfg_module_missing",
@@ -667,12 +668,12 @@ impl Scope {
                     let name = if e.ident == "self" {
                         "crate".to_string()
                     } else {
-                        e.ident.to_string()
+                        ident_name(&e.ident)
                     };
                     let bound = e
                         .rename
                         .as_ref()
-                        .map_or(name.clone(), |(_, r)| r.to_string());
+                        .map_or(name.clone(), |(_, r)| ident_name(r));
                     if bound != "_" {
                         add(scope.aliases.entry(bound).or_default(), vec![name], dropped);
                     }
@@ -687,12 +688,12 @@ impl Scope {
             let full = if ident == "self" {
                 prefix.clone()
             } else {
-                [prefix.as_slice(), &[ident.to_string()]].concat()
+                [prefix.as_slice(), &[ident_name(ident)]].concat()
             };
             let bound = if bound == "self" {
                 prefix.last().cloned()
             } else {
-                Some(bound.to_string())
+                Some(ident_name(bound))
             };
             if let Some(bound) = bound.filter(|b| b != "_") {
                 add(self.aliases.entry(bound).or_default(), full, dropped);
@@ -700,7 +701,7 @@ impl Scope {
         };
         match t {
             syn::UseTree::Path(p) => {
-                prefix.push(p.ident.to_string());
+                prefix.push(ident_name(&p.ident));
                 self.bind(prefix, &p.tree, dropped);
                 prefix.pop();
             }
@@ -812,10 +813,10 @@ fn unanalyzed_attribute(meta: &syn::Meta) -> Option<String> {
     let name = path
         .segments
         .last()
-        .map(|s| s.ident.to_string())
+        .map(|s| ident_name(&s.ident))
         .unwrap_or_default();
     if path.segments.len() > 1 {
-        let tool = path.segments.first().map(|s| s.ident.to_string());
+        let tool = path.segments.first().map(|s| ident_name(&s.ident));
         return (!tool.is_some_and(|t| PLAIN_TOOLS.contains(&t.as_str()))).then(|| path_text(path));
     }
     match name.as_str() {
@@ -831,11 +832,11 @@ fn unanalyzed_attribute(meta: &syn::Meta) -> Option<String> {
             traits
                 .iter()
                 .find(|t| {
-                    let last = t.segments.last().map(|s| s.ident.to_string());
+                    let last = t.segments.last().map(|s| ident_name(&s.ident));
                     let std = t.segments.len() == 1
-                        || t.segments
-                            .first()
-                            .is_some_and(|s| s.ident == "std" || s.ident == "core");
+                        || t.segments.first().is_some_and(|s| {
+                            ident_name(&s.ident) == "std" || ident_name(&s.ident) == "core"
+                        });
                     !(std && last.is_some_and(|l| PLAIN_DERIVES.contains(&l.as_str())))
                 })
                 .map(|t| format!("derive({})", path_text(t)))
@@ -867,8 +868,8 @@ fn unanalyzed_attribute(meta: &syn::Meta) -> Option<String> {
 fn mentions_path_attribute(meta: &syn::Meta) -> bool {
     use syn::{Meta, Token, punctuated::Punctuated};
     match meta {
-        Meta::NameValue(nv) => nv.path.is_ident("path"),
-        Meta::List(list) if list.path.is_ident("cfg_attr") => list
+        Meta::NameValue(nv) => is_named(&nv.path, "path"),
+        Meta::List(list) if is_named(&list.path, "cfg_attr") => list
             .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
             .map_or(true, |parts| {
                 parts.iter().skip(1).any(mentions_path_attribute)
@@ -882,7 +883,7 @@ fn mentions_path_attribute(meta: &syn::Meta) -> bool {
 fn segments<'a>(leading_colon: bool, idents: impl Iterator<Item = &'a syn::Ident>) -> Vec<String> {
     absolute(leading_colon)
         .into_iter()
-        .chain(idents.map(|i| i.to_string()))
+        .chain(idents.map(ident_name))
         .collect()
 }
 fn absolute(leading_colon: bool) -> Vec<String> {
@@ -899,13 +900,13 @@ fn derive_names(meta: &syn::Meta) -> Vec<String> {
     let Meta::List(list) = meta else {
         return vec![];
     };
-    if list.path.is_ident("cfg_attr") {
+    if is_named(&list.path, "cfg_attr") {
         return list
             .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
             .map(|parts| parts.iter().skip(1).flat_map(derive_names).collect())
             .unwrap_or_default();
     }
-    if !list.path.is_ident("derive") {
+    if !is_named(&list.path, "derive") {
         return vec![];
     }
     list.parse_args_with(Punctuated::<syn::Path, Token![,]>::parse_terminated)
@@ -916,7 +917,7 @@ fn derive_names(meta: &syn::Meta) -> Vec<String> {
 fn path_text(p: &syn::Path) -> String {
     p.segments
         .iter()
-        .map(|s| s.ident.to_string())
+        .map(|s| ident_name(&s.ident))
         .collect::<Vec<_>>()
         .join("::")
 }
@@ -1090,7 +1091,7 @@ impl Paths {
     fn use_tree(&mut self, prefix: &mut Vec<String>, t: &syn::UseTree) {
         match t {
             syn::UseTree::Path(p) => {
-                prefix.push(p.ident.to_string());
+                prefix.push(ident_name(&p.ident));
                 self.use_tree(prefix, &p.tree);
                 prefix.pop();
             }
@@ -1099,7 +1100,7 @@ impl Paths {
                 if ident == "self" {
                     self.push(prefix.clone());
                 } else {
-                    self.push([prefix.as_slice(), &[ident.to_string()]].concat());
+                    self.push([prefix.as_slice(), &[ident_name(ident)]].concat());
                 }
             }
             syn::UseTree::Glob(_) => self.push(prefix.clone()),
@@ -1163,16 +1164,16 @@ impl<'ast> Visit<'ast> for Paths {
     /// `#[macro_use]` it also imports macros whose names are not known here.
     fn visit_item_extern_crate(&mut self, e: &'ast syn::ItemExternCrate) {
         visit::visit_item_extern_crate(self, e);
-        if e.attrs.iter().any(|a| a.path().is_ident("macro_use")) {
+        if e.attrs.iter().any(|a| is_named(a.path(), "macro_use")) {
             self.imports_macros = true;
         }
-        self.push(vec![e.ident.to_string()]);
+        self.push(vec![ident_name(&e.ident)]);
     }
     fn visit_item_macro(&mut self, m: &'ast syn::ItemMacro) {
-        if m.mac.path.is_ident("macro_rules")
+        if is_named(&m.mac.path, "macro_rules")
             && let Some(name) = &m.ident
         {
-            self.defined_macros.insert(name.to_string());
+            self.defined_macros.insert(ident_name(name));
         }
         visit::visit_item_macro(self, m);
     }
@@ -1215,7 +1216,7 @@ impl<'ast> Visit<'ast> for Paths {
             .path
             .segments
             .last()
-            .map(|s| s.ident.to_string())
+            .map(|s| ident_name(&s.ident))
             .unwrap_or_default();
         if name == "macro_rules" {
             if has_path(m.tokens.clone()) {
@@ -1224,7 +1225,7 @@ impl<'ast> Visit<'ast> for Paths {
             return;
         }
         // `std::println!` counts only while `std` itself is not rebound (`use other as std;`).
-        let first = m.path.segments.first().map(|s| s.ident.to_string());
+        let first = m.path.segments.first().map(|s| ident_name(&s.ident));
         let std_path = m.path.segments.len() == 1
             || first
                 .as_deref()
@@ -1279,6 +1280,16 @@ fn physical(path: &Path) -> Option<PathBuf> {
     let name = path.file_name()?;
     let dir = path.parent()?.canonicalize().ok()?;
     Some(dir.join(name)).filter(|f| f.is_file())
+}
+
+/// An identifier as a name: `r#foo` and `foo` are the same item, so every identifier read from
+/// the source goes through here (module files, paths, aliases, macro and attribute names).
+fn ident_name(i: &syn::Ident) -> String {
+    i.unraw().to_string()
+}
+/// `path` is the single identifier `name`, raw or not.
+fn is_named(path: &syn::Path, name: &str) -> bool {
+    path.get_ident().is_some_and(|i| ident_name(i) == name)
 }
 
 #[cfg(test)]

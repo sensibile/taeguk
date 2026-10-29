@@ -17,6 +17,8 @@ mod many;
 mod nested;
 mod ops;
 mod plat;
+mod rawuser;
+mod r#type;
 mod scoped;
 mod stdalias;
 mod used;

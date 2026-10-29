@@ -1173,6 +1173,53 @@ fn go_configuration_outside_root_is_not_read() {
     assert!(!graph.contains("corp.example"), "{graph}");
     let g: Value = serde_json::from_str(&graph).unwrap();
     assert_eq!(g["status"], "FAIL", "{g}");
+    // A go.work inside ROOT may add a module outside it: the packages only that module's
+    // sources name must not appear in the failure message.
+    let w = work("go");
+    let private = w.0.join("private");
+    fs::create_dir_all(private.join("p")).unwrap();
+    fs::create_dir_all(private.join("internal/secretpkg")).unwrap();
+    fs::write(
+        private.join("go.mod"),
+        "module corp.example/private\n\ngo 1.22\n",
+    )
+    .unwrap();
+    fs::write(
+        private.join("p/p.go"),
+        "package p\n\nimport _ \"corp.example/private/internal/secretpkg\"\n",
+    )
+    .unwrap();
+    fs::write(
+        private.join("internal/secretpkg/s.go"),
+        "package secretpkg\n",
+    )
+    .unwrap();
+    fs::write(
+        w.repo().join("go.work"),
+        "go 1.22\n\nuse .\nuse ../private\n",
+    )
+    .unwrap();
+    fs::write(
+        w.repo().join("a/uses.go"),
+        "package a\n\nimport _ \"corp.example/private/p\"\n",
+    )
+    .unwrap();
+    git(&w.repo(), &["add", "-A"]);
+    git(&w.repo(), &["commit", "-qm", "workspace"]);
+    let (ok, v) = taeguk(&[
+        "graph",
+        "build",
+        w.repo().to_str().unwrap(),
+        "--out",
+        w.graph().to_str().unwrap(),
+        "--lang",
+        "go",
+    ]);
+    assert!(ok, "{v}");
+    let graph = fs::read_to_string(w.graph()).unwrap();
+    assert!(!graph.contains("secretpkg"), "{graph}");
+    let g: Value = serde_json::from_str(&graph).unwrap();
+    assert_eq!(g["status"], "FAIL", "{g}");
     // A go.work above ROOT is not used (go would otherwise search parent directories for it).
     let w = work("go");
     fs::write(w.0.join("go.work"), "this is not a go.work file\n").unwrap();
