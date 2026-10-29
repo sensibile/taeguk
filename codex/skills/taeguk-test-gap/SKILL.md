@@ -64,6 +64,20 @@ Reinforce mode continues:
 12. If any test is left, open a PR labeled `test-gap` whose body lists, per test, the gap, the oracle source, the injected fault and its result, and Codex's judgment, and continue with the project's PR flow including auto-merge. Apply VER-005 to review findings.
 13. Write the report to `.taeguk/test-gap/<date>.md`: mode, base SHA, measurements with commands, versions, statuses and threats, every gap with its location, classification and evidence, ranked proposals with their fault check results, tests added, dropped or rejected with reasons, PR number and head SHA after every push, questions for BOSS, cleanup candidates, and suspected defects.
 
+## Scope check
+
+Codex judgment and this skill's text do not stop an out-of-scope change from merging. Before every time auto-merge is enabled, on a new PR or a resumed one, run the scope check on the exact range and head that was reviewed. Run the checker as it is at the recorded base commit, copied outside the PR checkout and started with `python3 -I`, so neither a changed checker nor a module the PR adds next to it can run in its place:
+
+```sh
+checker="$(mktemp -d)/check_worker_scope.py"
+git show <recorded base SHA>:scripts/check_worker_scope.py > "$checker"
+python3 -I "$checker" test-gap --base <recorded base SHA> --head <reviewed head SHA>
+```
+
+Run it from the PR worktree, which only supplies the Git objects. If the base commit has no checker, the result is UNKNOWN.
+
+Enable auto-merge only on exit 0 with status PASS. On FAIL, drop the rejected tests, rerun validation and the step 11 review on the new head, and check again. On UNKNOWN or any other exit, do not enable auto-merge; report the PR to BOSS. The check covers paths, file modes, binary content and, for Rust sources, edits outside the trailing `#[cfg(test)]` module; it does not judge necessity or correctness. In an installed project, use the scope check its delivery document names; without one, open the PR without auto-merge and report it to BOSS.
+
 ## Report
 
 Tell BOSS in Korean what was merged or opened, the top remaining proposals, the questions that block a proposal, suspected defects and which measurements did not run. A stopped run is NOT_RUN or FAIL with its cause, never a silent skip. A run that found no requirement-linked gap says so; that is not PASS for test adequacy, since coverage cannot see an assertion that checks the wrong thing.
