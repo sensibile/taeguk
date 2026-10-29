@@ -346,7 +346,10 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
     // was edited since. Vendored code elsewhere is not part of this build.
     let listed: BTreeSet<&str> = out.nodes.iter().map(|n| n.files[0].as_str()).collect();
     let top = |f: &str| f.split('/').next().unwrap_or(f).to_string();
-    let compiled: BTreeSet<String> = listed.iter().map(|f| top(f)).collect();
+    let mut compiled: BTreeSet<String> = listed.iter().map(|f| top(f)).collect();
+    // `lib` is Mix's default source directory: a build that listed nothing yet (compiled
+    // before the first source was added) is still stale once `lib/*.ex` appears.
+    compiled.insert("lib".into());
     if let Some(new) = tracked
         .iter()
         .find(|f| f.ends_with(".ex") && compiled.contains(&top(f)) && !listed.contains(f.as_str()))

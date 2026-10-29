@@ -545,7 +545,7 @@ fn ignored_inputs_make_impact_unknown() {
     )
     .unwrap();
     let v = impact(&w, &["--changed", "b/b.go"]);
-    assert_eq!(v["status"], "UNKNOWN");
+    assert!(!v["warnings"].as_array().unwrap().is_empty());
     assert_eq!(other_reasons(&v), ["analyzer_inputs_changed"]);
 }
 
@@ -1143,6 +1143,29 @@ fn rust_path_attribute_walks_links_like_the_os() {
 }
 
 #[test]
+fn elixir_build_from_before_the_first_source_is_stale() {
+    if !available("elixir", "--version") {
+        return;
+    }
+    // Compiled while `lib` had no sources, then a first source added: the manifest lists
+    // nothing, so the default source directory must still be checked.
+    let w = work("elixir");
+    git(&w.repo(), &["rm", "-q", "-r", "lib"]);
+    git(&w.repo(), &["commit", "-qm", "empty"]);
+    let o = Command::new("mix")
+        .arg("compile")
+        .current_dir(w.repo())
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    fs::create_dir_all(w.repo().join("lib")).unwrap();
+    fs::write(w.repo().join("lib/new.ex"), "defmodule New do\nend\n").unwrap();
+    git(&w.repo(), &["add", "-A"]);
+    git(&w.repo(), &["commit", "-qm", "first source"]);
+    assert_fails(&w, "elixir", "does not include lib/new.ex");
+}
+
+#[test]
 fn python_package_mappings_not_interpreted_are_gaps() {
     if !available("python3", "--version") {
         return;
@@ -1671,7 +1694,7 @@ fn distances(v: &Value) -> BTreeSet<(String, u64)> {
         .collect()
 }
 fn review_files(v: &Value) -> Vec<String> {
-    let files: BTreeSet<String> = v["llm_review"]
+    let files: BTreeSet<String> = v["check_also"]
         .as_array()
         .unwrap()
         .iter()
@@ -1680,12 +1703,11 @@ fn review_files(v: &Value) -> Vec<String> {
     files.into_iter().collect()
 }
 fn other_reasons(v: &Value) -> Vec<String> {
-    v["reasons"]
+    v["warnings"]
         .as_array()
         .unwrap()
         .iter()
         .map(|r| r.as_str().unwrap().to_string())
-        .filter(|r| r != "gaps_need_llm_review")
         .collect()
 }
 fn set(items: &[(&str, u64)]) -> BTreeSet<(String, u64)> {
@@ -1700,9 +1722,8 @@ fn impact_follows_reverse_edges_and_reports_limits() {
     let w = work("python");
     build(&w, "python");
     let v = impact(&w, &["--changed", "src/app/util.py"]);
-    // Gaps outside the impacted files may hide dependents, so they go to LLM review.
-    assert_eq!(v["status"], "UNKNOWN", "{v}");
-    assert_eq!(v["reasons"], serde_json::json!(["gaps_need_llm_review"]));
+    // Gaps outside the impacted files may hide dependents: listed to check, not a warning.
+    assert_eq!(v["warnings"], serde_json::json!([]), "{v}");
     assert_eq!(
         review_files(&v),
         [
@@ -1752,11 +1773,11 @@ fn impact_follows_reverse_edges_and_reports_limits() {
         ])
     );
     assert!(
-        v["limits"]
+        v["notes"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|l| l.as_str().unwrap().contains("missing edge is not evidence"))
+            .any(|l| l.as_str().unwrap().contains("structure-analysis aid"))
     );
     let shallow = impact(&w, &["--changed", "src/app/util.py", "--depth", "1"]);
     assert_eq!(shallow["depth_limit"], 1);
@@ -1768,7 +1789,7 @@ fn impact_follows_reverse_edges_and_reports_limits() {
     // Uncommitted edits can change imports the graph of HEAD does not show.
     fs::write(w.repo().join("common.py"), "import scripts\n").unwrap();
     let edited = impact(&w, &["--changed", "src/app/util.py"]);
-    assert_eq!(edited["status"], "UNKNOWN");
+    assert!(!edited["warnings"].as_array().unwrap().is_empty());
     assert_eq!(
         other_reasons(&edited),
         ["working_tree_differs_from_head", "analyzer_inputs_changed"]
@@ -1784,7 +1805,7 @@ fn impact_follows_reverse_edges_and_reports_limits() {
     fs::remove_file(w.repo().join("scripts/extra.py")).unwrap();
 
     let unmapped = impact(&w, &["--changed", "README.md"]);
-    assert_eq!(unmapped["status"], "UNKNOWN");
+    assert!(!unmapped["warnings"].as_array().unwrap().is_empty());
     assert_eq!(unmapped["unmapped"], serde_json::json!(["README.md"]));
 
     fs::write(
@@ -1794,9 +1815,9 @@ fn impact_follows_reverse_edges_and_reports_limits() {
     .unwrap();
     git(&w.repo(), &["commit", "-qam", "change"]);
     let stale = impact(&w, &["--git-diff", "HEAD~1"]);
-    assert_eq!(stale["status"], "UNKNOWN");
+    assert!(!stale["warnings"].as_array().unwrap().is_empty());
     assert!(
-        stale["reasons"]
+        stale["warnings"]
             .as_array()
             .unwrap()
             .iter()
@@ -1820,7 +1841,7 @@ fn impact_follows_reverse_edges_and_reports_limits() {
     build(&w, "python");
     let dirty = impact(&w, &["--changed", "scripts/helper.py"]);
     assert!(
-        dirty["reasons"]
+        dirty["warnings"]
             .as_array()
             .unwrap()
             .iter()
@@ -1833,7 +1854,7 @@ fn impact_follows_reverse_edges_and_reports_limits() {
     build(&w, "python");
     let failed = impact(&w, &["--changed", "src/app/core.py"]);
     assert!(
-        failed["reasons"]
+        failed["warnings"]
             .as_array()
             .unwrap()
             .iter()
@@ -1855,16 +1876,16 @@ fn go_impact_includes_test_imports() {
         ("go:example.com/fx/c", 1),
         ("go:example.com/fx/b", 2),
     ]);
-    assert_eq!(v["status"], "UNKNOWN", "{v}");
+    assert_eq!(v["warnings"], serde_json::json!([]), "{v}");
     assert_eq!(review_files(&v), ["d/d_tool.go", "f"]);
     assert_eq!(distances(&v), expected);
-    // Without gaps the static result is complete for the graph's scope.
+    // Without gaps nothing is left to check besides the impacted list.
     git(&w.repo(), &["rm", "-q", "-r", "d/d_tool.go", "f"]);
     git(&w.repo(), &["commit", "-qm", "drop"]);
     build(&w, "go");
     let v = impact(&w, &["--changed", "a/a.go"]);
-    assert_eq!(v["status"], "PASS", "{v}");
-    assert_eq!(v["llm_review"], serde_json::json!([]));
+    assert_eq!(v["warnings"], serde_json::json!([]), "{v}");
+    assert_eq!(v["check_also"], serde_json::json!([]));
     assert_eq!(distances(&v), expected);
 }
 
@@ -1901,9 +1922,9 @@ fn impact_rejects_other_roots_and_tool_versions() {
         "helper.py",
     ]);
     assert!(ok, "{v}");
-    assert_eq!(v["status"], "UNKNOWN");
+    assert!(!v["warnings"].as_array().unwrap().is_empty());
     assert!(
-        v["reasons"]
+        v["warnings"]
             .as_array()
             .unwrap()
             .iter()
@@ -1912,7 +1933,7 @@ fn impact_rejects_other_roots_and_tool_versions() {
 
     with_version(&w.graph(), "Python 0.0.0");
     let v = impact(&w, &["--changed", "scripts/helper.py"]);
-    assert_eq!(v["status"], "UNKNOWN");
+    assert!(!v["warnings"].as_array().unwrap().is_empty());
     assert_eq!(other_reasons(&v), ["analyzer_version_changed_or_unknown"]);
 }
 

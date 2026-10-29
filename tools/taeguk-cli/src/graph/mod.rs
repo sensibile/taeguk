@@ -1209,26 +1209,9 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
     // they report. A file swapped for a link out of ROOT in between and swapped back would
     // leave no trace in the paths, but it does in the inode change time, which no user can
     // set back: any change under ROOT while the tools ran fails every analyzer.
-    let changed = match (&before, tree_state(&root, &langs)) {
-        (Ok(before), Ok(after)) => after.changed_from(before),
-        (Err(e), _) => Some(format!("its state could not be recorded: {e}")),
-        (_, Err(e)) => Some(format!("its state could not be recorded: {e}")),
-    };
-    if scanned.is_ok()
-        && let Some(changed) = changed
-    {
-        // Every analyzer, also one that already failed: its message may quote what a tool read
-        // while ROOT was in the changed state.
-        for a in analyzers.iter_mut() {
-            a.status = "FAIL".into();
-            a.error = Some(format!(
-                "ROOT changed while the analyzers ran ({changed}); build again"
-            ));
-        }
-        nodes.clear();
-        edges.clear();
-        gaps.clear();
-    }
+    // The fingerprint is taken before the second state check, so an edit made while the
+    // analyzers ran or while the inputs were hashed (an editor saving during build) shows up
+    // there too instead of pairing old results with new input hashes.
     let inputs = if scanned.is_ok() {
         let (inputs, outside) = input_fingerprint(&root, &langs, &read)?;
         // An input linked out of ROOT may have been read by a tool; no analyzer result is kept.
@@ -1248,6 +1231,26 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
     } else {
         String::new()
     };
+    let changed = match (&before, tree_state(&root, &langs)) {
+        (Ok(before), Ok(after)) => after.changed_from(before),
+        (Err(e), _) => Some(format!("its state could not be recorded: {e}")),
+        (_, Err(e)) => Some(format!("its state could not be recorded: {e}")),
+    };
+    if scanned.is_ok()
+        && let Some(changed) = changed
+    {
+        // Every analyzer, also one that already failed: its message may quote what a tool read
+        // while ROOT was in the changed state.
+        for a in analyzers.iter_mut() {
+            a.status = "FAIL".into();
+            a.error = Some(format!(
+                "ROOT changed while the graph was built ({changed}); build again"
+            ));
+        }
+        nodes.clear();
+        edges.clear();
+        gaps.clear();
+    }
     let status = if analyzers.iter().all(|a| a.status == "PASS") {
         "PASS"
     } else {
@@ -1399,6 +1402,8 @@ fn impact(
     changed: &[String],
     depth: Option<usize>,
 ) -> Value {
+    // The graph is a structure-analysis aid, not a completeness proof: impact lists the static
+    // dependents it found and warns when the graph may not describe the current tree.
     let mut reasons = Vec::new();
     // Paths are ROOT-relative, so a graph of another directory must not be reused.
     if root.display().to_string() != g.root {
@@ -1469,14 +1474,14 @@ fn impact(
     }
     let by_id: BTreeMap<_, _> = g.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
     // A gap marks a file whose dependencies static analysis could not fully resolve, so it may
-    // depend on an impacted file without an edge. Gaps outside the impacted set are handed to LLM
-    // review; until that review is recorded the static result alone is not complete.
+    // depend on an impacted file without an edge: those outside the impacted set are listed as
+    // places worth a look.
     let impacted_files: BTreeSet<&str> = dist
         .keys()
         .flat_map(|id| by_id[id].files.iter().map(String::as_str))
         .chain(unmapped.iter().map(String::as_str))
         .collect();
-    let llm_review: Vec<&Gap> = g
+    let check_also: Vec<&Gap> = g
         .gaps
         .iter()
         .filter(|gap| {
@@ -1485,28 +1490,19 @@ fn impact(
                 .is_none_or(|f| !impacted_files.contains(f))
         })
         .collect();
-    if !llm_review.is_empty() {
-        reasons.push("gaps_need_llm_review");
-    }
     let mut impacted: Vec<_> = dist.iter().map(|(id, d)| (*d, *id)).collect();
     impacted.sort();
     let impacted: Vec<Value> = impacted
         .into_iter()
         .map(|(d, id)| json!({"id": id, "distance": d, "files": by_id[id].files}))
         .collect();
-    let status = if reasons.is_empty() {
-        "PASS"
-    } else {
-        "UNKNOWN"
-    };
-    json!({"status": status, "reasons": reasons, "graph_digest": g.digest, "graph_commit": g.commit,
+    json!({"warnings": reasons, "graph_digest": g.digest, "graph_commit": g.commit,
         "head": head, "changed": changed, "unmapped": unmapped, "depth_limit": depth,
-        "impacted": impacted, "llm_review": llm_review, "gaps": g.gaps,
-        "limits": ["static source dependencies only",
-            "llm_review lists gaps outside the impacted files: an LLM reviewer must read each site and record whether it reaches an impacted file before the result is used as complete",
+        "impacted": impacted, "check_also": check_also, "gaps": g.gaps,
+        "notes": ["a structure-analysis aid: impacted lists the static dependents the language tools show",
+            "check_also lists sites static analysis could not resolve outside the impacted files; they may depend on the changed files too",
             "runtime, configuration, data and dynamic dispatch paths are not included",
-            "a missing edge is not evidence of no impact",
-            "PASS means the graph was current and every changed file was mapped, not that unlisted code is unaffected"]})
+            "warnings say the graph may not describe the current tree (stale, dirty, failed analyzer, unmapped file); rebuild it"]})
 }
 
 fn usage() -> String {
