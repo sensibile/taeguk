@@ -848,6 +848,37 @@ fn hostile_manifests_and_git_config_run_nothing() {
 }
 
 #[test]
+fn manifest_link_retargeting_changes_the_fingerprint() {
+    if !available("mix", "--version") {
+        return;
+    }
+    // The manifest read through a link: repointing the link must make the graph stale.
+    let w = work("elixir");
+    let o = Command::new("mix")
+        .arg("compile")
+        .current_dir(w.repo())
+        .output()
+        .unwrap();
+    assert!(o.status.success());
+    let dir = w.repo().join("_build/dev/lib/fx/.mix");
+    fs::rename(dir.join("compile.elixir"), dir.join("a.manifest")).unwrap();
+    let mut other = fs::read(dir.join("a.manifest")).unwrap();
+    other.push(0);
+    fs::write(dir.join("b.manifest"), other).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("a.manifest", dir.join("compile.elixir")).unwrap();
+    let g = build(&w, "elixir");
+    assert_eq!(g["status"], "PASS", "{g}");
+    let v = impact(&w, &["--changed", "lib/fx/a.ex"]);
+    assert_eq!(other_reasons(&v), Vec::<String>::new());
+    fs::remove_file(dir.join("compile.elixir")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("b.manifest", dir.join("compile.elixir")).unwrap();
+    let v = impact(&w, &["--changed", "lib/fx/a.ex"]);
+    assert_eq!(other_reasons(&v), ["analyzer_inputs_changed"]);
+}
+
+#[test]
 fn python_resolve_follows_links_inside_root() {
     if !available("python3", "--version") {
         return;
@@ -1085,6 +1116,7 @@ fn impact_follows_reverse_edges_and_reports_limits() {
     assert_eq!(
         review_files(&v),
         [
+            "plug/run.py",
             "src/app/wilduser.py",
             "tests/test_aliases.py",
             "tests/test_annotated.py",

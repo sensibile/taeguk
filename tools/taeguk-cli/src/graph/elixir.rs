@@ -91,11 +91,12 @@ for line <- String.split(IO.read(:stdio, :eof), "\n", trim: true),
                   end
                 _ -> List.last(parts)
               end
-            {node, Map.put(acc, as, parts)}
+            {node, Map.update(acc, as, [parts], &Enum.uniq([parts | &1]))}
           {:alias, _, [{{:., _, [{:__aliases__, _, base}, :{}]}, _, children} | _]} = node, acc ->
             acc =
               Enum.reduce(children, acc, fn
-                {:__aliases__, _, parts}, acc -> Map.put(acc, List.last(parts), base ++ parts)
+                {:__aliases__, _, parts}, acc ->
+                  Map.update(acc, List.last(parts), [base ++ parts], &Enum.uniq([base ++ parts | &1]))
                 _, acc -> acc
               end)
             {node, acc}
@@ -103,12 +104,15 @@ for line <- String.split(IO.read(:stdio, :eof), "\n", trim: true),
         end)
         |> elem(1)
       # Module names are compared in one form: `Elixir.Kernel` and `:"Elixir.Kernel"` are
-      # `Kernel`, and alias chains (`alias K, as: K2`) are followed up to 8 steps.
+      # `Kernel`, and alias chains (`alias K, as: K2`) are followed up to 8 steps. A short name
+      # aliased to different modules in one file depends on where the call sits, which is not
+      # tracked, so it is ambiguous.
       strip = fn [:Elixir | rest] -> rest; parts -> parts end
       expand = fn parts ->
         Enum.reduce_while(1..8, strip.(parts), fn _, [h | t] = acc ->
           case aliases do
-            %{^h => full} when full != [h] -> {:cont, strip.(full) ++ t}
+            %{^h => [full]} when full != [h] -> {:cont, strip.(full) ++ t}
+            %{^h => [_, _ | _]} -> {:halt, :ambiguous}
             _ -> {:halt, acc}
           end
         end)
@@ -121,7 +125,10 @@ for line <- String.split(IO.read(:stdio, :eof), "\n", trim: true),
           known =
             case recv do
               {:__aliases__, _, parts} when is_list(parts) and parts != [] ->
-                {expand.(parts), fun} in dynamic
+                case expand.(parts) do
+                  :ambiguous -> true
+                  full -> {full, fun} in dynamic
+                end
               :erlang -> fun == :apply
               atom when is_atom(atom) ->
                 case Atom.to_string(atom) do
@@ -252,6 +259,8 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
             gone[0]
         ));
     }
+    // Both the path read through (a link can be repointed) and the file it reached.
+    out.read.push(shown.clone());
     out.read.push(relative(root, &real).unwrap_or(shown));
     // Every source is checked (regular file inside ROOT, size bound) before elixir reads it.
     let mut list = String::new();

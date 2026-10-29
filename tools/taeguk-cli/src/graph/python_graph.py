@@ -97,13 +97,17 @@ PATH_FUNCS = {("pathlib", "Path"): "Path", ("pathlib", "PurePath"): "Path",
               ("os.path", "realpath"): "realpath", ("os", "fspath"): "fspath"}
 
 
-def path_bindings(tree):
-    """Names bound to known path functions and modules, minus any name bound another way."""
+def path_bindings(tree, shadowed):
+    """Names bound to known path functions and modules, minus any name bound another way.
+    Modules in `shadowed` exist as project files, so an import of them may not be the
+    standard library; nothing bound from them counts."""
     funcs, modules, other = {"str": "str"}, {}, set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for a in node.names:
-                if a.name in ("os", "os.path", "pathlib") and a.asname:
+                if a.name.split(".")[0] in shadowed:
+                    other.add((a.asname or a.name).split(".")[0])
+                elif a.name in ("os", "os.path", "pathlib") and a.asname:
                     modules[a.asname] = a.name
                 elif a.name in ("os", "os.path", "pathlib"):
                     modules[a.name.split(".")[0]] = a.name.split(".")[0]
@@ -112,10 +116,12 @@ def path_bindings(tree):
         elif isinstance(node, ast.ImportFrom):
             for a in node.names:
                 bound = a.asname or a.name
-                # A relative import (`from .pathlib import Path`) is the project's own module.
-                if node.level == 0 and (node.module, a.name) in PATH_FUNCS:
+                # A relative import (`from .pathlib import Path`) or a module the project itself
+                # provides (`scripts/pathlib.py`) is not the standard library.
+                own = node.level > 0 or (node.module or "").split(".")[0] in shadowed
+                if not own and (node.module, a.name) in PATH_FUNCS:
                     funcs[bound] = PATH_FUNCS[(node.module, a.name)]
-                elif node.level == 0 and node.module == "os" and a.name == "path":
+                elif not own and node.module == "os" and a.name == "path":
                     modules[bound] = "os.path"
                 else:
                     other.add(bound)
@@ -386,7 +392,11 @@ def main():
         # A script directory without __init__.py is sys.path[0] when the script runs.
         search = roots if is_package else [here] + [r for r in roots if r != here]
         CTX["root"] = root
-        CTX["funcs"], CTX["modules"] = path_bindings(tree)
+        # A project module that this file's imports reach under the standard name (a
+        # `scripts/pathlib.py` next to the script) replaces the standard one, so none of its
+        # names is trusted as a path function.
+        shadowed = {top for top in ("os", "pathlib") if candidates(top, search, files)}
+        CTX["funcs"], CTX["modules"] = path_bindings(tree, shadowed)
         sys_names, builtins_names, dynamic = bindings(tree)
         parents = parent_map(tree)
         front, back, unresolved = sys_path_changes(tree, path, sys_names)
