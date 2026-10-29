@@ -83,7 +83,7 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
             .env("GOSUMDB", "off")
             .env("GOVCS", "*:off")
             .env("GOTOOLCHAIN", "local")
-            .env("GOFLAGS", "-mod=readonly")
+            .env("GOFLAGS", "-mod=readonly -buildvcs=false")
             .env("GOWORK", gowork),
     )?;
     a.exit_code = o.code;

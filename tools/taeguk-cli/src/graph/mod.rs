@@ -160,6 +160,14 @@ fn bounded(cmd: &mut Command, input: Option<&[u8]>) -> Result<Output, String> {
     let limit = time_limit();
     let owner = env::var_os(IN_ANALYZER).is_none();
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    // git (run here, or by go and cargo) must not reach a remote: a repository's config can
+    // name a promisor remote whose missing objects git fetches on its own, through a transport
+    // command the repository chooses (`core.sshCommand`). No transport is allowed, lazy fetch
+    // is off, and nothing prompts or takes optional locks. Analyzers inherit this.
+    cmd.env("GIT_NO_LAZY_FETCH", "1")
+        .env("GIT_ALLOW_PROTOCOL", "")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_OPTIONAL_LOCKS", "0");
     #[cfg(unix)]
     if owner {
         std::os::unix::process::CommandExt::process_group(cmd, 0);
@@ -321,6 +329,8 @@ fn dirty_paths(root: &Path) -> Result<Vec<String>, String> {
         root,
         &[
             "diff",
+            "--no-ext-diff",
+            "--no-textconv",
             "--cached",
             "HEAD",
             "--name-only",
@@ -681,13 +691,22 @@ fn input_fingerprint(
         }
         match fs::metadata(&path) {
             Ok(meta) if meta.is_file() && meta.len() > MAX_SOURCE => {
-                let mtime = meta
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                    .map(|d| d.as_nanos())
-                    .unwrap_or(0);
-                h.update(format!("size={} mtime={mtime}", meta.len()).as_bytes());
+                // Not read: identified by what the kernel keeps for it. The modification time
+                // can be set back by any user (`touch -m`), the change time cannot: any write
+                // updates it, so a same-size rewrite with the old mtime still changes this.
+                use std::os::unix::fs::MetadataExt;
+                h.update(
+                    format!(
+                        "size={} ino={} ctime={}.{} mtime={}.{}",
+                        meta.len(),
+                        meta.ino(),
+                        meta.ctime(),
+                        meta.ctime_nsec(),
+                        meta.mtime(),
+                        meta.mtime_nsec()
+                    )
+                    .as_bytes(),
+                );
             }
             Ok(meta) if meta.is_file() => {
                 // Opened without blocking and re-checked, in case it was swapped for a FIFO.
@@ -844,6 +863,8 @@ fn changed_since(root: &Path, base: &str) -> Result<Vec<String>, String> {
         root,
         &[
             "diff",
+            "--no-ext-diff",
+            "--no-textconv",
             "--name-only",
             "--relative",
             "-z",

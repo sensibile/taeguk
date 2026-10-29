@@ -459,7 +459,9 @@ def sys_path_changes(tree, path, sys_names):
             if any(is_sys_path(t.value if isinstance(t, ast.Subscript) else t, sys_names) for t in targets):
                 unresolved.append(f"line {node.lineno}: sys.path assignment")
             if isinstance(node, ast.ImportFrom) and node.module == "sys":
-                taken = [a.name for a in node.names if a.name in ("path", "*") + SYS_IMPORT_STATE]
+                # Same allow-list as attribute access: dunder names (`__dict__`) reach everything.
+                taken = [a.name for a in node.names
+                         if a.name in ("path", "*") + SYS_IMPORT_STATE or a.name.startswith("_")]
                 if taken:
                     unresolved.append(f"line {node.lineno}: from sys import {', '.join(taken)}")
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
@@ -608,7 +610,8 @@ def main():
                 # `from builtins import exec as run`, `from sys import modules`: the names leave
                 # the module, so the allow-list on module attributes no longer sees their uses.
                 risky = CODE_EXEC + ("__import__", "*") if node.module == "builtins" else ("modules", "*")
-                taken = [a.name for a in node.names if a.name in risky]
+                # Same allow-list as attribute access: dunder names (`__dict__`) reach everything.
+                taken = [a.name for a in node.names if a.name in risky or a.name.startswith("_")]
                 if taken:
                     machinery = f"from {node.module} import {', '.join(taken)}"
             elif isinstance(node, ast.Name) and node.id == "__import__":

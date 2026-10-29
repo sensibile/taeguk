@@ -31,3 +31,6 @@ python sys_path_unresolved plugrun/run.py
 python dynamic_import tests/test_dict.py
 python sys_path_unresolved tests/test_dict.py
 python sys_path_unresolved tests/test_ossys.py
+python dynamic_import tests/test_fromdict.py
+python sys_path_unresolved tests/test_fromsysdict.py
+python dynamic_import tests/test_fromsysdict.py

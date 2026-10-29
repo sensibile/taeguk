@@ -1261,6 +1261,101 @@ fn go_configuration_outside_root_is_not_read() {
 }
 
 #[test]
+fn git_never_fetches_missing_objects() {
+    if !available("python3", "--version") {
+        return;
+    }
+    // A promisor remote with a transport command chosen by the repository: git would fetch the
+    // missing HEAD tree on its own and run that command. It must not run.
+    let w = work("python");
+    let marker = w.0.join("MARKER");
+    let repo = w.repo();
+    let tree = String::from_utf8(
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["rev-parse", "HEAD^{tree}"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let tree = tree.trim();
+    for (k, v) in [
+        ("remote.origin.url", "ssh://example.invalid/x".to_string()),
+        ("remote.origin.promisor", "true".to_string()),
+        ("extensions.partialClone", "origin".to_string()),
+        (
+            "core.sshCommand",
+            format!("touch {}; false", marker.display()),
+        ),
+    ] {
+        git(&repo, &["config", k, &v]);
+    }
+    let loose = repo.join(".git/objects").join(&tree[..2]).join(&tree[2..]);
+    fs::remove_file(&loose).unwrap();
+    for args in [
+        vec![
+            "graph",
+            "build",
+            repo.to_str().unwrap(),
+            "--out",
+            w.graph().to_str().unwrap(),
+            "--lang",
+            "python",
+        ],
+        vec![
+            "graph",
+            "impact",
+            w.graph().to_str().unwrap(),
+            repo.to_str().unwrap(),
+            "--changed",
+            "common.py",
+        ],
+    ] {
+        let _ = taeguk(&args);
+        assert!(
+            !marker.exists(),
+            "{args:?} ran the repository's transport command"
+        );
+    }
+}
+
+#[test]
+fn large_input_rewritten_with_its_old_mtime_is_seen() {
+    if !available("go", "version") {
+        return;
+    }
+    // An embedded file over the read bound is not hashed; rewriting it with the same size and
+    // setting the old modification time back must still make the graph stale.
+    let w = work("go");
+    fs::write(
+        w.repo().join("a/big.go"),
+        "package a\n\nimport _ \"embed\"\n\n//go:embed big.bin\nvar Big string\n",
+    )
+    .unwrap();
+    fs::write(w.repo().join(".gitignore"), "/a/big.bin\n").unwrap();
+    git(&w.repo(), &["add", "-A"]);
+    git(&w.repo(), &["commit", "-qm", "big"]);
+    let big = w.repo().join("a/big.bin");
+    fs::write(&big, vec![b'a'; 9 << 20]).unwrap();
+    let g = build(&w, "go");
+    assert_eq!(g["status"], "PASS", "{g}");
+    let mtime = fs::metadata(&big).unwrap().modified().unwrap();
+    std::thread::sleep(Duration::from_millis(20));
+    fs::write(&big, vec![b'b'; 9 << 20]).unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&big)
+        .unwrap()
+        .set_modified(mtime)
+        .unwrap();
+    assert_eq!(fs::metadata(&big).unwrap().modified().unwrap(), mtime);
+    let v = impact(&w, &["--changed", "b/b.go"]);
+    assert_eq!(other_reasons(&v), ["analyzer_inputs_changed"]);
+}
+
+#[test]
 fn git_waiting_on_a_fifo_is_bounded() {
     if !available("python3", "--version") {
         return;
@@ -1546,7 +1641,9 @@ fn impact_follows_reverse_edges_and_reports_limits() {
             "tests/test_dict.py",
             "tests/test_exec.py",
             "tests/test_file.py",
+            "tests/test_fromdict.py",
             "tests/test_fromexec.py",
+            "tests/test_fromsysdict.py",
             "tests/test_helper.py",
             "tests/test_importbind.py",
             "tests/test_match.py",
