@@ -4,7 +4,7 @@
 
 에이전트는 맥락·대안·다음 행동, 스킬은 반복 절차, 도구는 계산·실행 결과·상태 조회를 맡는다. CLI는 계산·증거 대조와 로컬 상태 API 요청을 수행한다. SQLite API는 작업 revision과 근거·실행 소유권을 저장한다. 프로세스의 실제 실행·종료나 모델 호출을 관리하는 workflow engine은 구현하지 않았다.
 
-작업은 Phase 0 아이디어, Phase 1 계획 강화(반복), Phase 1.5 구현, Phase 2 검증·다각화 리뷰·수정(반복), Phase 3 코드 정리·구조 개선(반복), Phase 4 전달·효과 관측으로 진행한다. 단계별 역할, 종료·상향 조건, 되돌아가기는 설치되는 [작업 단계](../codex/skills/taeguk-work-contract/references/phases.md)에 있다. 2026-10-28 BOSS가 확인했다.
+작업은 Phase 0 아이디어, Phase 1 계획 강화(반복), Phase 1.5 구현, Phase 2 검증·다각화 리뷰·수정(반복), Phase 3 변경 범위 정리(반복), Phase 4 전달·효과 관측으로 진행한다. 단계별 역할, 종료·상향 조건, 되돌아가기는 설치되는 [작업 단계](../codex/skills/taeguk-work-contract/references/phases.md)에 있다. 2026-10-28 BOSS가 확인했다. 작업 범위 밖의 정리는 매일 도는 데일리 정리가, 구조 개선은 시그널이 관측될 때 BOSS 승인을 받아 시작하는 작업이 맡는다(2026-10-29 BOSS 확인). 테스트가 비는 곳은 매일 정리 다음에 도는 테스트 보강이 커버리지로 찾아, 결함 주입으로 확인된 곳에만 테스트를 더한다(2026-10-29 BOSS 확인). 두 주기 작업은 승인을 기록한 적용 프로젝트(archon부터)에서도 돈다.
 
 구현자와 검토자는 같은 버전의 계획과 정확한 산출물 버전을 사용한다. 단계 표의 역할은 해당 작업에서 필요한 것만 선택한다. 문서만 바뀐 변경의 보안 리뷰처럼 대상이 없으면 NOT_APPLICABLE로 남긴다. 구성이 역할 생성을 자동 예약하거나 위임하는 것은 아니다.
 
@@ -16,7 +16,7 @@
 
 `taeguk_codex_cross_reviewer`와 `taeguk_codex_security_reviewer`는 [taeguk-codex-local-review](../codex/skills/taeguk-codex-local-review/SKILL.md) 절차로 로컬 `codex exec review`를 read-only sandbox에서 정확한 변경 범위에 실행한다. 2026-10-28 BOSS 지시로 이 CLI 호출은 `gpt-6-astra`, `medium` effort를 명령 인수로 지정한다. 역할 TOML의 모델 비고정 원칙은 그대로다. 교차 검토는 다른 에이전트가 구현한 변경의 정확성·요구 불일치를, 보안 검토는 실행 동작에 영향을 주는 변경의 취약점과 악용 시나리오를 본다. Codex 출력은 LLM 판단으로 분류하고 검토 역할이 각 지적을 재현·타당·기각·재현 필요로 평가한다. 지적 없음은 PASS가 아니다. 2026-10-28 GitHub의 `codex-review` gate를 없앤 뒤로는 이 로컬 리뷰가 PR 리뷰 단계다. 절차는 [저장소 운영](repository-operations.md)에 있다.
 
-CLI 실행은 diff와 저장소 맥락을 OpenAI로 보낸다. 2026-10-28 BOSS가 Claude Code 세션에서 이 전송을 "태극 저장소 작업에선 상시 허용"으로 선택했다. AGENTS.md상 실행 권한 변경은 BOSS 확인 사항이며 이 선택이 그 확인이다. 범위는 `sensibile/taeguk` 작업뿐이고, 시험 프로젝트를 포함한 다른 저장소는 작업별 BOSS 승인이 없으면 NOT_RUN으로 남긴다. 전송 전 diff에 비밀값이 있으면 실행하지 않는다.
+CLI 실행은 diff와 저장소 맥락을 OpenAI로 보낸다. 2026-10-28 BOSS가 Claude Code 세션에서 이 전송을 "태극 저장소 작업에선 상시 허용"으로 선택했다. AGENTS.md상 실행 권한 변경은 BOSS 확인 사항이며 이 선택이 그 확인이다. 범위는 `sensibile/taeguk` 작업이다. 2026-10-29 BOSS가 `sensibile/archon` 작업에도 같은 조건의 상시 허용을 골랐다. 그 밖의 저장소(다른 시험 프로젝트 포함)는 작업별 BOSS 승인이 없으면 NOT_RUN으로 남긴다. 전송 전 diff에 비밀값이 있으면 실행하지 않는다.
 
 ## 교환할 정보
 

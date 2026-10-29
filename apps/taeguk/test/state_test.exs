@@ -274,6 +274,23 @@ defmodule Taeguk.StateTest do
     assert Jason.decode!(cursor.resp_body) == %{"error" => "invalid_cursor"}
   end
 
+  test "API rejects a token that differs from the configured one" do
+    token = Application.fetch_env!(:taeguk, :state_token)
+    last = binary_part(token, byte_size(token) - 1, 1)
+
+    same_length =
+      binary_part(token, 0, byte_size(token) - 1) <> if(last == "x", do: "y", else: "x")
+
+    for wrong <- [same_length, token <> "x", "short"] do
+      conn =
+        Plug.Test.conn(:get, "/api/work-items")
+        |> Plug.Conn.put_req_header("x-taeguk-token", wrong)
+        |> TaegukWeb.Router.call(TaegukWeb.Router.init([]))
+
+      assert conn.status == 401
+    end
+  end
+
   test "different work items contend for one resource on separate connections" do
     first = fixture()
     second = fixture()

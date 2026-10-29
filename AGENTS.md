@@ -1,6 +1,6 @@
 # Taeguk development instructions
 
-Address the user as BOSS. Write explanations and documentation in Korean; keep code, commands, identifiers, and configuration in English.
+Address the user as BOSS. Answer BOSS in Korean, and write human-facing documentation (`docs/`, README, PR descriptions and comments) in Korean. Write agent-facing instructions in English: skills (`codex/skills/*/SKILL.md`), agent role TOML and this file. Keep code, commands, identifiers, and configuration in English.
 
 Use Elixir for the web app and API. Use SQLite for Taeguk local workflow state. Use Python for installation and automation scripts; Rust for CLI logic and complex option handling. Do not add a second backend stack.
 

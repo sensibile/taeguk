@@ -763,5 +763,20 @@ class MigrateTest(unittest.TestCase):
         self.assertEqual((self.home/install.CLI).read_bytes(), b'new cli')
 
 
+class CommandLineTest(unittest.TestCase):
+    def test_command_without_mode_flag_is_dry_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home, root = Path(tmp)/'home', Path(tmp)/'project'
+            home.mkdir()
+            root.mkdir()
+            run = subprocess.run([sys.executable, str(SOURCE/'scripts/taeguk_install.py'), '--home', str(home),
+                                  'project', '--root', str(root), '--agent', 'claude,codex'],
+                                 capture_output=True, text=True)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            result = json.loads(run.stdout)
+            self.assertEqual({c['status'] for c in result['components'].values()}, {'planned'})
+            self.assertEqual([p for p in Path(tmp).rglob('*') if p.is_file()], [])
+
+
 if __name__ == '__main__':
     unittest.main()
