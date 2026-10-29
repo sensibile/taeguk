@@ -1,6 +1,6 @@
 ---
 name: taeguk-test-gap
-description: "Find untested behavior in the Taeguk repository by using coverage as a measuring instrument, classify each gap against approved requirements, and report test proposals with their oracle and fault check; never raise coverage as a goal. Report-only: no test edits, branch or PR."
+description: "Find untested behavior by using coverage as a measuring instrument, classify each gap against approved requirements, and either report test proposals (report mode) or add up to three fault-checked tests that Codex agrees are needed through the PR flow (reinforce mode, daily); never raise coverage as a goal."
 ---
 
 # taeguk-test-gap
@@ -9,7 +9,14 @@ Coverage shows which code no test executed. It does not show whether a test chec
 
 ## Authority
 
-On 2026-10-29 BOSS approved this worker as manual and report-only: BOSS starts each run, and a run writes a report and nothing else. It does not commit test or product code changes, open a branch or PR, or schedule itself; the only edit it makes is the temporary fault injection in step 6. BOSS confirmed that temporary local fault injection on 2026-10-29. Writing tests, opening PRs, auto-merge and scheduled runs each need BOSS confirmation first. This applies to the Taeguk repository (`sensibile/taeguk`) only; pilot projects need explicit BOSS authorization per project.
+On 2026-10-29 BOSS approved two modes:
+
+- **Report mode**: BOSS starts the run; it writes a report and nothing else. The only edit is the temporary fault injection in step 6, which BOSS confirmed the same day. Nothing is committed.
+- **Reinforce mode**: runs daily after the daily cleanup, like the cleanup worker. It adds at most three tests per run, only for confirmed requirement-linked gaps, and carries the tests Codex agrees are needed through the PR flow to merge. It changes test code only. Product code changes, test deletions, threshold changes and fixes for defects it finds are reported to BOSS, never made.
+
+## Where it runs
+
+The Taeguk repository (`sensibile/taeguk`), and an installed project only when that project records a BOSS authorization for this worker: its schedule, its merge authority, and standing authority to send diffs to Codex for review. On 2026-10-29 BOSS chose archon (`sensibile/archon`) as the first such project; other pilot projects need the Codex transmission authority extended first. Without a recorded authorization, a run in an installed project is report mode at most, and without Codex transmission authority reinforce mode stops before review as NOT_RUN. In an installed project, its own AGENTS.md validation commands, worktree rules, delivery document and test locations replace the Taeguk ones named below, and its run reports go under its own `.taeguk/test-gap/`.
 
 ## Coverage is not a target
 
@@ -21,7 +28,7 @@ On 2026-10-29 BOSS approved this worker as manual and report-only: BOSS starts e
 
 ## Measurement
 
-Measure every language the repository tests. Record each measurement's command, base SHA, tool version and status (VER-003). A missing tool or failed run is NOT_RUN or FAIL for that language, never "no gaps". Keep raw output outside the checkout, under `.taeguk/test-gap/<date>/` in the main checkout (ignored by Git).
+Measure every language the project tests. Record each measurement's command, base SHA, tool version and status (VER-003). A missing tool or failed run is NOT_RUN or FAIL for that language, never "no gaps". Keep raw output outside the checkout, under `.taeguk/test-gap/<date>/` in the main checkout (ignored by Git).
 
 | Language | Command | Known threats (MET-001) |
 |---|---|---|
@@ -29,11 +36,13 @@ Measure every language the repository tests. Record each measurement's command, 
 | Rust | `cargo llvm-cov --manifest-path tools/taeguk-cli/Cargo.toml --locked`, then `cargo llvm-cov report --manifest-path tools/taeguk-cli/Cargo.toml --show-missing-lines` for locations and `--json` for unexecuted functions (needs `llvm-tools-preview`) | The default output is a per-file summary without locations. Line and region counts differ; report uncovered functions and lines, not the region ratio |
 | Elixir | DB-backed `mix test --cover` in `apps/taeguk` with `TAEGUK_REQUIRE_STATE_TESTS=1` (see `docs/workflow-state-usage.md`) | Without the state DB, state tests skip and their modules look untested; a plain run is not a measurement. `mix.exs` sets the coverage summary threshold to 0, so the exit code reflects test results only; if a run still fails on a coverage threshold, record the measurement from the cover output and do not treat it as a test failure. Generated modules (`Router.Helpers`, error views) report 0% by construction |
 
+The table is for the Taeguk repository. In an installed project, build the equivalent commands from its validation commands and handle the same threats: every source directory in the denominator, subprocesses followed, required integration suites actually running rather than skipping, and a coverage threshold never turning a passing suite into a failed measurement.
+
 Use an isolated virtual environment for `coverage`, such as `.taeguk/test-gap/venv`; do not install into a shared interpreter. Run every test suite with the same flags as the AGENTS.md validation commands so the measured run is the run that gates delivery.
 
 ## Run
 
-1. Fetch and record the `origin/main` SHA. Measure in a clean worktree at that SHA, not in a checkout with local changes.
+1. Fetch and record the `origin/main` SHA. Read the latest run report under `.taeguk/test-gap/` in the main checkout for its rejected and questioned gaps. Measure in a clean worktree at that SHA, not in a checkout with local changes. In reinforce mode, first handle an open PR labeled `test-gap` the way `$taeguk-daily-cleanup` step 2 handles an open cleanup PR: resume it only when a local run report records its number and head SHA and it was opened by this account, otherwise report it to BOSS and stop; never open a second one.
 2. Run the measurements above and record their statuses and threats observed in this run.
 3. Group uncovered lines, branches and functions into gaps by enclosing function or clause. Read the code and the tests around each gap; an uncovered line inside a function whose behavior a test already checks through another path is still a gap only if a distinct behavior is unchecked.
 4. Classify each gap:
@@ -43,9 +52,18 @@ Use an isolated virtual environment for `coverage`, such as `.taeguk/test-gap/ve
    - **environment-bound**: reaching it needs a condition the test environment cannot create safely (real home directory, network, signals across sessions). Record the condition and whether a fake or fixture could create it.
    - **measurement artifact**: the code runs in a test the tool could not follow. Show the test that runs it.
 5. For each requirement-linked gap, write a proposal: the oracle source, the input or state, the expected observation, the fault to inject (the edit that would break the behavior) and the expected test failure. Rank proposals by the consequence of a defect there, such as overwriting unowned files, lost workflow state, an authorization bypass or a false PASS, not by line count.
-6. Confirm the top proposals: inject the fault in the measurement worktree, run the suite that covers it with the validation flags, record the result, then restore the file and check `git status` is clean. The suite must pass on the unmodified tree first, and the mutant must build and run. The suite still passing confirms the gap. Only a test assertion failing on the mutant shows that another test already guards the behavior; then reclassify the gap as a measurement artifact and name that test. A build error, crash or environment failure on the mutant is UNKNOWN for that gap, not detection. This is a source edit in a local test run, not operational fault injection; it is the only change a report-only run makes, and it is never committed.
-7. Write the report to `.taeguk/test-gap/<date>.md`: base SHA, measurements with commands, versions, statuses and threats, every gap with its location, classification and evidence, ranked proposals with their fault check results, questions for BOSS, cleanup candidates, and suspected defects.
+6. Confirm the top proposals: inject the fault in the measurement worktree, run the suite that covers it with the validation flags, record the result, then restore the file and check `git status` is clean. The suite must pass on the unmodified tree first, and the mutant must build and run. The suite still passing confirms the gap. Only a test assertion failing on the mutant shows that another test already guards the behavior; then reclassify the gap as a measurement artifact and name that test. A build error, crash or environment failure on the mutant is UNKNOWN for that gap, not detection. This is a source edit in a local test run, not operational fault injection; it is never committed.
+7. Report mode stops here and writes the report (step 13).
+
+Reinforce mode continues:
+
+8. Pick at most three confirmed gaps from the top of the ranking. Skip a gap an earlier run recorded as rejected by Codex or waiting for a BOSS answer, unless there is new evidence or the answer arrived.
+9. Create a worktree and a `test/test-gap-<date>` branch from the recorded SHA. Write one test per gap, one commit per gap, in the project's test locations (for Rust, the `#[cfg(test)]` module or `tests/`). The expected value comes from the cited source, not from running the code.
+10. Check each test: it passes on the unmodified product code, and it fails by assertion when the step 6 fault is injected; restore the fault and confirm `git status` shows only test files. A test that fails on unmodified code is a suspected defect: drop the test, keep the product code as it is, and report it with the requirement it contradicts. A test that still passes with the fault does not close the gap; drop it. Then run the validation commands that apply.
+11. Ask Codex whether each test is needed: run `$taeguk-codex-local-review` on the branch range with the test adequacy focus from its review prompts together with the cross review focus, and the security review. Remove every test Codex judges unneeded, implementation-derived or not checking the cited requirement, and every test where its judgment is missing or unclear. Record rejections and do not argue them again in the same run. If tests were removed, rerun validation and the review on the new head.
+12. If any test is left, open a PR labeled `test-gap` whose body lists, per test, the gap, the oracle source, the injected fault and its result, and Codex's judgment, and continue with the project's PR flow including auto-merge. Apply VER-005 to review findings.
+13. Write the report to `.taeguk/test-gap/<date>.md`: mode, base SHA, measurements with commands, versions, statuses and threats, every gap with its location, classification and evidence, ranked proposals with their fault check results, tests added, dropped or rejected with reasons, PR number and head SHA after every push, questions for BOSS, cleanup candidates, and suspected defects.
 
 ## Report
 
-Tell BOSS in Korean the top proposals, the questions that block a proposal, suspected defects and which measurements did not run. A run that found no requirement-linked gap says so; that is not PASS for test adequacy, since coverage cannot see an assertion that checks the wrong thing.
+Tell BOSS in Korean what was merged or opened, the top remaining proposals, the questions that block a proposal, suspected defects and which measurements did not run. A stopped run is NOT_RUN or FAIL with its cause, never a silent skip. A run that found no requirement-linked gap says so; that is not PASS for test adequacy, since coverage cannot see an assertion that checks the wrong thing.
