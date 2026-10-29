@@ -13,7 +13,7 @@ Running the CLI sends the diff and repository context to OpenAI. On 2026-10-28 B
 
 ## Before running
 
-1. Confirm the self-review loop has finished for this exact head SHA: the session's own review agent reviewed the same range, every adopted finding was fixed and re-reviewed, and the last self-review left nothing to fix (rejected findings carry a reason). BOSS set this order on 2026-10-29. If the loop has not finished, or findings keep recurring without converging, do not run Codex; finish the loop or report to BOSS.
+1. Confirm the self-review loop has finished for this exact target (head SHA, or the working-tree content fingerprint): the session's own review agent (for example `taeguk_llm_reviewer`, or a review subagent in Claude Code) reviewed the same range repeatedly, with fixes re-reviewed, until the VER-005 end condition held. BOSS set this order on 2026-10-29. If the loop has not ended, do not run Codex; when the VER-005 escalation condition holds, report to BOSS instead.
 2. Fix the target as exact SHAs: a range `<base_sha>...<head_sha>` (diff from their merge-base), one commit, or the working tree against HEAD including untracked files. Record the base SHA, head SHA, `git status --short` and a content fingerprint of the working tree, since status and HEAD stay the same when an already modified or untracked file changes again:
 
    ```sh

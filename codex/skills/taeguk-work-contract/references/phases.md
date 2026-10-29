@@ -7,7 +7,7 @@
 | Phase 0 아이디어 | 목적 가설과 의도·요구사항 기록(REQ-001, REQ-007) | `taeguk_coordinator` | 요구사항 의미를 BOSS가 확정 |
 | Phase 1 계획 강화 (반복) | 설계와 검증 방안 확보, 부족한 검증 도구의 제작 범위(VER-004) | `taeguk_designer`, `taeguk_verification_builder`, `taeguk_verifier` | verifier가 모든 요구사항을 oracle·검사에 연결한 계획 버전을 확정 |
 | Phase 1.5 구현 | 확정한 계획 버전에 맞춘 구현과 필요한 검증 도구 제작 | `taeguk_implementer`, `taeguk_verification_builder` | 정확한 산출물 버전을 검증·리뷰 역할에 인계 |
-| Phase 2 검증·다각화 리뷰·수정 (반복) | 도구 검사, LLM 리뷰, 로컬 Codex 교차·보안 리뷰, 지적 수정과 영향 검사 재검증 | `taeguk_tool_verifier`, `taeguk_llm_reviewer`, `taeguk_codex_cross_reviewer`, `taeguk_codex_security_reviewer`, `taeguk_implementer` | 필수 검사 PASS, P0·P1 지적 0건, P2 이하는 반영하거나 반영하지 않은 이유를 기록 |
+| Phase 2 검증·다각화 리뷰·수정 (반복) | 도구 검사, LLM 리뷰(자체 리뷰), 로컬 Codex 교차·보안 리뷰, 지적 수정과 영향 검사 재검증. Codex 리뷰는 자체 리뷰 반복이 VER-005로 끝난 대상에만 보내고, Codex 지적으로 바뀐 대상은 자체 리뷰부터 다시 한다(`docs/repository-operations.md` PR 플로우 2단계) | `taeguk_tool_verifier`, `taeguk_llm_reviewer`, `taeguk_codex_cross_reviewer`, `taeguk_codex_security_reviewer`, `taeguk_implementer` | 필수 검사 PASS, P0·P1 지적 0건, P2 이하는 반영하거나 반영하지 않은 이유를 기록 |
 | Phase 3 변경 범위 정리 (반복) | 이번 변경이 만든 임시 코드, 디버그 출력, 이번 변경으로 쓰이지 않게 된 코드와 중복만 정리. 범위 밖 정리와 구조 개선 거리는 후보로 기록(DEV-002) | `taeguk_implementer` | 변경이 생기면 Phase 2로 돌아가 영향받는 검사를 재검증한 뒤 종료 |
 | Phase 4 전달·효과 관측 | 머지·설치 등 전달 뒤 실제 사용자 효과를 목적 가설과 비교(REL-005), 규칙 개정 거리는 제안으로 분리 | `taeguk_outcome_observer`, `taeguk_rule_reviewer` | 관측 결과와 미확인 효과를 기록하고, 새 작업은 Phase 0에서 시작 |
 
