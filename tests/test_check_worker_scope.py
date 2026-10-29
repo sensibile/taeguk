@@ -117,7 +117,7 @@ class WorkerScopeTest(unittest.TestCase):
         self.assert_rejected('test-gap', 'tools/taeguk-cli/src/main.rs', 'change outside the trailing #[cfg(test)] module')
 
     def test_test_gap_accepts_multiline_and_raw_strings_in_tests(self):
-        self.write('tools/taeguk-cli/src/main.rs', RUST.replace('    }\n}\n', '    }\n\n    #[test]\n    fn text() {\n        let a = "line one {\n}";\n        let b = r#"raw "}" {"#;\n        let c: &\'static str = "x";\n        assert!(a.len() + b.len() + c.len() > 0); // }\n    }\n}\n'))
+        self.write('tools/taeguk-cli/src/main.rs', RUST.replace('    }\n}\n', '    }\n\n    #[test]\n    fn text() {\n        let a = "line one {\n}";\n        let b = r#"raw "}" {"#;\n        let c: &\'static str = "x";\n        assert!(a.len() + b.len() + c.len() > 0); // }\n        /* } /* nested } */ */\n    }\n}\n'))
         self.commit('strings')
         code, result = self.run_check('test-gap')
         self.assertEqual((code, result['status']), (0, 'PASS'), result)
