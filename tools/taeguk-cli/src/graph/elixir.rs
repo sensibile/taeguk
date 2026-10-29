@@ -100,6 +100,33 @@ for line <- String.split(IO.read(:stdio, :eof), "\n", trim: true),
                 _, acc -> acc
               end)
             {node, acc}
+          # `alias :"Elixir.Kernel", as: K` names the module by atom; any other target that is
+          # not a plain alias cannot be read here, so its short name becomes ambiguous.
+          {kind, _, [target | rest]} = node, acc when kind in [:alias, :require] ->
+            parts =
+              case target do
+                atom when is_atom(atom) ->
+                  case Atom.to_string(atom) do
+                    # An atom is an absolute name; the leading :Elixir keeps it from expansion.
+                    "Elixir." <> name -> [:Elixir | Enum.map(String.split(name, "."), &String.to_atom/1)]
+                    _ -> [:Elixir, atom]
+                  end
+                _ -> nil
+              end
+            as =
+              case rest do
+                [opts] when is_list(opts) ->
+                  case Keyword.get(opts, :as) do
+                    {:__aliases__, _, [name]} -> name
+                    _ -> parts && List.last(parts)
+                  end
+                _ -> parts && List.last(parts)
+              end
+            cond do
+              is_nil(as) -> {node, acc}
+              is_nil(parts) -> {node, Map.put(acc, as, [[:"?1"], [:"?2"]])}
+              true -> {node, Map.update(acc, as, [parts], &Enum.uniq([parts | &1]))}
+            end
           node, acc -> {node, acc}
         end)
         |> elem(1)
@@ -108,10 +135,15 @@ for line <- String.split(IO.read(:stdio, :eof), "\n", trim: true),
       # aliased to different modules in one file depends on where the call sits, which is not
       # tracked, so it is ambiguous.
       strip = fn [:Elixir | rest] -> rest; parts -> parts end
-      expand = fn parts ->
-        Enum.reduce_while(1..8, strip.(parts), fn _, [h | t] = acc ->
+      expand = fn
+        # `Elixir.Kernel` is absolute: local aliases do not apply to it.
+        [:Elixir | rest] -> rest
+        parts ->
+        Enum.reduce_while(1..8, parts, fn _, [h | t] = acc ->
           case aliases do
-            %{^h => [full]} when full != [h] -> {:cont, strip.(full) ++ t}
+            # An absolute target (`Elixir.X`, an atom) is final; a relative one may be an alias.
+            %{^h => [[:Elixir | _] = full]} -> {:halt, strip.(full) ++ t}
+            %{^h => [full]} when full != [h] -> {:cont, full ++ t}
             %{^h => [_, _ | _]} -> {:halt, :ambiguous}
             _ -> {:halt, acc}
           end

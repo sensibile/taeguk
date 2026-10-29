@@ -133,6 +133,9 @@ def path_bindings(tree, shadowed):
             other.add(node.arg)
         elif isinstance(node, (ast.Global, ast.Nonlocal)):
             other.update(node.names)
+    # A wildcard import (`from helper import *`) can rebind any name, so no binding is trusted.
+    if any(isinstance(n, ast.ImportFrom) and any(a.name == "*" for a in n.names) for n in ast.walk(tree)):
+        return {}, {}
     funcs = {k: v for k, v in funcs.items() if k not in other}
     modules = {k: v for k, v in modules.items() if k not in other}
     return funcs, modules
@@ -238,6 +241,10 @@ def assigned_names(node):
     return None, []
 
 
+def has_wildcard(tree):
+    return any(isinstance(n, ast.ImportFrom) and any(a.name == "*" for a in n.names) for n in ast.walk(tree))
+
+
 def bindings(tree):
     """Names bound to the sys and builtins modules (`import sys as s`, `b = builtins`) and to
     dynamic import functions (`from importlib import import_module as load`)."""
@@ -304,6 +311,8 @@ def sys_path_changes(tree, path, sys_names):
     classes run later with values not known statically (parameters, locals, reassignments), so
     each one is unresolved."""
     env, front, back, unresolved = {}, [], [], []
+    # A wildcard import may rebind `sys` or the path variables, so nothing is evaluated.
+    wildcard = has_wildcard(tree)
     # Nodes inside any function, lambda or class body, wherever it is nested (`if`, `try` ...).
     inside = {id(n) for f in ast.walk(tree)
               if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef))
@@ -333,7 +342,7 @@ def sys_path_changes(tree, path, sys_names):
             try:
                 if arg is None:
                     raise Unresolved(f"sys.path.{method}")
-                if deferred or id(node) in inside or (top is not None and node is not top.value):
+                if deferred or id(node) in inside or (top is not None and node is not top.value) or wildcard:
                     # Inside a function or class the values at call time (parameters, locals,
                     # later reassignments) are not known statically.
                     raise Unresolved(f"sys.path.{method} inside a function, class or conditional block")

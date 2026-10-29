@@ -31,6 +31,11 @@ struct Package {
     manifest_path: PathBuf,
     targets: Vec<Target>,
     dependencies: Vec<Dependency>,
+    #[serde(default = "edition_2015")]
+    edition: String,
+}
+fn edition_2015() -> String {
+    "2015".into()
 }
 #[derive(Deserialize)]
 struct Target {
@@ -67,6 +72,8 @@ type Tree = BTreeMap<Vec<String>, Module>;
 struct PathRef {
     segs: Vec<String>,
     globs: Vec<Vec<String>>,
+    /// From a `use` item: in edition 2015 those paths start at the crate root.
+    from_use: bool,
 }
 /// Files one target may expand to; repeated `#[path]` reuse can otherwise grow exponentially.
 const MAX_MODULE_FILES: usize = 10_000;
@@ -130,6 +137,8 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
     let mut out = Partial::default();
     let mut trees: BTreeMap<PathBuf, Tree> = BTreeMap::new();
     let mut crates = Vec::new();
+    // Crates of edition 2015, where `::a` and `use a::b` name the crate root.
+    let mut legacy = BTreeSet::new();
     for p in &meta.packages {
         let own_lib = lib_of(p);
         for t in &p.targets {
@@ -165,6 +174,9 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
                 shadowed_macros(&w.tree, w.gaps, root);
                 trees.insert(t.src_path.clone(), w.tree);
             }
+            if p.edition == "2015" {
+                legacy.insert(t.src_path.clone());
+            }
             crates.push((t.src_path.clone(), externs));
         }
     }
@@ -186,6 +198,7 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
     let r = Resolver {
         trees: &trees,
         externs_of: &externs_of,
+        legacy: &legacy,
         truncated: Cell::new(false),
         budget: Cell::new(0),
         seen: RefCell::new(BTreeSet::new()),
@@ -271,6 +284,7 @@ fn shadowed_macros(tree: &Tree, gaps: &mut Vec<Gap>, root: &Path) {
 struct Resolver<'a> {
     trees: &'a BTreeMap<PathBuf, Tree>,
     externs_of: &'a BTreeMap<PathBuf, BTreeMap<String, PathBuf>>,
+    legacy: &'a BTreeSet<PathBuf>,
     truncated: Cell<bool>,
     /// Steps left for the current mention and the states it already visited: glob re-exports
     /// between modules can otherwise revisit the same state exponentially often.
@@ -286,7 +300,15 @@ impl Resolver<'_> {
         self.budget.set(MAX_RESOLVE_STEPS);
         self.seen.borrow_mut().clear();
         let mut out = BTreeSet::new();
-        if !self.start(krate, here, &p.segs, 0, &mut out) {
+        // Edition 2015: a `use` path is absolute, like `::path`.
+        let segs = match p.segs.first().map(String::as_str) {
+            Some("crate" | "self" | "super" | "::") | None => p.segs.clone(),
+            Some(_) if p.from_use && self.legacy.contains(krate) => {
+                [vec!["::".to_string()], p.segs.clone()].concat()
+            }
+            Some(_) => p.segs.clone(),
+        };
+        if !self.start(krate, here, &segs, 0, &mut out) {
             for g in &p.globs {
                 self.through_glob(krate, here, g, &p.segs, 0, &mut out);
             }
@@ -325,6 +347,15 @@ impl Resolver<'_> {
         let (mut krate, mut base, mut rest) = (krate, here.to_vec(), segs);
         match first.as_str() {
             // `::name` is always an external crate, never a module or alias of this one.
+            // In edition 2015 `::a` is the crate root's `a` (or an `extern crate`).
+            "::" if self.legacy.contains(krate)
+                && segs.get(1).is_some_and(|n| {
+                    tree.get(&vec![])
+                        .is_some_and(|m| m.children.contains_key(n))
+                }) =>
+            {
+                (base, rest) = (vec![], &segs[1..])
+            }
             "::" => match segs
                 .get(1)
                 .and_then(|n| self.externs_of.get(krate)?.get(n))
@@ -702,6 +733,8 @@ struct Paths {
     /// to each other can otherwise branch exponentially before the result bound applies.
     steps: Cell<usize>,
     unanalyzed: BTreeSet<String>,
+    /// Set while a `use` item's paths are recorded.
+    in_use: bool,
     plain_macros: BTreeSet<String>,
     defined_macros: BTreeSet<String>,
     imports_macros: bool,
@@ -949,6 +982,7 @@ impl Paths {
             dropped: Cell::new(false),
             steps: Cell::new(0),
             unanalyzed: BTreeSet::new(),
+            in_use: false,
             plain_macros: BTreeSet::new(),
             defined_macros: BTreeSet::new(),
             imports_macros: false,
@@ -1045,6 +1079,7 @@ impl Paths {
             self.paths.push(PathRef {
                 segs,
                 globs: globs.clone(),
+                from_use: self.in_use,
             });
         }
     }
@@ -1116,7 +1151,9 @@ impl<'ast> Visit<'ast> for Paths {
     }
     fn visit_item_use(&mut self, u: &'ast syn::ItemUse) {
         u.attrs.iter().for_each(|a| self.visit_attribute(a));
+        self.in_use = true;
         self.use_tree(&mut absolute(u.leading_colon.is_some()), &u.tree);
+        self.in_use = false;
     }
     /// `extern crate` binds a name (see `Scope::of`) and records its path; with
     /// `#[macro_use]` it also imports macros whose names are not known here.

@@ -383,7 +383,7 @@ fn analyzer_failures_mark_the_graph_failed() {
         let manifest = w.repo().join("Cargo.toml");
         let text = fs::read_to_string(&manifest)
             .unwrap()
-            .replace("\"app\"]", "\"app\", \"target/member\"]");
+            .replace("\"legacy\"]", "\"legacy\", \"target/member\"]");
         fs::write(&manifest, text).unwrap();
         git(&w.repo(), &["commit", "-qam", "member"]);
         fs::create_dir_all(w.repo().join("target/member")).unwrap();
@@ -562,7 +562,7 @@ fn ignored_rust_members_are_fingerprinted() {
     let manifest = w.repo().join("Cargo.toml");
     let text = fs::read_to_string(&manifest)
         .unwrap()
-        .replace("\"app\"]", "\"app\", \"target/member\"]");
+        .replace("\"legacy\"]", "\"legacy\", \"target/member\"]");
     fs::write(&manifest, text).unwrap();
     git(&w.repo(), &["commit", "-qam", "member"]);
     let member = w.repo().join("target/member");
@@ -616,7 +616,7 @@ fn analyzers_run_isolated_with_a_time_limit() {
     let manifest = w.repo().join("Cargo.toml");
     let text = fs::read_to_string(&manifest)
         .unwrap()
-        .replace("\"app\"]", "\"app\", \".linked/m\"]");
+        .replace("\"legacy\"]", "\"legacy\", \".linked/m\"]");
     fs::write(&manifest, text).unwrap();
     git(&w.repo(), &["commit", "-qam", "linked"]);
     let o = Command::new(env!("CARGO_BIN_EXE_taeguk"))
@@ -1132,7 +1132,8 @@ fn impact_follows_reverse_edges_and_reports_limits() {
             "tests/test_param.py",
             "tests/test_paths.py",
             "tests/test_reload.py",
-            "tests/test_shadow.py"
+            "tests/test_shadow.py",
+            "tests/test_wild.py"
         ]
     );
     assert_eq!(

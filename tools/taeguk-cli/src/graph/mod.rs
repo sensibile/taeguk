@@ -519,31 +519,103 @@ fn input_fingerprint(root: &Path, langs: &[String], read: &[String]) -> Result<S
     Ok(format!("sha256:{:x}", h.finalize()))
 }
 
-/// Writes a new file next to `out` and renames it over `out`: the rename replaces whatever `out`
-/// is (a link, a FIFO) instead of following or opening it, so a link swapped in after the checks
-/// in `output_path` is not written through.
+/// Writes a new file next to `out` (already resolved to a real path by `output_path`) and renames
+/// it over `out`. On unix the directory is opened component by component from `/` without
+/// following links, and the file is created and renamed relative to that directory handle, so
+/// replacing the directory or any parent with a link after the checks cannot redirect the
+/// write; the rename replaces whatever `out` is (a link, a FIFO) instead of following it.
 fn write_replacing(out: &Path, text: &str) -> Result<(), String> {
-    let dir = out.parent().unwrap_or(Path::new("."));
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let name = out
         .file_name()
-        .map(|n| n.to_string_lossy())
-        .unwrap_or_default();
-    let tmp = dir.join(format!(".{name}.{}.{nanos}.tmp", std::process::id()));
-    let written = fs::OpenOptions::new()
+        .ok_or_else(|| format!("{}: not a file path", out.display()))?;
+    let tmp = format!(
+        ".{}.{}.{nanos}.tmp",
+        name.to_string_lossy(),
+        std::process::id()
+    );
+    let dir = out.parent().unwrap_or(Path::new("/"));
+    write_in_dir(dir, &tmp, name, text.as_bytes()).map_err(|e| format!("{}: {e}", out.display()))
+}
+
+#[cfg(unix)]
+fn write_in_dir(dir: &Path, tmp: &str, name: &std::ffi::OsStr, data: &[u8]) -> std::io::Result<()> {
+    use std::{
+        ffi::CString,
+        io::Error,
+        os::{fd::FromRawFd, unix::ffi::OsStrExt},
+    };
+    let c = |s: &[u8]| CString::new(s).map_err(|_| Error::other("NUL in path"));
+    let open_dir = |at: libc::c_int, part: &[u8]| -> std::io::Result<libc::c_int> {
+        let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        // SAFETY: valid C string and descriptor; the result is checked.
+        let fd = unsafe { libc::openat(at, c(part)?.as_ptr(), flags) };
+        if fd < 0 {
+            Err(Error::last_os_error())
+        } else {
+            Ok(fd)
+        }
+    };
+    let close = |fd: libc::c_int| {
+        // SAFETY: fd was returned by openat and is closed once.
+        unsafe { libc::close(fd) };
+    };
+    if !dir.is_absolute() {
+        return Err(Error::other("output directory is not absolute"));
+    }
+    let mut fd = open_dir(libc::AT_FDCWD, b"/")?;
+    for part in dir.components().skip(1) {
+        let next = open_dir(fd, part.as_os_str().as_bytes());
+        close(fd);
+        fd = next?;
+    }
+    let result = (|| {
+        let tmp_c = c(tmp.as_bytes())?;
+        let flags =
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        // SAFETY: valid descriptor and C string; the result is checked.
+        let file_fd = unsafe { libc::openat(fd, tmp_c.as_ptr(), flags, 0o644 as libc::c_uint) };
+        if file_fd < 0 {
+            return Err(Error::last_os_error());
+        }
+        // SAFETY: file_fd is a fresh descriptor owned by this File from here on.
+        let mut file = unsafe { fs::File::from_raw_fd(file_fd) };
+        let written = file.write_all(data).and_then(|()| file.sync_all());
+        drop(file);
+        let renamed = written.and_then(|()| {
+            let name_c = c(name.as_bytes())?;
+            // SAFETY: both names are relative to the same open directory descriptor.
+            if unsafe { libc::renameat(fd, tmp_c.as_ptr(), fd, name_c.as_ptr()) } != 0 {
+                return Err(Error::last_os_error());
+            }
+            Ok(())
+        });
+        if renamed.is_err() {
+            // SAFETY: removes only the temporary name inside the same directory.
+            unsafe { libc::unlinkat(fd, tmp_c.as_ptr(), 0) };
+        }
+        renamed
+    })();
+    close(fd);
+    result
+}
+
+#[cfg(not(unix))]
+fn write_in_dir(dir: &Path, tmp: &str, name: &std::ffi::OsStr, data: &[u8]) -> std::io::Result<()> {
+    let tmp = dir.join(tmp);
+    let result = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&tmp)
-        .and_then(|mut f| f.write_all(text.as_bytes()))
-        .and_then(|()| fs::rename(&tmp, out));
-    if let Err(e) = written {
+        .and_then(|mut f| f.write_all(data))
+        .and_then(|()| fs::rename(&tmp, dir.join(name)));
+    if result.is_err() {
         let _ = fs::remove_file(&tmp);
-        return Err(format!("{}: {e}", out.display()));
     }
-    Ok(())
+    result
 }
 
 /// Resolves `--out` so that writing it cannot follow a link: an existing link is refused, and
