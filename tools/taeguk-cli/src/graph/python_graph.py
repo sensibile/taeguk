@@ -491,6 +491,12 @@ def main():
         parents = parent_map(tree)
         front, back, unresolved = sys_path_changes(tree, path, sys_names)
         unresolved += unevaluated_sys_uses(tree, sys_names, parents)
+        # A package's `__path__` is its own import search path; any use of it may add
+        # directories submodules are imported from, which is not evaluated.
+        unresolved += [f"line {n.lineno}: __path__ changes where submodules are found"
+                       for n in ast.walk(tree)
+                       if (isinstance(n, ast.Name) and n.id == "__path__")
+                       or (isinstance(n, ast.Attribute) and n.attr == "__path__")]
         search = list(dict.fromkeys(front + search + back))
         for detail in unresolved:
             gaps.append({"kind": "sys_path_unresolved", "file": path,

@@ -79,7 +79,21 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
     // go's messages can quote files it read, including ones reached outside ROOT (a replaced
     // module's go.mod), so no message text is kept. The failure names packages only when the
     // name itself comes from ROOT: a package inside ROOT, or one that such a package imports.
-    let inside = |p: &Package| Path::new(&p.dir).starts_with(root);
+    // A package counts as from ROOT only when its directory and every file go read for it
+    // resolve inside ROOT (an ignored `.go` link could bring an outside file's imports).
+    let inside = |p: &Package| {
+        Path::new(&p.dir).starts_with(root)
+            && [
+                &p.go_files,
+                &p.cgo_files,
+                &p.test_go_files,
+                &p.x_test_go_files,
+                &p.ignored_go_files,
+            ]
+            .into_iter()
+            .flatten()
+            .all(|f| check_source(root, &Path::new(&p.dir).join(f)).is_ok())
+    };
     let named: BTreeSet<&str> = packages
         .iter()
         .filter(|p| inside(p))
@@ -191,6 +205,21 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
             for i in imports.iter().filter(|i| ids.contains(i.as_str())) {
                 out.edges.push(Edge::new(&id, &format!("go:{i}"), kind));
             }
+        }
+        // `plugin.Open` loads code chosen at runtime; that dependency is not in the graph.
+        if [&p.imports, &p.test_imports, &p.x_test_imports]
+            .iter()
+            .any(|v| v.iter().any(|i| i == "plugin"))
+        {
+            out.gaps.push(Gap::new(
+                "go",
+                "dynamic_load",
+                Some(&rel_dir),
+                format!(
+                    "package {} imports plugin; plugins it loads are not analyzed",
+                    p.import_path
+                ),
+            ));
         }
         for f in &p.ignored_go_files {
             out.gaps.push(Gap::new("go", "build_constraint_excluded", Some(&file(f)),

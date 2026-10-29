@@ -1,1 +1,2 @@
 go build_constraint_excluded d/d_tool.go
+go dynamic_load f

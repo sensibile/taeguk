@@ -1007,6 +1007,55 @@ fn go_embed_inputs_are_fingerprinted() {
 }
 
 #[test]
+fn go_embed_of_build_output_is_fingerprinted() {
+    if !available("go", "version") {
+        return;
+    }
+    // `all:_build` embeds a directory the ROOT walk skips as build output.
+    let w = work("go");
+    fs::write(w.repo().join(".gitignore"), "/a/_build/\n").unwrap();
+    fs::write(
+        w.repo().join("a/embed.go"),
+        "package a\n\nimport \"embed\"\n\n//go:embed all:_build\nvar Files embed.FS\n",
+    )
+    .unwrap();
+    git(&w.repo(), &["add", "-A"]);
+    git(&w.repo(), &["commit", "-qm", "embed"]);
+    fs::create_dir_all(w.repo().join("a/_build/dev/lib")).unwrap();
+    fs::write(w.repo().join("a/_build/dev/lib/data.txt"), "one\n").unwrap();
+    let g = build(&w, "go");
+    assert_eq!(g["status"], "PASS", "{g}");
+    fs::write(w.repo().join("a/_build/dev/lib/data.txt"), "two\n").unwrap();
+    let v = impact(&w, &["--changed", "b/b.go"]);
+    assert_eq!(other_reasons(&v), ["analyzer_inputs_changed"]);
+    // A failing import read from an ignored `.go` link out of ROOT is not named in the error.
+    let w = work("go");
+    let outside = w.0.join("outside.go");
+    fs::write(
+        &outside,
+        "package b\n\nimport _ \"corp.example/private/payment\"\n",
+    )
+    .unwrap();
+    fs::write(w.repo().join(".gitignore"), "/b/extra.go\n").unwrap();
+    git(&w.repo(), &["add", "-A"]);
+    git(&w.repo(), &["commit", "-qm", "ignore"]);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, w.repo().join("b/extra.go")).unwrap();
+    let (ok, v) = taeguk(&[
+        "graph",
+        "build",
+        w.repo().to_str().unwrap(),
+        "--out",
+        w.graph().to_str().unwrap(),
+        "--lang",
+        "go",
+    ]);
+    assert!(ok, "{v}");
+    let graph = fs::read_to_string(w.graph()).unwrap();
+    assert!(!graph.contains("corp.example"), "{graph}");
+}
+
+#[test]
 fn tool_diagnostics_do_not_carry_outside_content() {
     if !available("cargo", "--version") {
         return;
@@ -1189,6 +1238,7 @@ fn impact_follows_reverse_edges_and_reports_limits() {
         review_files(&v),
         [
             "plug/run.py",
+            "src/app/nspkg/__init__.py",
             "src/app/wilduser.py",
             "tests/test_aliases.py",
             "tests/test_annotated.py",
@@ -1330,10 +1380,10 @@ fn go_impact_includes_test_imports() {
         ("go:example.com/fx/b", 2),
     ]);
     assert_eq!(v["status"], "UNKNOWN", "{v}");
-    assert_eq!(review_files(&v), ["d/d_tool.go"]);
+    assert_eq!(review_files(&v), ["d/d_tool.go", "f"]);
     assert_eq!(distances(&v), expected);
     // Without gaps the static result is complete for the graph's scope.
-    git(&w.repo(), &["rm", "-q", "d/d_tool.go"]);
+    git(&w.repo(), &["rm", "-q", "-r", "d/d_tool.go", "f"]);
     git(&w.repo(), &["commit", "-qm", "drop"]);
     build(&w, "go");
     let v = impact(&w, &["--changed", "a/a.go"]);

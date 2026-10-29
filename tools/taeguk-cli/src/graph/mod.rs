@@ -538,14 +538,34 @@ fn input_fingerprint(root: &Path, langs: &[String], read: &[String]) -> Result<S
         if kind.is_dir() {
             return Ok(true);
         }
-        let in_tree = trees
-            .iter()
-            .any(|t| t.is_empty() || rel == t || rel.starts_with(&format!("{t}/")));
-        if is_input(rel, ignored, langs) || in_tree {
+        if is_input(rel, ignored, langs) {
             files.insert(rel.to_string());
         }
         Ok(false)
     })?;
+    // Embedded trees are walked on their own, without the build-output skip of `walk`:
+    // `//go:embed all:_build` reads what `walk` leaves out.
+    for t in &trees {
+        let mut stack = vec![root.join(t)];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Some(rel) = relative(root, &path) else {
+                    continue;
+                };
+                match entry.file_type() {
+                    Ok(k) if k.is_dir() && rel != ".git" => stack.push(path),
+                    Ok(k) if !k.is_dir() => {
+                        files.insert(rel);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
     let mut h = Sha256::new();
     for rel in &files {
         h.update(rel.as_bytes());
@@ -854,7 +874,11 @@ impl TempDir {
             .unwrap_or(0);
         let dir =
             env::temp_dir().join(format!("taeguk-graph-{tag}-{}-{nanos}", std::process::id()));
-        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        // Owner-only from creation: copies of the target's sources are written here.
+        let mut builder = fs::DirBuilder::new();
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        builder.create(&dir).map_err(|e| e.to_string())?;
         Ok(TempDir(dir))
     }
 }
@@ -911,7 +935,14 @@ fn isolated(root: &Path, lang: &str) -> (Analyzer, Result<Partial, String>) {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(ANALYZER_TIMEOUT_SECS);
+    // The analyzer and the tools it runs keep their temporary files in a directory this process
+    // owns and removes, so nothing is left behind when the analyzer is killed on timeout.
+    let scratch = match TempDir::new(&format!("{lang}-run")) {
+        Ok(dir) => dir,
+        Err(e) => return failed(format!("cannot create a temporary directory: {e}")),
+    };
     let mut cmd = Command::new(exe);
+    cmd.env("TMPDIR", &scratch.0);
     cmd.args(["graph", "__analyze", lang])
         .arg(root)
         .stdin(Stdio::null())
@@ -1328,5 +1359,17 @@ pub(crate) fn run(args: &[String]) -> Result<Value, String> {
             ))
         }
         _ => Err(usage()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn temporary_directories_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = super::TempDir::new("mode").unwrap();
+        let mode = std::fs::metadata(&dir.0).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
     }
 }
