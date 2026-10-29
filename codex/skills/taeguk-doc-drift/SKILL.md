@@ -28,7 +28,8 @@ The Taeguk repository (`sensibile/taeguk`) only. The scan script lives in this r
 4. Classify every confirmed finding:
    - **Document drift**: the document misdescribes something whose truth is the code, the installer, a registered schedule or another document that is not a rule. Write it as a cleanup candidate with its evidence.
    - **Rule or authority drift**: the mismatch involves a rule body, the registry, an approval, a requirement, a threshold or execution authority, or the code may be what is wrong. Do not name a fix; report both sides to BOSS.
-5. Remove the worktree and write the report to `.taeguk/doc-drift/<date>.md`: SHA, window, scan status, each finding with kind, locations, evidence, classification and whether it is tool or LLM judgment, dropped findings with reasons, and a `## 정리 후보` section listing only the document drift items. Set `checkpoint` to the SHA when every finding was classified or dropped; otherwise keep the previous checkpoint.
+5. Carry over the previous report's `## 정리 후보` items that no later daily cleanup report records as delivered or rejected: confirm each is still present at the recorded SHA, keep it with its original date, and drop it with the reason when the drift is gone. Semantic findings outside this window's changed areas would otherwise be lost, because the daily cleanup reads only the newest report and may skip collection while its own PR is open.
+6. Remove the worktree and write the report to `.taeguk/doc-drift/<date>.md`: SHA, window, scan status, each finding with kind, locations, evidence, classification and whether it is tool or LLM judgment, dropped findings with reasons, and a `## 정리 후보` section listing only the document drift items, new and carried over. Set `checkpoint` to the SHA when every finding was classified or dropped; otherwise keep the previous checkpoint.
 
 ## Handoff to the daily cleanup
 

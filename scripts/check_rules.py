@@ -22,14 +22,16 @@ def reference(base, value, boundary, markdown_only=False):
         raise ValueError(f'missing or out-of-root reference: {value}')
     if markdown_only and target.suffix != '.md':
         raise ValueError('rule and approval reference must be Markdown')
-    if parts.fragment:
-        text = target.read_text(encoding='utf-8')
-        anchors = {re.sub(r'[^\w\- ]', '', h.lower()).replace(' ', '-')
-                   for h in re.findall(r'^#{1,6} +(.+)$', text, re.MULTILINE)}
-        anchors.update(re.findall(r'<a\s+id="([^"]+)"', text))
-        if unquote(parts.fragment) not in anchors:
-            raise ValueError(f'missing heading anchor: {value}')
+    if parts.fragment and unquote(parts.fragment) not in anchors(target.read_text(encoding='utf-8')):
+        raise ValueError(f'missing heading anchor: {value}')
     return target
+
+
+def anchors(text):
+    found = {re.sub(r'[^\w\- ]', '', h.lower()).replace(' ', '-')
+             for h in re.findall(r'^#{1,6} +(.+)$', text, re.MULTILINE)}
+    found.update(re.findall(r'<a\s+id="([^"]+)"', text))
+    return found
 
 
 def check(root):

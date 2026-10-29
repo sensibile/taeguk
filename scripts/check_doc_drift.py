@@ -4,8 +4,13 @@ import argparse
 import json
 from pathlib import Path
 import re
+import sys
 import tomllib
 from urllib.parse import unquote, urlsplit
+
+# python3 -I drops the script directory from sys.path; check_rules sits next to this file.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from check_rules import anchors  # noqa: E402
 
 # docs/rules is covered by check_rules.py; the research archive is a frozen record.
 SKIP = ('docs/rules/', 'docs/research/archive/')
@@ -30,19 +35,25 @@ def scan(root):
     skills = {p.name for p in (root/'codex/skills').iterdir() if (p/'SKILL.md').is_file()} | GENERATED_SKILLS
     findings = []
     for path, rel in documents(root):
-        for number, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+        text = path.read_text(encoding='utf-8')
+        for number, line in enumerate(text.splitlines(), 1):
             def add(kind, value, detail):
                 findings.append({'kind': kind, 'file': rel, 'line': number, 'value': value, 'detail': detail})
             for value in re.findall(r'\]\(([^)\s]+)\)', line):
                 parts = urlsplit(value)
-                if parts.scheme or parts.netloc or not parts.path:
+                if parts.scheme or parts.netloc:
                     continue
-                if not (path.parent/unquote(parts.path)).exists():
+                target = path.parent/unquote(parts.path) if parts.path else path
+                if not target.exists():
                     add('link', value, 'local link target does not exist')
+                elif parts.fragment and target.suffix == '.md' and unquote(parts.fragment) not in anchors(
+                        text if target == path else target.read_text(encoding='utf-8')):
+                    add('link', value, 'heading anchor does not exist in the target')
             for name in re.findall(r'\$(taeguk-[a-z0-9-]*[a-z0-9])', line):
                 if name not in skills:
                     add('skill', name, 'no codex/skills directory with this name')
-            for ident, version in re.findall(r'\b([A-Z]{3}-[0-9]{3}) ([0-9]+\.[0-9]+)\b', line):
+            # No trailing \b: a Korean particle right after the version (1.2와) is a word character.
+            for ident, version in re.findall(r'(?<![A-Za-z0-9])([A-Z]{3}-[0-9]{3}) ([0-9]+\.[0-9]+)(?!\.?[0-9])', line):
                 if ident in versions and versions[ident] != version:
                     add('rule_version', f'{ident} {version}', f'registry has {versions[ident]}; check whether the citation is historical')
             for value in re.findall(r'`([^`\s<>*{}$]+)`', line):

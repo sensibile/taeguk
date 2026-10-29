@@ -46,6 +46,19 @@ class DocDriftTest(unittest.TestCase):
         self.write('docs/note.md', '# Note\n\nFollows VER-005 9.9.\n')
         self.assertIn(('rule_version', 'docs/note.md', 'VER-005 9.9'), self.kinds())
 
+    def test_missing_heading_anchor_in_other_and_same_document(self):
+        self.write('docs/note.md', '# Note\n\n## Kept\n\n[a](repository-operations.md#removed-heading) [b](#removed) [c](#kept)\n')
+        found = self.kinds()
+        self.assertIn(('link', 'docs/note.md', 'repository-operations.md#removed-heading'), found)
+        self.assertIn(('link', 'docs/note.md', '#removed'), found)
+        self.assertNotIn(('link', 'docs/note.md', '#kept'), found)
+
+    def test_rule_version_followed_by_korean_particle(self):
+        self.write('docs/note.md', '# Note\n\nREQ-001 9.9와 REQ-007 9.9를 적용한다. VER-005 9.9.\n')
+        found = self.kinds()
+        for value in ('REQ-001 9.9', 'REQ-007 9.9', 'VER-005 9.9'):
+            self.assertIn(('rule_version', 'docs/note.md', value), found)
+
     def test_missing_repository_path_in_code_span(self):
         self.write('docs/note.md', '# Note\n\nRun `scripts/removed.py`.\n')
         self.assertIn(('path', 'docs/note.md', 'scripts/removed.py'), self.kinds())
