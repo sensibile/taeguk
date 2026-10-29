@@ -141,6 +141,16 @@ class WorkerScopeTest(unittest.TestCase):
                 for worker in ('test-gap', 'daily-cleanup'):
                     self.assert_rejected(worker, path, 'shadows a standard library module')
 
+    def test_new_packages_and_non_utf8_content_are_rejected(self):
+        self.write('tests/test_rules/__init__.py', 'def load_tests(*a):\n    pass\n')
+        self.write('tests/image.jpg', b'\xff\xd8\xff\xd9')
+        self.commit('package and jpeg')
+        code, result = self.run_check('test-gap')
+        reasons = {r['path']: r['reason'] for r in result['rejected']}
+        self.assertEqual(code, 1)
+        self.assertEqual(reasons, {'tests/test_rules/__init__.py': 'new package under scripts/ or tests/',
+                                   'tests/image.jpg': 'binary content'})
+
     def test_isolated_checker_ignores_modules_added_by_the_pr(self):
         self.write('scripts/json.py', 'import os\nprint(\'{"status": "PASS"}\')\nos._exit(0)\n')
         self.write('AGENTS.md', 'changed\n')

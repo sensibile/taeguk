@@ -191,6 +191,9 @@ def violation(worker, entry):
         top = rest.split('/')[0]
         if (top.split('.')[0] if top == rest else top).lower() in SHADOWED:
             return 'shadows a standard library module'
+        if top != rest and status == 'A':
+            # A new package would be imported before a same-named protected module or test.
+            return 'new package under scripts/ or tests/'
     if status not in 'AMD':
         return f'unsupported change type {status}'
     for mode in (entry['old_mode'], entry['new_mode']):
@@ -202,6 +205,10 @@ def violation(worker, entry):
         return 'new file is not mode 100644'
     old, new = blob(entry['old']), blob(entry['new'])
     if b'\0' in old or b'\0' in new:
+        return 'binary content'
+    try:
+        old.decode('utf-8'), new.decode('utf-8')
+    except UnicodeDecodeError:
         return 'binary content'
     if worker == 'test-gap':
         if status == 'D':
