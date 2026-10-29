@@ -278,6 +278,27 @@ mod tests {
         assert!(verify(&p, &dir).is_err());
         fs::remove_dir_all(dir).unwrap();
     }
+    #[test]
+    fn declared_failed_check_is_fail_not_unknown() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = env::temp_dir().join(format!("taeguk-failed-{}-{nanos}", process::id()));
+        // create_dir fails on an existing path, so a pre-planted directory or link is never reused.
+        fs::create_dir(&dir).unwrap();
+        fs::write(dir.join("artifact"), b"abc").unwrap();
+        let p = Packet {
+            artifact: "artifact".into(),
+            sha256: format!("{:x}", Sha256::digest(b"abc")),
+            checks: vec![Verdict::Pass, Verdict::Fail, Verdict::Unknown],
+            effect_confirmed: true,
+        };
+        let out = verify(&p, &dir).unwrap();
+        fs::remove_dir_all(dir).unwrap();
+        assert_eq!(out["verdict"], "FAIL");
+        assert_eq!(out["artifact_matches"], true);
+    }
     #[cfg(unix)]
     #[test]
     fn symlink_is_rejected() {
