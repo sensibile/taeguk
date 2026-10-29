@@ -1,4 +1,4 @@
-use super::{Analyzer, Edge, Gap, Node, Output, Partial, tool_version};
+use super::{Analyzer, Edge, Gap, Node, Output, Partial, TempDir, tool_version};
 use serde::Deserialize;
 use std::{
     io::Write,
@@ -28,7 +28,7 @@ pub(super) fn analyze(root: &Path, tracked: &[String]) -> (Analyzer, Result<Part
         "python3",
         &["python3", "-I", "-c", "<embedded python_graph.py>"],
     );
-    a.version = tool_version(root, "python");
+    a.version = tool_version("python");
     let result = run(root, tracked, &mut a);
     (a, result)
 }
@@ -36,9 +36,11 @@ pub(super) fn analyze(root: &Path, tracked: &[String]) -> (Analyzer, Result<Part
 fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, String> {
     let files: Vec<&String> = tracked.iter().filter(|f| f.ends_with(".py")).collect();
     let input = serde_json::json!({"root": root, "files": files}).to_string();
+    let dir = TempDir::new("python")?;
     let mut child = Command::new("python3")
         .args(["-I", "-c", SCRIPT])
-        .current_dir(root)
+        // Outside ROOT, so the user's environment picks python3, not files in the repository.
+        .current_dir(&dir.0)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -77,12 +79,9 @@ fn run(root: &Path, tracked: &[String], a: &mut Analyzer) -> Result<Partial, Str
             .join(",")
     ));
     Ok(Partial {
-        // pyproject.toml decides the package roots, also when git ignores it.
-        read: if root.join("pyproject.toml").is_file() {
-            vec!["pyproject.toml".into()]
-        } else {
-            vec![]
-        },
+        // pyproject.toml decides the package roots, also when git ignores it; recorded even when
+        // absent, so adding one later changes the fingerprint.
+        read: vec!["pyproject.toml".into()],
         nodes: files
             .iter()
             .map(|f| Node::new("python", f.as_str(), vec![f.to_string()]))

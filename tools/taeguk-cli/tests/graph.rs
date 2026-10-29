@@ -704,6 +704,56 @@ fn mix_exs_is_never_executed() {
 }
 
 #[test]
+fn toolchain_files_in_the_repository_are_not_used() {
+    if !available("cargo", "--version") {
+        return;
+    }
+    // rust-toolchain.toml can name a toolchain path, i.e. a program in the repository.
+    let w = work("rust");
+    let marker = w.0.join("executed");
+    let bin = w.repo().join("evil/bin");
+    fs::create_dir_all(&bin).unwrap();
+    for tool in ["cargo", "rustc"] {
+        fs::write(
+            bin.join(tool),
+            format!("#!/bin/sh\ntouch {}\nexit 1\n", marker.to_str().unwrap()),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(bin.join(tool), fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+    fs::write(
+        w.repo().join("rust-toolchain.toml"),
+        format!(
+            "[toolchain]\npath = {:?}\n",
+            w.repo().join("evil").to_str().unwrap()
+        ),
+    )
+    .unwrap();
+    git(&w.repo(), &["add", "-A"]);
+    git(&w.repo(), &["commit", "-qm", "toolchain"]);
+    let g = build(&w, "rust");
+    assert_eq!(g["status"], "PASS", "{g}");
+    impact(&w, &["--changed", "core/src/store.rs"]);
+    assert!(!marker.exists(), "a program named by the repository ran");
+    // A failed scan runs no tool at all, so a FIFO toolchain file cannot block a version query.
+    let w = work("rust");
+    assert!(
+        Command::new("mkfifo")
+            .arg(w.repo().join("rust-toolchain.toml"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    let g = build(&w, "rust");
+    assert_eq!(g["status"], "FAIL", "{g}");
+    assert!(g["analyzers"][0]["version"].is_null());
+}
+
+#[test]
 fn files_analyzers_read_are_fingerprinted() {
     if available("python3", "--version") {
         // An ignored pyproject.toml still sets the package roots.
@@ -717,6 +767,24 @@ fn files_analyzers_read_are_fingerprinted() {
         assert_eq!(other_reasons(&v), Vec::<String>::new());
         let p = w.repo().join("pyproject.toml");
         fs::write(&p, fs::read_to_string(&p).unwrap() + "# changed\n").unwrap();
+        let v = impact(&w, &["--changed", "common.py"]);
+        assert_eq!(other_reasons(&v), ["analyzer_inputs_changed"]);
+    }
+    if available("python3", "--version") {
+        // An absent pyproject.toml is recorded too, so adding one later is noticed.
+        let w = work("python");
+        git(&w.repo(), &["rm", "-q", "pyproject.toml"]);
+        fs::write(w.repo().join(".gitignore"), "/pyproject.toml\n").unwrap();
+        git(&w.repo(), &["add", "-A"]);
+        git(&w.repo(), &["commit", "-qm", "no pyproject"]);
+        build(&w, "python");
+        let v = impact(&w, &["--changed", "common.py"]);
+        assert_eq!(other_reasons(&v), Vec::<String>::new());
+        fs::write(
+            w.repo().join("pyproject.toml"),
+            "[tool.setuptools.packages.find]\nwhere = [\"src\"]\n",
+        )
+        .unwrap();
         let v = impact(&w, &["--changed", "common.py"]);
         assert_eq!(other_reasons(&v), ["analyzer_inputs_changed"]);
     }
@@ -888,6 +956,8 @@ fn impact_follows_reverse_edges_and_reports_limits() {
         [
             "tests/test_aliases.py",
             "tests/test_builtins.py",
+            "tests/test_cond.py",
+            "tests/test_exec.py",
             "tests/test_helper.py",
             "tests/test_nested.py",
             "tests/test_order.py",

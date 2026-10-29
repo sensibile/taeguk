@@ -1,10 +1,12 @@
 mod allow;
+mod cfgderive;
 mod cli;
 mod declared;
 mod derived;
 mod ext;
 mod facade_user;
 mod globbed;
+mod globmac;
 mod hidden;
 mod inc;
 mod loop_;

@@ -143,7 +143,9 @@ def eval_path(node, path, env):
 
 
 DYNAMIC = ("import_module", "__import__", "spec_from_file_location", "run_path")
-DYNAMIC_MODULES = ("importlib", "runpy")
+DYNAMIC_MODULES = ("importlib", "runpy", "pkgutil", "imp", "zipimport")
+# Builtins that run code given as data; what that code imports is not seen statically.
+CODE_EXEC = ("exec", "eval", "compile")
 
 
 def bindings(tree):
@@ -208,7 +210,7 @@ def sys_path_changes(tree, path, sys_names):
                 if deferred or id(node) in inside:
                     # Inside a function or class the values at call time (parameters, locals,
                     # later reassignments) are not known statically.
-                    raise Unresolved(f"sys.path.{method} inside a function or class")
+                    raise Unresolved(f"sys.path.{method} inside a function, class or conditional block")
                 value = eval_path(arg, path, current)
                 if not isinstance(value, list):
                     raise Unresolved(ast.unparse(arg))
@@ -221,7 +223,9 @@ def sys_path_changes(tree, path, sys_names):
         if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             later.append(stmt)
             continue
-        changes(stmt, env, False)
+        # Only statements that always run at that point are evaluated; a change inside
+        # `if`/`try`/`for`/`with`/`match` may or may not run.
+        changes(stmt, env, not isinstance(stmt, (ast.Expr, ast.Assign, ast.AnnAssign, ast.AugAssign)))
         if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
             name = stmt.targets[0].id
             try:
@@ -282,9 +286,10 @@ def main():
                         if f in files and f != path:
                             edges.add((path, f))
                     for target in ([mod] + [join(mod, a.name) for a in node.names]):
-                        for f in (target + ".py", join(target, "__init__.py")):
-                            if f in files and f != path:
-                                edges.add((path, f))
+                        # A package directory wins over a module file of the same name.
+                        f = next((f for f in (join(target, "__init__.py"), target + ".py") if f in files), None)
+                        if f and f != path:
+                            edges.add((path, f))
                     continue
                 names = [node.module] + [f"{node.module}.{a.name}" for a in node.names]
             elif isinstance(node, ast.Call):
@@ -307,6 +312,14 @@ def main():
                 machinery = node.attr
             elif isinstance(node, ast.Constant) and node.value in DYNAMIC + DYNAMIC_MODULES:
                 machinery = node.value
+            elif isinstance(node, ast.Name) and node.id in CODE_EXEC:
+                machinery = f"{node.id}()"
+            elif (isinstance(node, ast.Attribute) and node.attr in CODE_EXEC
+                  and isinstance(node.value, ast.Name) and node.value.id == "builtins"):
+                machinery = f"builtins.{node.attr}"
+            elif (isinstance(node, ast.Attribute) and node.attr == "modules"
+                  and isinstance(node.value, ast.Name) and node.value.id in sys_names):
+                machinery = "sys.modules"
             if machinery:
                 gaps.append({"kind": "dynamic_import", "file": path,
                              "detail": f"line {node.lineno}: uses {machinery}; modules it loads are not resolved statically"})

@@ -1,4 +1,6 @@
-use super::{Analyzer, Edge, Gap, Node, Partial, check_source, exec, relative, tool_version};
+use super::{
+    Analyzer, Edge, Gap, Node, Partial, TempDir, check_source, exec, relative, tool_version,
+};
 use serde::Deserialize;
 use std::{collections::BTreeSet, path::Path, process::Command};
 
@@ -32,11 +34,13 @@ struct PackageError {
     err: String,
 }
 
-const COMMAND: [&str; 7] = ["go", "list", "-e", "-deps", "-test", "-json", "./..."];
+const COMMAND: [&str; 9] = [
+    "go", "-C", "<ROOT>", "list", "-e", "-deps", "-test", "-json", "./...",
+];
 
 pub(super) fn analyze(root: &Path) -> (Analyzer, Result<Partial, String>) {
     let mut a = Analyzer::new("go", "go", &COMMAND);
-    a.version = tool_version(root, "go");
+    a.version = tool_version("go");
     let result = run(root, &mut a);
     (a, result)
 }
@@ -45,10 +49,15 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
     // -test also loads test-only imports, so a missing one fails like any other import.
     // No network or toolchain download: missing modules must fail instead of being fetched.
     // GOPRIVATE/GONOPROXY would otherwise send matching modules straight to their VCS hosts.
+    // `go -C ROOT` runs from a directory outside ROOT, so a version manager picks go from the
+    // user's environment, not from files in the target repository.
+    let dir = TempDir::new("go")?;
     let o = exec(
         Command::new("go")
-            .args(&COMMAND[1..])
-            .current_dir(root)
+            .arg("-C")
+            .arg(root)
+            .args(&COMMAND[3..])
+            .current_dir(&dir.0)
             .env("GOPROXY", "off")
             .env("GOPRIVATE", "")
             .env("GONOPROXY", "")

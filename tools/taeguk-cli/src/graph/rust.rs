@@ -1,6 +1,6 @@
 use super::{
-    Analyzer, Edge, Gap, Node, Partial, check_source, exec, normalize, read_source, relative,
-    tool_version,
+    Analyzer, Edge, Gap, Node, Partial, TempDir, check_source, exec, normalize, read_source,
+    relative, tool_version,
 };
 use serde::Deserialize;
 use std::{
@@ -11,13 +11,15 @@ use std::{
 };
 use syn::visit::{self, Visit};
 
-const COMMAND: [&str; 6] = [
+const COMMAND: [&str; 8] = [
     "cargo",
     "metadata",
     "--format-version",
     "1",
     "--no-deps",
     "--offline",
+    "--manifest-path",
+    "<ROOT>/Cargo.toml",
 ];
 
 #[derive(Deserialize)]
@@ -80,18 +82,23 @@ const MAX_RESOLVE_STEPS: usize = 4_096;
 
 pub(super) fn analyze(root: &Path) -> (Analyzer, Result<Partial, String>) {
     let mut a = Analyzer::new("rust", "cargo+syn", &COMMAND);
-    a.version = tool_version(root, "rust");
+    a.version = tool_version("rust");
     let result = run(root, &mut a);
     (a, result)
 }
 
 fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
+    // cargo runs from a directory outside ROOT: rustup picks the toolchain and cargo reads its
+    // configuration by the working directory, so a `rust-toolchain.toml` (which can name any
+    // toolchain path, i.e. any program) or `.cargo/config.toml` in the target repository is
+    // never consulted.
+    let dir = TempDir::new("cargo")?;
     let o = exec(
         Command::new("cargo")
-            .args(&COMMAND[1..])
-            .current_dir(root)
+            .args(&COMMAND[1..7])
+            .arg(root.join("Cargo.toml"))
+            .current_dir(&dir.0)
             .env("CARGO_NET_OFFLINE", "true")
-            // A rust-toolchain file must not make rustup download a toolchain.
             .env("RUSTUP_AUTO_INSTALL", "0"),
     )?;
     a.exit_code = o.code;
@@ -822,12 +829,21 @@ fn mentions_path_attribute(meta: &syn::Meta) -> bool {
     }
 }
 
-/// Single-segment trait names in a `derive` list.
+/// Single-segment trait names in a `derive` list, also inside `cfg_attr` at any depth.
 fn derive_names(meta: &syn::Meta) -> Vec<String> {
-    use syn::{Token, punctuated::Punctuated};
-    let syn::Meta::List(list) = meta else {
+    use syn::{Meta, Token, punctuated::Punctuated};
+    let Meta::List(list) = meta else {
         return vec![];
     };
+    if list.path.is_ident("cfg_attr") {
+        return list
+            .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+            .map(|parts| parts.iter().skip(1).flat_map(derive_names).collect())
+            .unwrap_or_default();
+    }
+    if !list.path.is_ident("derive") {
+        return vec![];
+    }
     list.parse_args_with(Punctuated::<syn::Path, Token![,]>::parse_terminated)
         .map(|traits| {
             traits
@@ -987,6 +1003,18 @@ impl Paths {
             None => add(out, segs, &self.dropped),
         }
     }
+    /// Whether a single-segment name may not be the standard item: a scope binds it, or a glob
+    /// import from outside this crate and the standard library could bring it in.
+    fn rebound(&self, name: &str) -> bool {
+        self.scopes.iter().any(|s| {
+            s.aliases.contains_key(name)
+                || s.globs.iter().any(|g| {
+                    !g.first().is_some_and(|f| {
+                        ["crate", "self", "super", "std", "core", "alloc"].contains(&f.as_str())
+                    })
+                })
+        })
+    }
     fn push(&mut self, segs: Vec<String>) {
         let mut all = vec![];
         self.steps.set(MAX_EXPAND_STEPS);
@@ -1138,9 +1166,9 @@ impl<'ast> Visit<'ast> for Paths {
                 .segments
                 .first()
                 .is_some_and(|s| s.ident == "std" || s.ident == "core" || s.ident == "alloc");
-        // A `use` binding of the same name (`use other::vec;`) means another macro.
-        let bound =
-            m.path.segments.len() == 1 && self.scopes.iter().any(|s| s.aliases.contains_key(&name));
+        // A `use` binding of the same name (`use other::vec;`) or an external glob import
+        // (`use other::*;`) may mean another macro.
+        let bound = m.path.segments.len() == 1 && self.rebound(&name);
         let plain = std_path && !bound && PLAIN_MACROS.contains(&name.as_str());
         if plain && m.path.segments.len() == 1 {
             self.plain_macros.insert(name.clone());
@@ -1157,11 +1185,12 @@ impl<'ast> Visit<'ast> for Paths {
         visit::visit_attribute(self, a);
         if let Some(name) = unanalyzed_attribute(&a.meta) {
             self.unanalyzed.insert(format!("#[{name}]"));
-        } else if a.path().is_ident("derive") {
-            // A standard trait name bound by `use` (`use x::Custom as Clone;`) is another derive;
-            // one imported by `#[macro_use] extern crate` is checked crate-wide.
+        } else {
+            // A standard trait name bound by `use` (`use x::Custom as Clone;`) or possibly
+            // brought in by an external glob is another derive; one imported by
+            // `#[macro_use] extern crate` is checked crate-wide. `cfg_attr` derives count too.
             for name in derive_names(&a.meta) {
-                if self.scopes.iter().any(|s| s.aliases.contains_key(&name)) {
+                if self.rebound(&name) {
                     self.unanalyzed.insert(format!("#[derive({name})]"));
                 } else {
                     self.plain_macros.insert(format!("derive({name})"));

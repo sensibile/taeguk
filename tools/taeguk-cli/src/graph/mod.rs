@@ -134,13 +134,14 @@ pub(crate) fn exec(cmd: &mut Command) -> Result<Output, String> {
         stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
     })
 }
-/// Last non-empty line of `<tool> <arg>` run in ROOT, where toolchain files select the version.
-/// Toolchain auto-install and download stay off, as in the analyzers.
-pub(crate) fn version(root: &Path, tool: &str, args: &[&str]) -> Option<String> {
+/// Last non-empty line of `<tool> <arg>`. Like the analyzers it runs outside ROOT, so the
+/// user's environment picks the toolchain, never a toolchain file in the target repository.
+pub(crate) fn version(tool: &str, args: &[&str]) -> Option<String> {
+    let dir = TempDir::new("version").ok()?;
     let o = exec(
         Command::new(tool)
             .args(args)
-            .current_dir(root)
+            .current_dir(&dir.0)
             .env("RUSTUP_AUTO_INSTALL", "0")
             .env("GOTOOLCHAIN", "local"),
     )
@@ -152,12 +153,12 @@ pub(crate) fn version(root: &Path, tool: &str, args: &[&str]) -> Option<String> 
         .map(Into::into)
 }
 /// Version of the tool an analyzer runs; impact compares it with the version in the graph.
-pub(crate) fn tool_version(root: &Path, lang: &str) -> Option<String> {
+pub(crate) fn tool_version(lang: &str) -> Option<String> {
     match lang {
-        "elixir" => version(root, "elixir", &["--version"]),
-        "go" => version(root, "go", &["version"]),
-        "python" => version(root, "python3", &["--version"]),
-        "rust" => version(root, "cargo", &["--version"])
+        "elixir" => version("elixir", &["--version"]),
+        "go" => version("go", &["version"]),
+        "python" => version("python3", &["--version"]),
+        "rust" => version("cargo", &["--version"])
             .map(|c| format!("{c}; taeguk-cli {} syn 3", env!("CARGO_PKG_VERSION"))),
         _ => None,
     }
@@ -566,11 +567,7 @@ const ANALYZER_TIMEOUT_SECS: u64 = 600;
 /// exhaustion, or a wait that never ends), the result is that analyzer's FAIL, not a crashed or
 /// stuck CLI. The group is killed on timeout so tools it started (cargo, go, mix) end too.
 fn isolated(root: &Path, lang: &str) -> (Analyzer, Result<Partial, String>) {
-    let failed = |e: String| {
-        let mut a = Analyzer::new(lang, "-", &[]);
-        a.version = tool_version(root, lang);
-        (a, Err(e))
-    };
+    let failed = |e: String| (Analyzer::new(lang, "-", &[]), Err(e));
     let exe = match env::current_exe() {
         Ok(exe) => exe,
         Err(e) => return failed(format!("cannot locate taeguk executable: {e}")),
@@ -680,8 +677,8 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
     let scanned = scan_root(&root, &files, &langs);
     for lang in &langs {
         if let Err(e) = &scanned {
+            // No tool runs once the scan fails; the version stays unknown.
             let mut a = Analyzer::new(lang, "-", &[]);
-            a.version = tool_version(&root, lang);
             a.error = Some(format!("ROOT scan: {e}"));
             analyzers.push(a);
             continue;
@@ -782,7 +779,7 @@ fn impact(
     }
     if g.analyzers
         .iter()
-        .any(|a| a.version.is_none() || tool_version(root, &a.lang) != a.version)
+        .any(|a| a.version.is_none() || tool_version(&a.lang) != a.version)
     {
         reasons.push("analyzer_version_changed_or_unknown");
     }

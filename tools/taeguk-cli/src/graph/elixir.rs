@@ -48,7 +48,7 @@ pub(super) fn analyze(root: &Path, tracked: &[String]) -> (Analyzer, Result<Part
             "_build/<env>/lib/<app>/.mix/compile.elixir",
         ],
     );
-    a.version = tool_version(root, "elixir");
+    a.version = tool_version("elixir");
     let result = run(root, tracked, &mut a);
     (a, result)
 }
