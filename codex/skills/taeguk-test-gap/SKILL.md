@@ -9,7 +9,7 @@ Coverage shows which code no test executed. It does not show whether a test chec
 
 ## Authority
 
-On 2026-10-29 BOSS approved this worker as manual and report-only: BOSS starts each run, and a run writes a report and nothing else. It does not commit test or product code changes, open a branch or PR, or schedule itself; the only edit it makes is the temporary fault injection in step 6. Writing tests, opening PRs, auto-merge and scheduled runs each need BOSS confirmation first. This applies to the Taeguk repository (`sensibile/taeguk`) only; pilot projects need explicit BOSS authorization per project.
+On 2026-10-29 BOSS approved this worker as manual and report-only: BOSS starts each run, and a run writes a report and nothing else. It does not commit test or product code changes, open a branch or PR, or schedule itself; the only edit it makes is the temporary fault injection in step 6. BOSS confirmed that temporary local fault injection on 2026-10-29. Writing tests, opening PRs, auto-merge and scheduled runs each need BOSS confirmation first. This applies to the Taeguk repository (`sensibile/taeguk`) only; pilot projects need explicit BOSS authorization per project.
 
 ## Coverage is not a target
 
