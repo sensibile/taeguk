@@ -158,14 +158,19 @@ for line <- String.split(IO.read(:stdio, :eof), "\n", trim: true),
         # `Elixir.Kernel` is absolute: local aliases do not apply to it.
         [:Elixir | rest] -> rest
         parts ->
-        Enum.reduce_while(1..8, parts, fn _, [h | t] = acc ->
-          case aliases do
-            # An absolute target (`Elixir.X`, an atom) is final; a relative one may be an alias.
-            %{^h => [[:Elixir | _] = full]} -> {:halt, strip.(full) ++ t}
-            %{^h => [full]} when full != [h] -> {:cont, full ++ t}
-            %{^h => [_, _ | _]} -> {:halt, :ambiguous}
-            _ -> {:halt, acc}
-          end
+        # 9 steps for the 8 allowed expansions plus one to see the chain ended; a chain still
+        # going after that is not resolved and is ambiguous.
+        Enum.reduce_while(1..9, parts, fn
+          _, :ambiguous -> {:halt, :ambiguous}
+          step, [h | t] = acc ->
+            case aliases do
+              # An absolute target (`Elixir.X`, an atom) is final; a relative one may be an alias.
+              %{^h => [[:Elixir | _] = full]} -> {:halt, strip.(full) ++ t}
+              %{^h => [full]} when full != [h] and step == 9 -> {:halt, :ambiguous}
+              %{^h => [full]} when full != [h] -> {:cont, full ++ t}
+              %{^h => [_, _ | _]} -> {:halt, :ambiguous}
+              _ -> {:halt, acc}
+            end
         end)
       end
       Macro.prewalk(ast, fn

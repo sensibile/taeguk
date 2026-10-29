@@ -982,6 +982,70 @@ fn files_analyzers_read_are_fingerprinted() {
 }
 
 #[test]
+fn go_embed_inputs_are_fingerprinted() {
+    if !available("go", "version") {
+        return;
+    }
+    // An embedded file is an input even when git ignores it and its extension is not Go's.
+    let w = work("go");
+    fs::write(w.repo().join(".gitignore"), "/a/payload.txt\n").unwrap();
+    fs::write(
+        w.repo().join("a/embed.go"),
+        "package a\n\nimport _ \"embed\"\n\n//go:embed payload.txt\nvar Payload string\n",
+    )
+    .unwrap();
+    git(&w.repo(), &["add", "-A"]);
+    git(&w.repo(), &["commit", "-qm", "embed"]);
+    fs::write(w.repo().join("a/payload.txt"), "data\n").unwrap();
+    let g = build(&w, "go");
+    assert_eq!(g["status"], "PASS", "{g}");
+    let v = impact(&w, &["--changed", "b/b.go"]);
+    assert_eq!(other_reasons(&v), Vec::<String>::new());
+    fs::remove_file(w.repo().join("a/payload.txt")).unwrap();
+    let v = impact(&w, &["--changed", "b/b.go"]);
+    assert_eq!(other_reasons(&v), ["analyzer_inputs_changed"]);
+}
+
+#[test]
+fn tool_diagnostics_do_not_carry_outside_content() {
+    if !available("cargo", "--version") {
+        return;
+    }
+    // cargo quotes the manifest it failed to parse; one reached outside ROOT must not end up
+    // in the graph.
+    let w = work("rust");
+    let outside = w.0.join("outside.toml");
+    fs::write(&outside, "SECRET_TOKEN_VALUE\n").unwrap();
+    let manifest = w.repo().join("Cargo.toml");
+    let text = fs::read_to_string(&manifest)
+        .unwrap()
+        .replace("\"legacy\"]", "\"legacy\", \"localdep\"]");
+    fs::write(&manifest, text).unwrap();
+    fs::write(
+        w.repo().join(".gitignore"),
+        "/target/\n/Cargo.lock\n/localdep/\n",
+    )
+    .unwrap();
+    git(&w.repo(), &["commit", "-qam", "member"]);
+    fs::create_dir_all(w.repo().join("localdep")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, w.repo().join("localdep/Cargo.toml")).unwrap();
+    let (ok, v) = taeguk(&[
+        "graph",
+        "build",
+        w.repo().to_str().unwrap(),
+        "--out",
+        w.graph().to_str().unwrap(),
+        "--lang",
+        "rust",
+    ]);
+    assert!(ok, "{v}");
+    let graph = fs::read_to_string(w.graph()).unwrap();
+    assert!(!graph.contains("SECRET_TOKEN_VALUE"), "{graph}");
+    assert!(!v.to_string().contains("SECRET_TOKEN_VALUE"));
+}
+
+#[test]
 fn glob_reexport_cycles_finish() {
     if !available("cargo", "--version") {
         return;
@@ -1143,6 +1207,7 @@ fn impact_follows_reverse_edges_and_reports_limits() {
             "tests/test_param.py",
             "tests/test_patch.py",
             "tests/test_paths.py",
+            "tests/test_rebind.py",
             "tests/test_reload.py",
             "tests/test_shadow.py",
             "tests/test_unpack.py",

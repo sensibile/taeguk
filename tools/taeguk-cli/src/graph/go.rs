@@ -18,6 +18,9 @@ struct Package {
     test_go_files: Vec<String>,
     x_test_go_files: Vec<String>,
     ignored_go_files: Vec<String>,
+    embed_patterns: Vec<String>,
+    test_embed_patterns: Vec<String>,
+    x_test_embed_patterns: Vec<String>,
     imports: Vec<String>,
     test_imports: Vec<String>,
     x_test_imports: Vec<String>,
@@ -73,21 +76,47 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
     for p in serde_json::Deserializer::from_slice(&o.stdout).into_iter::<Package>() {
         packages.push(p.map_err(|e| format!("cannot parse go list output: {e}"))?);
     }
-    let mut errors: Vec<String> = packages
+    // go's messages can quote files it read, including ones reached outside ROOT (a replaced
+    // module's go.mod), so no message text is kept. The failure names packages only when the
+    // name itself comes from ROOT: a package inside ROOT, or one that such a package imports.
+    let inside = |p: &Package| Path::new(&p.dir).starts_with(root);
+    let named: BTreeSet<&str> = packages
         .iter()
-        .filter(|p| !p.standard)
-        .flat_map(|p| p.error.iter().chain(&p.deps_errors))
-        .map(|e| e.err.clone())
+        .filter(|p| inside(p))
+        .flat_map(|p| {
+            std::iter::once(p.import_path.as_str())
+                .chain(p.imports.iter().map(String::as_str))
+                .chain(p.test_imports.iter().map(String::as_str))
+                .chain(p.x_test_imports.iter().map(String::as_str))
+        })
         .collect();
-    errors.sort();
-    errors.dedup();
-    if o.code != Some(0) || !errors.is_empty() {
-        let detail = if errors.is_empty() {
-            o.stderr.trim().to_string()
-        } else {
-            errors.join("; ")
-        };
-        return Err(format!("go list failed: {detail}"));
+    let failing: Vec<&Package> = packages
+        .iter()
+        .filter(|p| !p.standard && (p.error.is_some() || !p.deps_errors.is_empty()))
+        .collect();
+    if o.code != Some(0) || !failing.is_empty() {
+        let mut shown: Vec<&str> = failing
+            .iter()
+            .map(|p| p.import_path.as_str())
+            .filter(|n| named.contains(n))
+            .collect();
+        shown.sort();
+        shown.dedup();
+        let hidden = failing.len()
+            - failing
+                .iter()
+                .filter(|p| named.contains(p.import_path.as_str()))
+                .count();
+        return Err(format!(
+            "go list failed (exit {:?}): package errors in [{}]{}; run `go list -e -deps -test ./...` in ROOT for the messages",
+            o.code,
+            shown.join(", "),
+            if hidden > 0 {
+                format!(" and {hidden} more")
+            } else {
+                String::new()
+            }
+        ));
     }
     let main: Vec<&Package> = packages
         .iter()
@@ -140,6 +169,18 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
         .map(file)
         .collect();
         files.sort();
+        // `//go:embed` reads files of any kind from the package directory down; which ones match
+        // can change with files added or removed, so the whole directory tree is an input.
+        if [
+            &p.embed_patterns,
+            &p.test_embed_patterns,
+            &p.x_test_embed_patterns,
+        ]
+        .iter()
+        .any(|v| !v.is_empty())
+        {
+            out.read.push(format!("{rel_dir}/"));
+        }
         let id = format!("go:{}", p.import_path);
         out.nodes.push(Node::new("go", &p.import_path, files));
         for (kind, imports) in [

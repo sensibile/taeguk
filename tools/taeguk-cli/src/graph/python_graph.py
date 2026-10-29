@@ -115,15 +115,22 @@ def path_bindings(tree, shadowed):
     Modules in `shadowed` exist as project files, so an import of them may not be the
     standard library; nothing bound from them counts."""
     funcs, modules, other = {"str": "str"}, {}, set()
+
+    # One name bound to two different known things (`dirname as locate`, later `abspath as
+    # locate`) means something different before and after; which applies where is not tracked.
+    def bind(table, name, value):
+        if table.get(name, value) != value:
+            other.add(name)
+        table[name] = value
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for a in node.names:
                 if a.name.split(".")[0] in shadowed:
                     other.add((a.asname or a.name).split(".")[0])
                 elif a.name in ("os", "os.path", "pathlib") and a.asname:
-                    modules[a.asname] = a.name
+                    bind(modules, a.asname, a.name)
                 elif a.name in ("os", "os.path", "pathlib"):
-                    modules[a.name.split(".")[0]] = a.name.split(".")[0]
+                    bind(modules, a.name.split(".")[0], a.name.split(".")[0])
                 else:
                     other.add((a.asname or a.name).split(".")[0])
         elif isinstance(node, ast.ImportFrom):
@@ -133,9 +140,9 @@ def path_bindings(tree, shadowed):
                 # provides (`scripts/pathlib.py`) is not the standard library.
                 own = node.level > 0 or (node.module or "").split(".")[0] in shadowed
                 if not own and (node.module, a.name) in PATH_FUNCS:
-                    funcs[bound] = PATH_FUNCS[(node.module, a.name)]
+                    bind(funcs, bound, PATH_FUNCS[(node.module, a.name)])
                 elif not own and node.module == "os" and a.name == "path":
-                    modules[bound] = "os.path"
+                    bind(modules, bound, "os.path")
                 else:
                     other.add(bound)
         else:

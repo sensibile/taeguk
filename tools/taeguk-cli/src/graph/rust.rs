@@ -110,7 +110,12 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
     )?;
     a.exit_code = o.code;
     if o.code != Some(0) {
-        return Err(format!("cargo metadata failed: {}", o.stderr.trim()));
+        // cargo's diagnostics quote the manifests it read, which may lie outside ROOT through a
+        // link, so they are not kept.
+        return Err(format!(
+            "cargo metadata failed (exit {:?}); run `cargo metadata --no-deps --offline` in ROOT for the diagnostics",
+            o.code
+        ));
     }
     let meta: Metadata = serde_json::from_slice(&o.stdout)
         .map_err(|e| format!("cannot parse cargo metadata: {e}"))?;

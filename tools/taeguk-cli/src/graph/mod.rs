@@ -528,12 +528,20 @@ fn is_input(rel: &str, ignored: bool, langs: &[String]) -> bool {
 /// impact can tell when anything the graph was built from has changed since. Files over
 /// MAX_SOURCE are hashed by size and modification time.
 fn input_fingerprint(root: &Path, langs: &[String], read: &[String]) -> Result<String, String> {
-    let mut files: BTreeSet<String> = read.iter().cloned().collect();
+    // An entry ending in `/` stands for every file in that directory tree (`//go:embed`).
+    let trees: Vec<String> = read
+        .iter()
+        .filter_map(|r| r.strip_suffix('/').map(String::from))
+        .collect();
+    let mut files: BTreeSet<String> = read.iter().filter(|r| !r.ends_with('/')).cloned().collect();
     walk(root, langs, |rel, _, kind, ignored| {
         if kind.is_dir() {
             return Ok(true);
         }
-        if is_input(rel, ignored, langs) {
+        let in_tree = trees
+            .iter()
+            .any(|t| t.is_empty() || rel == t || rel.starts_with(&format!("{t}/")));
+        if is_input(rel, ignored, langs) || in_tree {
             files.insert(rel.to_string());
         }
         Ok(false)
