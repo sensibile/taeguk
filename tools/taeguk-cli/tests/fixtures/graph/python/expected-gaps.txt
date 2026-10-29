@@ -28,3 +28,6 @@ python sys_path_unresolved tests/test_importbind.py
 python sys_path_unresolved tests/test_rebind.py
 python sys_path_unresolved src/app/nspkg/__init__.py
 python sys_path_unresolved plugrun/run.py
+python dynamic_import tests/test_dict.py
+python sys_path_unresolved tests/test_dict.py
+python sys_path_unresolved tests/test_ossys.py

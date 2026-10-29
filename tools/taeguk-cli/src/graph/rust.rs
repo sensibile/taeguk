@@ -1,6 +1,6 @@
 use super::{
-    Analyzer, Edge, Gap, Node, Partial, TempDir, check_source, exec, read_source, relative,
-    tool_version,
+    Analyzer, Edge, Gap, Node, Partial, TempDir, check_source, exec, links_followed, read_source,
+    relative, tool_version,
 };
 use serde::Deserialize;
 use std::{
@@ -141,6 +141,7 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
         .filter_map(|p| Some((p.manifest_path.parent()?.to_path_buf(), p)))
         .collect();
     let mut out = Partial::default();
+    let mut links = BTreeSet::new();
     let mut trees: BTreeMap<PathBuf, Tree> = BTreeMap::new();
     let mut crates = Vec::new();
     // Crates of edition 2015, where `::a` and `use a::b` name the crate root.
@@ -171,6 +172,7 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
                     root,
                     tree: Tree::new(),
                     gaps: &mut out.gaps,
+                    links: &mut links,
                     active: vec![],
                     visits: 0,
                 };
@@ -237,6 +239,7 @@ fn run(root: &Path, a: &mut Analyzer) -> Result<Partial, String> {
     }
     // Module files (`#[path]` may name any extension) and manifests join the input fingerprint.
     out.read.extend(files.iter().cloned());
+    out.read.extend(links);
     for p in &meta.packages {
         out.read.push(rel(&p.manifest_path)?);
     }
@@ -455,11 +458,18 @@ struct Walk<'a> {
     root: &'a Path,
     tree: Tree,
     gaps: &'a mut Vec<Gap>,
+    /// Links inside ROOT followed to find module files.
+    links: &'a mut BTreeSet<String>,
     active: Vec<PathBuf>,
     visits: usize,
 }
 
 impl Walk<'_> {
+    /// `physical`, recording the links followed on the way (also for candidates not found).
+    fn physical(&mut self, path: &Path) -> Option<PathBuf> {
+        self.links.extend(links_followed(self.root, path));
+        physical(path)
+    }
     fn shown(&self, file: &Path) -> String {
         relative(self.root, file).unwrap_or_else(|| file.display().to_string())
     }
@@ -578,7 +588,7 @@ impl Walk<'_> {
                 continue;
             }
             let found = match &attr_path {
-                Some(p) => physical(&if file_level {
+                Some(p) => self.physical(&if file_level {
                     file_dir.join(p)
                 } else {
                     mod_dir.join(p)
@@ -588,7 +598,7 @@ impl Walk<'_> {
                     mod_dir.join(&name).join("mod.rs"),
                 ]
                 .iter()
-                .find_map(|f| physical(f)),
+                .find_map(|f| self.physical(f)),
             };
             let Some(child) = found else {
                 let shown = self.shown(file);

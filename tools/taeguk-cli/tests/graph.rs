@@ -1143,6 +1143,39 @@ fn rust_path_attribute_walks_links_like_the_os() {
 }
 
 #[test]
+fn rust_module_directory_links_are_fingerprinted() {
+    if !available("cargo", "--version") {
+        return;
+    }
+    // An ignored directory link on a `#[path]` decides which file is the module; retargeting it
+    // must make the graph stale even when both files have the same content.
+    let w = work("rust");
+    let src = w.repo().join("app/src");
+    for d in ["ra", "rb"] {
+        fs::create_dir_all(src.join(d)).unwrap();
+        fs::write(src.join(d).join("m.rs"), "pub fn m() {}\n").unwrap();
+    }
+    let main = fs::read_to_string(src.join("main.rs")).unwrap();
+    fs::write(
+        src.join("main.rs"),
+        format!("#[path = \"route/m.rs\"]\nmod m;\n{main}"),
+    )
+    .unwrap();
+    fs::write(w.repo().join(".gitignore"), "/app/src/route\n").unwrap();
+    git(&w.repo(), &["add", "-A"]);
+    git(&w.repo(), &["commit", "-qm", "route"]);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("ra", src.join("route")).unwrap();
+    let g = build(&w, "rust");
+    assert_eq!(g["status"], "PASS", "{g}");
+    fs::remove_file(src.join("route")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("rb", src.join("route")).unwrap();
+    let v = impact(&w, &["--changed", "app/src/main.rs"]);
+    assert_eq!(other_reasons(&v), ["analyzer_inputs_changed"]);
+}
+
+#[test]
 fn go_configuration_outside_root_is_not_read() {
     if !available("go", "version") {
         return;
@@ -1510,6 +1543,7 @@ fn impact_follows_reverse_edges_and_reports_limits() {
             "tests/test_boolop.py",
             "tests/test_builtins.py",
             "tests/test_cond.py",
+            "tests/test_dict.py",
             "tests/test_exec.py",
             "tests/test_file.py",
             "tests/test_fromexec.py",
@@ -1518,6 +1552,7 @@ fn impact_follows_reverse_edges_and_reports_limits() {
             "tests/test_match.py",
             "tests/test_nested.py",
             "tests/test_order.py",
+            "tests/test_ossys.py",
             "tests/test_param.py",
             "tests/test_patch.py",
             "tests/test_paths.py",

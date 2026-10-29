@@ -395,11 +395,15 @@ def parent_map(tree):
 
 def unevaluated_sys_uses(tree, sys_names, parents):
     """Allow-list for the sys module: `sys.path.insert(...)`/`append(...)` calls are evaluated,
-    `x in sys.path` only reads, `sys.<other>` is unrelated. Any other use of `sys.path` or of
-    `sys` itself (aliased, annotated, passed on, subscripted, assigned) may change the search
-    path in a way not evaluated, so each one is unresolved."""
+    `x in sys.path` only reads, `sys.<public name>` is unrelated. Any other use of `sys.path` or
+    of `sys` itself (aliased, annotated, passed on, subscripted, assigned, its `__dict__` or
+    other dunder attributes, `os.sys`) may change the search path in a way not evaluated, so
+    each one is unresolved."""
     found = []
     for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == "sys":
+            found.append(f"line {node.lineno}: sys reached through another module")
+            continue
         if not (isinstance(node, ast.Name) and node.id in sys_names and isinstance(node.ctx, ast.Load)):
             continue
         parent = parents.get(id(node))
@@ -408,6 +412,9 @@ def unevaluated_sys_uses(tree, sys_names, parents):
             continue
         if parent.attr in SYS_IMPORT_STATE:
             found.append(f"line {node.lineno}: sys.{parent.attr} changes how imports resolve")
+            continue
+        if parent.attr.startswith("_"):
+            found.append(f"line {node.lineno}: sys.{parent.attr} reaches the module's namespace")
             continue
         if parent.attr != "path":
             continue
@@ -613,13 +620,20 @@ def main():
             elif isinstance(node, ast.Name) and node.id in CODE_EXEC:
                 machinery = f"{node.id}()"
             elif isinstance(node, ast.Name) and node.id in builtins_names:
-                # Allow-list for the builtins module: only attributes other than code execution
-                # and imports pass; the module used as a value may reach them anywhere.
+                # Allow-list for the builtins module: only public attributes other than code
+                # execution and imports pass; `__dict__` and other dunder attributes reach every
+                # builtin by name, and the module used as a value may reach them anywhere.
                 parent = parents.get(id(node))
                 if not (isinstance(parent, ast.Attribute) and parent.value is node):
                     machinery = f"{node.id} used as a value"
-                elif parent.attr in CODE_EXEC + ("__import__",):
+                elif parent.attr in CODE_EXEC + ("__import__",) or parent.attr.startswith("_"):
                     machinery = f"{node.id}.{parent.attr}"
+            elif (isinstance(node, ast.Name) and node.id == "__builtins__") or (
+                    isinstance(node, ast.Constant) and node.value == "__builtins__") or (
+                    isinstance(node, ast.Attribute) and node.attr in ("builtins", "__builtins__")):
+                # The builtins module under its other names (`__builtins__`, `os.builtins`-style
+                # attributes) is not tracked by the allow-list above.
+                machinery = "the builtins module reached by another name"
             elif (isinstance(node, ast.Attribute) and node.attr == "modules"
                   and isinstance(node.value, ast.Name) and node.value.id in sys_names):
                 machinery = "sys.modules"

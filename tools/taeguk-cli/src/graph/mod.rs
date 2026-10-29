@@ -860,6 +860,47 @@ fn changed_since(root: &Path, base: &str) -> Result<Vec<String>, String> {
 }
 
 /// Relative path from `base` to `path` when `path` is inside `base`.
+/// The links inside ROOT that the OS follows to open `path` (ROOT-relative, in order; a link's
+/// own target path is walked too). An analyzer that resolved a file through a link records them
+/// in `read`, so retargeting a link changes the input fingerprint even when no file changed.
+pub(crate) fn links_followed(root: &Path, path: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    follow(root, path, &mut out, 0);
+    out
+}
+fn follow(root: &Path, path: &Path, out: &mut Vec<String>, depth: usize) {
+    let Ok(rest) = path.strip_prefix(root) else {
+        return;
+    };
+    let mut cur = root.to_path_buf();
+    for c in rest.components() {
+        match c {
+            Component::Normal(n) => {
+                cur.push(n);
+                if !fs::symlink_metadata(&cur).is_ok_and(|m| m.file_type().is_symlink()) {
+                    continue;
+                }
+                let Some(rel) = relative(root, &cur) else {
+                    return;
+                };
+                out.push(rel);
+                if depth >= 40 {
+                    return;
+                }
+                if let (Ok(target), Some(parent)) = (fs::read_link(&cur), cur.parent()) {
+                    follow(root, &parent.join(target), out, depth + 1);
+                }
+                match cur.canonicalize() {
+                    Ok(real) if real.starts_with(root) => cur = real,
+                    _ => return,
+                }
+            }
+            Component::ParentDir if !cur.pop() || !cur.starts_with(root) => return,
+            _ => {}
+        }
+    }
+}
+
 pub(crate) fn relative(base: &Path, path: &Path) -> Option<String> {
     let rel = path.strip_prefix(base).ok()?;
     let parts: Vec<_> = rel
@@ -1098,6 +1139,8 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
     let mut read: Vec<String> = vec![];
     let out = output_path(&root, out)?;
     let scanned = scan_root(&root, &files, &langs);
+    // The state of every entry under ROOT before the tools run; compared after they finish.
+    let before = tree_state(&root, &langs);
     for lang in &langs {
         if let Err(e) = &scanned {
             // No tool runs once the scan fails; the version stays unknown.
@@ -1141,6 +1184,28 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
     edges.dedup();
     gaps.sort();
     gaps.dedup();
+    // go and cargo read files themselves, after the ROOT checks and before the checks of what
+    // they report. A file swapped for a link out of ROOT in between and swapped back would
+    // leave no trace in the paths, but it does in the inode change time, which no user can
+    // set back: any change under ROOT while the tools ran fails every analyzer.
+    let changed = match (&before, tree_state(&root, &langs)) {
+        (Ok(before), Ok(after)) => after.changed_from(before),
+        (Err(e), _) => Some(format!("its state could not be recorded: {e}")),
+        (_, Err(e)) => Some(format!("its state could not be recorded: {e}")),
+    };
+    if scanned.is_ok()
+        && let Some(changed) = changed
+    {
+        for a in analyzers.iter_mut().filter(|a| a.status == "PASS") {
+            a.status = "FAIL".into();
+            a.error = Some(format!(
+                "ROOT changed while the analyzers ran ({changed}); build again"
+            ));
+        }
+        nodes.clear();
+        edges.clear();
+        gaps.clear();
+    }
     let inputs = if scanned.is_ok() {
         let (inputs, outside) = input_fingerprint(&root, &langs, &read)?;
         // An input linked out of ROOT may have been read by a tool; no analyzer result is kept.
@@ -1192,6 +1257,46 @@ fn build(root: &Path, langs: &[String], out: &Path) -> Result<Value, String> {
         "commit": g.commit, "dirty": g.dirty, "nodes": g.nodes.len(), "edges": g.edges.len(),
         "gaps": g.gaps.len(), "analyzers": g.analyzers}),
     )
+}
+
+/// Inode, change time, modification time, size and mode of every entry the ROOT walk visits
+/// (what the tools may read: links not followed, `.git` and unread build output left out),
+/// keyed by ROOT-relative path; `.` is ROOT itself.
+struct TreeState(BTreeMap<String, [i64; 7]>);
+fn tree_state(root: &Path, langs: &[String]) -> Result<TreeState, String> {
+    use std::os::unix::fs::MetadataExt;
+    let stat = |path: &Path| {
+        fs::symlink_metadata(path).map(|m| {
+            [
+                m.ino() as i64,
+                m.ctime(),
+                m.ctime_nsec(),
+                m.mtime(),
+                m.mtime_nsec(),
+                m.size() as i64,
+                m.mode() as i64,
+            ]
+        })
+    };
+    let mut map = BTreeMap::new();
+    map.insert(".".into(), stat(root).map_err(|e| e.to_string())?);
+    walk(root, langs, |rel, path, kind, _| {
+        if let Ok(s) = stat(path) {
+            map.insert(rel.to_string(), s);
+        }
+        Ok(kind.is_dir())
+    })?;
+    Ok(TreeState(map))
+}
+impl TreeState {
+    /// The first path that differs (added, removed or changed), if any.
+    fn changed_from(&self, before: &TreeState) -> Option<String> {
+        self.0
+            .iter()
+            .find(|(k, v)| before.0.get(*k) != Some(v))
+            .or_else(|| before.0.iter().find(|(k, _)| !self.0.contains_key(*k)))
+            .map(|(k, _)| k.clone())
+    }
 }
 
 /// Largest graph file read.
@@ -1471,5 +1576,43 @@ mod tests {
         let dir = super::TempDir::new("mode").unwrap();
         let mode = std::fs::metadata(&dir.0).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn swapping_a_file_out_and_back_is_seen() {
+        use std::fs;
+        // A tool could read `go.mod` while it is a link out of ROOT; putting the same file back
+        // afterwards still changes the change times of the file and its directory.
+        let dir = super::TempDir::new("state").unwrap();
+        let root = dir.0.canonicalize().unwrap();
+        assert!(
+            std::process::Command::new("git")
+                .args(["init", "-q"])
+                .arg(&root)
+                .env_remove("GIT_DIR")
+                .env_remove("GIT_WORK_TREE")
+                .status()
+                .unwrap()
+                .success()
+        );
+        fs::write(root.join("go.mod"), "module example.com/m\n").unwrap();
+        fs::write(root.join("outside.mod"), "module corp.example/x\n").unwrap();
+        let langs = vec!["go".to_string()];
+        let before = super::tree_state(&root, &langs).unwrap();
+        assert_eq!(
+            super::tree_state(&root, &langs)
+                .unwrap()
+                .changed_from(&before),
+            None
+        );
+        fs::rename(root.join("go.mod"), root.join("saved")).unwrap();
+        std::os::unix::fs::symlink(root.join("outside.mod"), root.join("go.mod")).unwrap();
+        fs::remove_file(root.join("go.mod")).unwrap();
+        fs::rename(root.join("saved"), root.join("go.mod")).unwrap();
+        let changed = super::tree_state(&root, &langs)
+            .unwrap()
+            .changed_from(&before);
+        assert!(changed.is_some());
     }
 }
