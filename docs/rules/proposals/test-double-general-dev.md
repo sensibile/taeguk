@@ -43,7 +43,7 @@
 - `docs/rules/index.md` 적용 범위 문장에 예외를 하나 더한다. "VER-007은 시험 프로젝트에서 테스트나 테스트 대역을 추가하거나 바꾸는 모든 저장소 편집에 적용한다." 같은 파일의 이력 문장에 1.1 개정을 더한다.
 - registry의 VER-007 `version`을 1.1로, `approval`을 새 승인 기록으로 바꾼다. `scope` 문자열은 그대로 둔다(대상 프로젝트는 같다). `approvals.md`에 새 승인 기록을 더한다.
 - 이 개정안 상태 줄과 `proposals/index.md` 항목을 승인으로 바꾼다.
-- `installer/taeguk-init.md` 5단계: 시험 프로젝트에 설치할 때만 진입 문구 끝에 VER-007 절을 더해 제안한다. "...; apply DEV-003 (dedicated worktree, `.taeguk/rules/development.md`) to all repository edits; apply VER-007 (test doubles, `.taeguk/rules/verification.md`) to every edit that adds or changes tests or test doubles." 시험 프로젝트가 아닌 곳에는 지금 문구를 그대로 제안한다. 마지막 문장의 "may not read DEV-003"도 시험 프로젝트에서는 "DEV-003 and VER-007"로 알린다. 옛 문구 교체 제안, CLAUDE.md가 `@AGENTS.md`를 가져오지 않을 때 양쪽 파일에 제안하는 기존 절차는 그대로 쓴다. 2026-10-30 기준 hoplites·thesmothetai·archon의 CLAUDE.md는 `@AGENTS.md`를 가져오고 acropolis에는 CLAUDE.md가 없어, 네 곳 모두 AGENTS.md 한 곳만 바꾸면 된다.
+- `installer/taeguk-init.md` 5단계: 시험 프로젝트(VER-007에 적힌 hoplites, acropolis, thesmothetai, archon. 판단이 서지 않으면 BOSS에게 묻는다)에 설치할 때만 진입 문구 끝에 VER-007 절을 더해 제안한다. "...; apply DEV-003 (dedicated worktree, `.taeguk/rules/development.md`) to all repository edits; apply VER-007 (test doubles, `.taeguk/rules/verification.md`) to every edit that adds or changes tests or test doubles." 시험 프로젝트가 아닌 곳에는 지금 문구를 그대로 제안한다. 마지막 문장의 "may not read DEV-003"도 시험 프로젝트에서는 "DEV-003 and VER-007"로 알린다. 옛 문구 교체 제안, CLAUDE.md가 `@AGENTS.md`를 가져오지 않을 때 양쪽 파일에 제안하는 기존 절차는 그대로 쓴다. 2026-10-30 기준 hoplites·thesmothetai·archon의 CLAUDE.md는 `@AGENTS.md`를 가져오고 acropolis에는 CLAUDE.md가 없어, 네 곳 모두 AGENTS.md 한 곳만 바꾸면 된다.
 
 ## 변경 전후 판정
 
@@ -82,6 +82,6 @@
 
 ## 전환·되돌림 조건
 
-- 적용: 시험 프로젝트마다 1.1 규칙 사본과 새 진입 문구가 모두 `main`에 머지된 뒤 새로 시작하는 작업부터 적용한다. 진행 중인 작업에는 소급하지 않는다. Taeguk 자체 작업은 1.0과 같다.
+- 적용: 태극 작업으로 지정된 흐름은 1.0과 같이 승인된 규칙 사본이 각 프로젝트 `main`에 머지된 뒤 새로 시작하는 작업부터 적용한다. 일반 개발은 1.1 규칙 사본과 새 진입 문구가 모두 머지된 뒤 새로 시작하는 작업부터 적용한다. 진행 중인 작업에는 소급하지 않는다. Taeguk 자체 작업은 1.0과 같다.
 - 되돌림 신호: 일반 개발에서 fake 작성 때문에 작은 작업이 반복해서 늦어짐, 구조 변경 신호 기록이 쌓이기만 하고 처리되지 않음, 프로젝트 지침과의 충돌이 반복됨. 자동 되돌림 조건은 아니다. 그 사례를 들어 개정안을 다시 올린다.
 - 되돌릴 때: VER-007을 1.0 적용 대상·증거 문단으로 복원하고(버전은 1.2로 올려 이력을 남긴다), index 예외 문장과 진입 문구의 VER-007 절을 뺀다. 이미 들어간 프로젝트 진입 문구는 다음 설치 갱신 때 BOSS 승인 뒤 교체한다.
