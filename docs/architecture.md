@@ -16,7 +16,7 @@
 
 `taeguk_codex_cross_reviewer`와 `taeguk_codex_security_reviewer`는 [taeguk-codex-local-review](../codex/skills/taeguk-codex-local-review/SKILL.md) 절차로 로컬 `codex exec review`를 read-only sandbox에서 정확한 변경 범위에 실행한다. 2026-10-29 BOSS 지시로 이 CLI 호출은 `gpt-6-sol`, `high` effort를 명령 인수로 지정한다(비용 때문에 2026-10-28의 `gpt-6-astra`, `medium`을 대체). 역할 TOML의 모델 비고정 원칙은 그대로다. 2026-10-29 BOSS 지시로 Codex 리뷰는 작업 세션의 자체 리뷰 에이전트가 반복 리뷰해 더 고칠 것이 없게 된 head에만 보낸다. 교차 검토는 다른 에이전트가 구현한 변경의 정확성·요구 불일치를, 보안 검토는 실행 동작에 영향을 주는 변경의 취약점과 악용 시나리오를 본다. 2026-10-30부터 프롬프트에 목적 맥락과 이전 판정을 넣고 프롬프트 파일을 증거로 남긴다. 목적 이의는 BOSS에게 넘기고, 목적이나 정답 기준이 기록에 없으면 NOT_RUN이다. Codex 출력은 LLM 판단으로 분류하고 검토 역할이 각 지적을 재현·타당·기각·재현 필요로 평가한다. 지적 없음은 PASS가 아니다. 2026-10-28 GitHub의 `codex-review` gate를 없앤 뒤로는 이 로컬 리뷰가 PR 리뷰 단계다. 절차는 [저장소 운영](repository-operations.md)에 있다.
 
-CLI 실행은 diff, 프롬프트, 저장소 맥락을 OpenAI로 보낸다. 2026-10-28 BOSS가 이 전송을 상시 허용했고(처음 범위는 `sensibile/taeguk`, 2026-10-29 `sensibile/archon` 추가), 2026-10-30에는 저장소별 허용 목록을 없앴다. 어느 저장소에서 Codex를 돌릴 수 있는지는 Codex CLI 설정(로그인, 프로젝트 신뢰 등록)이 정한다. CLI가 실행을 거부하면 NOT_RUN이다. 전송 전 diff와 프롬프트에 비밀값이 있으면 실행하지 않는다.
+CLI 실행은 diff, 프롬프트, 저장소 맥락을 OpenAI로 보낸다. 2026-10-28 BOSS가 이 전송을 상시 허용했고(처음 범위는 `sensibile/taeguk`, 2026-10-29 `sensibile/archon` 추가), 2026-10-30에는 저장소별 허용 목록을 없앴다. 어느 저장소에서 Codex를 돌릴 수 있는지는 Codex CLI의 로그인과 설정이 정한다. CLI가 실행을 거부하면 NOT_RUN이다. 전송 전 diff와 프롬프트에 비밀값이 있으면 실행하지 않는다.
 
 ## 교환할 정보
 

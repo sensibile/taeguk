@@ -9,7 +9,7 @@ Run `codex exec review` from the local Codex CLI against one exact target and re
 
 ## Authority
 
-Running the CLI sends the diff, the prompt and repository context to OpenAI. Whether Codex may run in a repository is set in the Codex CLI itself (its login and project trust settings), not by a repository list in this skill; on 2026-10-30 BOSS removed the earlier list. If the CLI refuses to run in the repository, record the review as NOT_RUN with the CLI's reason. This skill grants no other external effect.
+Running the CLI sends the diff, the prompt and repository context to OpenAI. Whether Codex may run in a repository is set in the Codex CLI's own configuration (login and its settings), not by a repository list in this skill; on 2026-10-30 BOSS removed the earlier list. If the CLI refuses to run in the repository, record the review as NOT_RUN with the CLI's reason. This skill grants no other external effect.
 
 ## Before running
 
