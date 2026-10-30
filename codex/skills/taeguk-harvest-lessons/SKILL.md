@@ -17,7 +17,7 @@ The Taeguk repository (`sensibile/taeguk`). The skill is in the installed bundle
 
 ## Sources
 
-Read only records of this repository (this checkout, its worktrees and `sensibile/taeguk`), never another repository's sessions; another project's lessons belong to that project's session. On 2026-10-30 BOSS confirmed that these records are BOSS's own work and any agent tool on this machine may read them, whichever tool wrote them.
+Read only records of this repository (this checkout, its worktrees and its own GitHub remote, which is `sensibile/taeguk` in Taeguk), never another repository's records; another project's lessons belong to that project's session. On 2026-10-30 BOSS confirmed that these records are BOSS's own work and any agent tool on this machine may read them, whichever tool wrote them.
 
 - Session transcripts whose working directory is this repository or one of its worktrees. Claude Code keeps them under `~/.claude/projects/<cwd with every non-alphanumeric character replaced by ->/` (each worktree has its own directory; derive each directory name from a path listed by `git worktree list` and confirm the `cwd` inside the session, since a name search also matches other repositories' worktrees); Codex keeps them under `~/.codex/sessions/`, identified by the `cwd` in each session's first record. Take the session the task ran in; for a run across sessions, the ones BOSS names or that the task's PR links. Find the relevant turns with a local search (`grep` for the PR number, file or correction) rather than reading whole files.
 - BOSS corrections, in a session or recorded in a PR or review.
