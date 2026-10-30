@@ -8,6 +8,10 @@ Taeguk 저장소의 [기존 규칙 목록](https://github.com/sensibile/taeguk/b
 
 새 개정안은 Taeguk 저장소에서 작성하며 현재 ID·버전, 문제 사례, 변경 전후 판정, 정상·실패 사례 검사, 비용·권한 영향, 전환·되돌림 조건을 기록한다. BOSS 확인 전에는 현행 기준을 유지한다. 스킬: taeguk-propose-rule-change.
 
+## DEV-003 후보
+
+작업 기록에서 교훈을 모으고, 반복된 실수를 구조·기계 검사·테스트로 막는 규칙 후보다. [학습 수집·강제 개정안](lesson-enforcement.md)이 BOSS 확인을 기다린다. 스킬: taeguk-harvest-lessons, taeguk-encode-mistake-class.
+
 ## VER-006 후보
 
 커버리지를 빈 곳을 찾는 측정 도구로만 쓰고 목표·수용 기준으로 쓰지 않는 규칙 후보다. [커버리지 측정 도구 개정안](coverage-as-instrument.md)이 BOSS 확인을 기다린다.
