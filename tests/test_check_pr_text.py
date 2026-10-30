@@ -65,7 +65,7 @@ class CheckPrTextTest(unittest.TestCase):
         self.assertNotIn('secret-token', json.dumps(report))
 
     def test_hangul_next_to_the_name_does_not_hide_a_mention(self):
-        for text in ('@codex에게 넘기지 않는다\n', '리뷰어@codex 호출\n', '`@codex`로 부르지 않는다\n', '참고.@codex\n'):
+        for text in ('@codex에게 넘기지 않는다\n', '리뷰어@codex 호출\n', '`@codex`로 부르지 않는다\n', '참고.@codex\n', '\u212a@codex review\n', '\u017f@codex review\n'):
             self.assertEqual(run(text)[0], 1, text)
 
     def test_an_email_is_not_a_mention(self):

@@ -13,7 +13,8 @@ import re
 import sys
 
 # An email such as ops@codex.example is skipped; @codex-bot or @codexreview fails on purpose.
-MENTION = re.compile(r'(?<![A-Za-z0-9_])@codex', re.IGNORECASE)
+# re.ASCII keeps IGNORECASE from folding the Kelvin sign or long s into the class.
+MENTION = re.compile(r'(?<![A-Za-z0-9_])@codex', re.IGNORECASE | re.ASCII)
 REVIEW_REQUEST = '@codex review'
 FIX = 'write "Codex 리뷰 요청" or "Codex review" without the @ instead'
 
