@@ -275,4 +275,52 @@ mod tests {
         h.join().unwrap();
         assert!(request("http://127.0.0.1:1", "bad\nsecret", "/api/work-items", None).is_err());
     }
+    #[test]
+    fn run_rejects_non_uuid_work_ids_before_any_request() {
+        // docs/workflow-state-usage.md: get, history, command and verify-evidence take WORK_UUID.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let dir = env::temp_dir().join(format!(
+            "taeguk-state-id-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let command = dir.join("command.json");
+        std::fs::write(&command, b"{}").unwrap();
+        let command = command.to_str().unwrap().to_string();
+        let root = dir.to_str().unwrap().to_string();
+        // SAFETY: tests in this binary read the environment only through std, which serializes
+        // access with set_var; no test reads it through libc getenv.
+        unsafe {
+            env::set_var(
+                "TAEGUK_API_URL",
+                format!("http://{}", listener.local_addr().unwrap()),
+            );
+            env::set_var("TAEGUK_API_TOKEN", TOKEN);
+        }
+        for id in [
+            "../x",
+            "11111111-1111-4111-8111-11111111111/",
+            "11111111-1111-4111-8111-111111111111?after_revision=0",
+        ] {
+            for args in [
+                vec!["get", id],
+                vec!["history", id, "0"],
+                vec!["command", id, &command],
+                vec!["verify-evidence", id, &root],
+            ] {
+                let args: Vec<String> = args.into_iter().map(String::from).collect();
+                assert!(run(&args).is_err(), "{args:?}");
+                assert!(
+                    matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock),
+                    "{args:?} reached the state API"
+                );
+            }
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

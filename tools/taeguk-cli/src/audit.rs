@@ -277,4 +277,50 @@ mod tests {
             }
         });
     }
+    #[test]
+    fn ids_outside_the_documented_characters_are_rejected() {
+        // docs/evidence-review.md: IDs are ASCII letters, digits, underscore and hyphen.
+        fixture(|doc, root| {
+            assert!(result(doc.clone(), root).is_ok());
+            let question = |id: &str| {
+                let mut variant = doc.clone();
+                variant["open_questions"] = json!([{"id":id,"impact":"changes meaning",
+                    "investigation":"read the plan","next_action":"ask user"}]);
+                variant
+            };
+            // A second check that no requirement links, so only the check ID itself is validated.
+            let check = |id: &str| {
+                let mut variant = doc.clone();
+                let mut extra = doc["checks"][0].clone();
+                extra["id"] = json!(id);
+                variant["checks"].as_array_mut().unwrap().push(extra);
+                variant
+            };
+            let requirement = |id: &str| {
+                let mut variant = doc.clone();
+                variant["requirements"][0]["id"] = json!(id);
+                variant
+            };
+            assert!(result(check("C_1-a"), root).is_ok());
+            assert!(result(requirement("R_1-a"), root).is_ok());
+            assert!(result(question("Q_1-a"), root).is_ok());
+            for id in ["C 1", "C1.", "C/1", "\u{c7}1", "C1\u{200b}"] {
+                assert!(result(check(id), root).is_err(), "check {id:?}");
+                assert!(result(requirement(id), root).is_err(), "requirement {id:?}");
+                assert!(result(question(id), root).is_err(), "question {id:?}");
+            }
+        });
+    }
+    #[test]
+    fn unsupported_schema_versions_are_rejected() {
+        // docs/evidence-review.md: schema_version is currently 1.
+        fixture(|doc, root| {
+            assert!(result(doc.clone(), root).is_ok());
+            for version in [0, 2] {
+                let mut variant = doc.clone();
+                variant["schema_version"] = json!(version);
+                assert!(result(variant, root).is_err(), "{version}");
+            }
+        });
+    }
 }
