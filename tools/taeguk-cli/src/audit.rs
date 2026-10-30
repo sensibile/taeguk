@@ -277,4 +277,28 @@ mod tests {
             }
         });
     }
+    #[test]
+    fn ids_outside_the_documented_characters_are_rejected() {
+        // docs/evidence-review.md: IDs are ASCII letters, digits, underscore and hyphen.
+        fixture(|doc, root| {
+            assert!(result(doc.clone(), root).is_ok());
+            let question = |id: &str| {
+                let mut variant = doc.clone();
+                variant["open_questions"] = json!([{"id":id,"impact":"changes meaning",
+                    "investigation":"read the plan","next_action":"ask user"}]);
+                variant
+            };
+            assert!(result(question("Q_1-a"), root).is_ok());
+            for id in ["C 1", "C1.", "C/1", "\u{c7}1", "C1\u{200b}"] {
+                let mut check = doc.clone();
+                check["checks"][0]["id"] = json!(id);
+                check["requirements"][0]["check_ids"] = json!([id]);
+                assert!(result(check, root).is_err(), "check {id:?}");
+                let mut requirement = doc.clone();
+                requirement["requirements"][0]["id"] = json!(id);
+                assert!(result(requirement, root).is_err(), "requirement {id:?}");
+                assert!(result(question(id), root).is_err(), "question {id:?}");
+            }
+        });
+    }
 }
