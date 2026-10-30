@@ -293,7 +293,8 @@ mod tests {
         std::fs::write(&command, b"{}").unwrap();
         let command = command.to_str().unwrap().to_string();
         let root = dir.to_str().unwrap().to_string();
-        // SAFETY: no other test in this crate reads or writes these variables.
+        // SAFETY: tests in this binary read the environment only through std, which serializes
+        // access with set_var; no test reads it through libc getenv.
         unsafe {
             env::set_var(
                 "TAEGUK_API_URL",

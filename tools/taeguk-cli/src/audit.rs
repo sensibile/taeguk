@@ -288,15 +288,25 @@ mod tests {
                     "investigation":"read the plan","next_action":"ask user"}]);
                 variant
             };
+            // A second check that no requirement links, so only the check ID itself is validated.
+            let check = |id: &str| {
+                let mut variant = doc.clone();
+                let mut extra = doc["checks"][0].clone();
+                extra["id"] = json!(id);
+                variant["checks"].as_array_mut().unwrap().push(extra);
+                variant
+            };
+            let requirement = |id: &str| {
+                let mut variant = doc.clone();
+                variant["requirements"][0]["id"] = json!(id);
+                variant
+            };
+            assert!(result(check("C_1-a"), root).is_ok());
+            assert!(result(requirement("R_1-a"), root).is_ok());
             assert!(result(question("Q_1-a"), root).is_ok());
             for id in ["C 1", "C1.", "C/1", "\u{c7}1", "C1\u{200b}"] {
-                let mut check = doc.clone();
-                check["checks"][0]["id"] = json!(id);
-                check["requirements"][0]["check_ids"] = json!([id]);
-                assert!(result(check, root).is_err(), "check {id:?}");
-                let mut requirement = doc.clone();
-                requirement["requirements"][0]["id"] = json!(id);
-                assert!(result(requirement, root).is_err(), "requirement {id:?}");
+                assert!(result(check(id), root).is_err(), "check {id:?}");
+                assert!(result(requirement(id), root).is_err(), "requirement {id:?}");
                 assert!(result(question(id), root).is_err(), "question {id:?}");
             }
         });
