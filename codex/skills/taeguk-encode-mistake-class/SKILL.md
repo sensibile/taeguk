@@ -17,8 +17,8 @@ The Taeguk repository (`sensibile/taeguk`), whose ledger is `docs/enforcement-le
 
 ## Find the classes
 
-1. Read the inputs: `## 원장 후보` rows of `.taeguk/lessons/` reports, the BOSS correction at hand, and the ledger. Without a given class, scan recent commits, reverts, PR review adjudications, worker reports and agent memory files of this repository.
-2. Record each occurrence with its date and evidence (commit, PR, review thread, report path or the quoted correction). Memory text is a claim; confirm it from the repository or GitHub before counting it.
+1. Read the inputs: the ledger, `## 원장 후보` rows of `.taeguk/lessons/` reports, the BOSS correction given in the current request, and tracked records of this repository (commits, reverts, PR review threads and adjudications, local review records the PRs reference, worker reports). Never read session transcripts or agent memory: a lesson that exists only there enters through a `$taeguk-harvest-lessons` run in the tool that owns those records.
+2. Record each occurrence with its date and evidence: a commit, PR, review thread, worker report, harvest report row, or the BOSS correction as a dated one-line paraphrase. Evidence written into the ledger or a PR body comes only from these, so no private record leaves the tool that read it. A harvest row is LLM judgment; confirm the occurrence from a tracked record before counting it when one exists.
 3. Group occurrences into classes by the mistake, not the file. Report a class with one occurrence as observed once and propose a ledger row for it; a class with two or more is a candidate. Ledger rows change only in a PR for a class BOSS selected or a ledger update BOSS approved.
 4. A candidate already in the ledger at the document level that occurred again after its row was written is a repeat: propose a level higher than before, and report it as unenforced if BOSS keeps the document level.
 
