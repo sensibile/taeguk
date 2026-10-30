@@ -21,7 +21,8 @@ FIX = 'write "Codex 리뷰 요청" or "Codex review" without the @ instead'
 def findings(text, allow_review_request=False):
     if allow_review_request and text.strip() == REVIEW_REQUEST:
         return []
-    return [{'line': number, 'text': line.strip()}
+    # Only the line number: a drafted line can hold a token, and this output lands in agent logs.
+    return [{'line': number}
             for number, line in enumerate(text.split('\n'), 1) if MENTION.search(line)]
 
 
@@ -39,6 +40,8 @@ def main():
                         help=f'accept a file whose whole text is "{REVIEW_REQUEST}"; '
                              'pass it only when checking one review-request comment')
     args = parser.parse_args()
+    if args.allow_review_request and len(args.files) > 1:
+        parser.error('--allow-review-request checks one comment at a time')
     found, errors = [], []
     for name in args.files or ['-']:
         try:

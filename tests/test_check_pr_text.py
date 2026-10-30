@@ -50,6 +50,20 @@ class CheckPrTextTest(unittest.TestCase):
         self.assertEqual(run('@codex review\n')[0], 1)
         self.assertEqual(run('@codex review\n\n그리고 이것도 봐줘\n', '--allow-review-request')[0], 1)
 
+    def test_review_request_flag_takes_one_comment_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory)/name for name in ('a.md', 'b.md')]
+            for path in paths:
+                path.write_text('@codex review\n', encoding='utf-8')
+            result = subprocess.run([sys.executable, '-I', str(SCRIPT), '--allow-review-request', *map(str, paths)],
+                                    capture_output=True, text=True, encoding='utf-8')
+        self.assertEqual((result.returncode, result.stdout), (2, ''))
+
+    def test_findings_do_not_echo_the_line(self):
+        code, report = run('Authorization: Bearer secret-token @codex\n')
+        self.assertEqual((code, report['findings']), (1, [{'file': report['findings'][0]['file'], 'line': 1}]))
+        self.assertNotIn('secret-token', json.dumps(report))
+
     def test_hangul_next_to_the_name_does_not_hide_a_mention(self):
         for text in ('@codex에게 넘기지 않는다\n', '리뷰어@codex 호출\n', '`@codex`로 부르지 않는다\n', '참고.@codex\n'):
             self.assertEqual(run(text)[0], 1, text)
