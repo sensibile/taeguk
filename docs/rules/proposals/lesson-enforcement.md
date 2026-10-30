@@ -2,7 +2,7 @@
 
 상태: 2026-10-30 BOSS 확인으로 승인. 현행 본문은 [개발 작업 공간](../development.md#dev-004)의 DEV-004 1.0이며 승인 범위는 [승인 기록](../approvals.md#approval-2026-10-30-lessons)을 따른다. 이 문서는 개정 근거로 보존하며 실행 권한을 부여하지 않는다.
 
-작성: 2026-10-30. 근거: 같은 날 BOSS가 [pstack](https://github.com/cursor/plugins/tree/main/pstack)(MIT, Lauren Tan)의 강화 로직을 검토하라고 했다. 검토 결과 중 1번 학습 수집(`reflect`)과 2번 강제 수단 사다리(`correct`, encode-lessons-in-structure)를 "1·2번부터" 진행하라고 지시했다. 절차는 [`taeguk-harvest-lessons`](https://github.com/sensibile/taeguk/blob/main/codex/skills/taeguk-harvest-lessons/SKILL.md)와 [`taeguk-encode-mistake-class`](https://github.com/sensibile/taeguk/blob/main/codex/skills/taeguk-encode-mistake-class/SKILL.md) 스킬로 두었다. 두 스킬은 이 개정안의 기준을 제안 기본값으로만 쓴다. 실수 유형과 강제 수단의 대응은 [실수 유형 원장](https://github.com/sensibile/taeguk/blob/main/docs/enforcement-ledger.md)에 둔다.
+작성: 2026-10-30. 근거: 같은 날 BOSS가 [pstack](https://github.com/cursor/plugins/tree/main/pstack)(MIT, Lauren Tan)의 강화 로직을 검토하라고 했다. 검토 결과 중 1번 학습 수집(`reflect`)과 2번 강제 수단 사다리(`correct`, encode-lessons-in-structure)를 "1·2번부터" 진행하라고 지시했다. 절차는 [`taeguk-harvest-lessons`](https://github.com/sensibile/taeguk/blob/main/codex/skills/taeguk-harvest-lessons/SKILL.md)와 [`taeguk-encode-mistake-class`](https://github.com/sensibile/taeguk/blob/main/codex/skills/taeguk-encode-mistake-class/SKILL.md) 스킬로 두었다. 작성 당시 두 스킬은 이 개정안의 기준을 제안 기본값으로만 썼다. 승인 뒤 현행 기준은 DEV-004 1.0이며, 미정인 것은 확인 사항 4·5뿐이다. 실수 유형과 강제 수단의 대응은 [실수 유형 원장](https://github.com/sensibile/taeguk/blob/main/docs/enforcement-ledger.md)에 둔다.
 
 ## 현행 규칙과 공백
 
