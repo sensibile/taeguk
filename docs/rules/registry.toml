@@ -109,6 +109,15 @@ enforcement = "guidance"
 approval = "approvals.md#approval-2026-10-28"
 
 [[rules]]
+id = "VER-007"
+version = "1.0"
+status = "approved"
+scope = "Taeguk and Taeguk pilot projects: hoplites, acropolis, thesmothetai, archon"
+document = "verification.md#ver-007"
+enforcement = "guidance"
+approval = "approvals.md#approval-2026-10-30"
+
+[[rules]]
 id = "DEV-003"
 version = "1.0"
 status = "approved"

@@ -25,6 +25,7 @@ The Taeguk repository (`sensibile/taeguk`), and an installed project only when t
 - The expected value of a proposed test comes from a requirement, contract, rule or BOSS answer, never from what the code currently returns. A gap whose expected behavior has no such source is a question, not a test.
 - A proposed test must name the fault that would make it fail. A test that would still pass with the behavior broken does not close the gap.
 - When reading the code suggests the current behavior contradicts its requirement, report a suspected defect. Do not propose a test that pins the current behavior.
+- Choose test doubles per VER-007: a hand-written fake or stub first, and no mock that replaces an internal function, module, global or static call because the code has no injection point. Such a gap needs a product seam, which this worker cannot add; report it as a restructuring signal instead of a test.
 
 ## Measurement
 
