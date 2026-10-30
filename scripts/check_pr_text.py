@@ -2,18 +2,18 @@
 """Check PR titles, bodies and comments for a Codex mention before they are posted.
 
 A mention anywhere in the text, code spans included, makes the GitHub Codex integration start a
-cloud task instead of a review (sensibile/taeguk#13 to #16). GitHub matches mentions with ASCII
-rules, so Hangul right before or after the name does not hide one. This checks text only; it cannot
-see what is posted without it. A missing, unreadable or empty input is UNKNOWN, not PASS.
+cloud task instead of a review (sensibile/taeguk#13 to #16). What starts the task is not known
+beyond that, so anything after the name (Hangul, a hyphen, more letters) still fails; only an ASCII
+name character before it (an email address) is skipped. This checks text only; it cannot see what
+is posted without it. A missing, unreadable or empty input is UNKNOWN, not PASS.
 """
 import argparse
 import json
 import re
 import sys
 
-# Not preceded by an ASCII name character (an email such as ops@codex.example is not a mention),
-# not followed by one (@codex-bot or @codexreview is another account).
-MENTION = re.compile(r'(?<![A-Za-z0-9_])@codex(?![A-Za-z0-9_-])', re.IGNORECASE)
+# An email such as ops@codex.example is skipped; @codex-bot or @codexreview fails on purpose.
+MENTION = re.compile(r'(?<![A-Za-z0-9_])@codex', re.IGNORECASE)
 REVIEW_REQUEST = '@codex review'
 FIX = 'write "Codex 리뷰 요청" or "Codex review" without the @ instead'
 

@@ -54,9 +54,12 @@ class CheckPrTextTest(unittest.TestCase):
         for text in ('@codex에게 넘기지 않는다\n', '리뷰어@codex 호출\n', '`@codex`로 부르지 않는다\n', '참고.@codex\n'):
             self.assertEqual(run(text)[0], 1, text)
 
-    def test_emails_and_other_accounts_are_not_mentions(self):
-        for text in ('ops@codex.example\n', '@codex-bot\n', '@codexreview\n', '@codex_x\n'):
-            self.assertEqual(run(text)[:1], (0,), text)
+    def test_an_email_is_not_a_mention(self):
+        self.assertEqual(run('연락처 ops@codex.example\n')[0], 0)
+
+    def test_anything_after_the_name_still_fails(self):
+        for text in ('@codex-bot\n', '`@codex-review`\n', '@codex-리뷰\n', '@codexreview\n', '@codex_x\n'):
+            self.assertEqual(run(text)[0], 1, text)
 
     def test_each_finding_names_its_file_and_line_across_files_and_crlf(self):
         with tempfile.TemporaryDirectory() as directory:
