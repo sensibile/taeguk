@@ -301,4 +301,16 @@ mod tests {
             }
         });
     }
+    #[test]
+    fn unsupported_schema_versions_are_rejected() {
+        // docs/evidence-review.md: schema_version is currently 1.
+        fixture(|doc, root| {
+            assert!(result(doc.clone(), root).is_ok());
+            for version in [0, 2] {
+                let mut variant = doc.clone();
+                variant["schema_version"] = json!(version);
+                assert!(result(variant, root).is_err(), "{version}");
+            }
+        });
+    }
 }
