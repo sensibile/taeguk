@@ -83,7 +83,7 @@ CI는 push와 PR 때만 돌아서 변경이 없는 날의 `main`은 검증을 �
 2026-10-30 BOSS가 pstack 강화 로직 검토 결과 중 학습 수집과 강제 수단 사다리를 먼저 진행하라고 했다. 기준은 [학습 수집·강제 개정안](rules/proposals/lesson-enforcement.md)의 제안 기본값이고, BOSS 확인 전에는 현행 규칙이 아니다.
 
 - 학습 수집 절차는 [`taeguk-harvest-lessons`](../codex/skills/taeguk-harvest-lessons/SKILL.md) 스킬이다. 끝난 작업의 세션 기록, PR, 리뷰 처리, 워커 보고를 세 관점으로 따로 읽고, 걸러 남은 교훈을 행 단위 후보로 보고한다. 보고는 main checkout의 `.taeguk/lessons/`(Git 무시 대상)에 남긴다. 파일 수정과 PR은 하지 않는다. 이 저장소의 기록만 읽는다.
-- 실수 유형 처리 절차는 [`taeguk-encode-mistake-class`](../codex/skills/taeguk-encode-mistake-class/SKILL.md) 스킬이다. 증거와 함께 두 번 이상 관측된 실수를 구조, 기계 검사, 동작 테스트, 문서 순으로 가능한 가장 높은 수준에서 막고, 실제 과거 실수에서 실패하는지 실행으로 보인다. 개정안 승인 전에는 BOSS가 고른 유형만 처리한다. 기존 테스트 경로에 넣은 검사는 머지되면 돌기 시작하므로, BOSS가 유형을 고르면 그 연결까지 포함한다. Python `tests/`는 pre-push와 CI에서, Rust·Elixir 테스트는 CI에서 돈다. 새 hook 단계, 새 CI job, 예외, 규칙 등록은 BOSS 확인 사항이다.
+- 실수 유형 처리 절차는 [`taeguk-encode-mistake-class`](../codex/skills/taeguk-encode-mistake-class/SKILL.md) 스킬이다. 증거와 함께 두 번 이상 관측된 실수를 구조, 기계 검사, 동작 테스트, 문서 순으로 가능한 가장 높은 수준에서 막고, 실제 과거 실수에서 실패하는지 실행으로 보인다. 개정안 승인 전에는 BOSS가 고른 유형만 처리한다. 기존 테스트 경로에 넣은 검사는 머지되면 돌기 시작한다. Python `tests/`는 pre-push와 CI에서, Rust·Elixir 테스트는 CI에서 돈다. 그래서 유형을 보고할 때 연결 승인도 함께 묻고, BOSS가 명시적으로 승인한 경우에만 기존 테스트 경로에 넣는다. 승인이 없으면 테스트 경로 밖에 두고 미연결로 보고한다. 유형 선택만으로 연결 승인을 겸할지는 개정안의 확인 사항이다. 새 hook 단계, 새 CI job, 예외, 규칙 등록은 BOSS 확인 사항이다.
 - 유형과 강제 수단의 대응은 [실수 유형 원장](enforcement-ledger.md)에 둔다.
 
 ## 적용 프로젝트의 정리·테스트 보강
