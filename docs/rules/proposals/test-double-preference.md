@@ -20,7 +20,7 @@ BOSS가 관측한 일반 사례:
 이 저장소의 관측(2026-10-30, `origin/main` ce79ce9). `unittest.mock`을 쓰는 파일은 `tests/test_install.py`, `tests/test_taeguk_install.py` 두 개다. `patch` 호출은 모두 28곳이다.
 
 - `tests/test_install.py` 5곳(`:22`, `:77`, `:85`, `:121`, `:145`).
-- `tests/test_taeguk_install.py` 23곳. 같은 모듈의 내부 함수 대체가 17곳(`source_version`, `roles`, `cargo_target_dir`, `published_commit`, `cli_bundle`, `skill_files`, `engine.payload`, `engine.is_link`)이다. `os` 모듈 교체 1곳(`:386`), `subprocess.run` 교체 3곳(`:195`, `:253`, `:262`), 환경 변수 `patch.dict` 2곳이 나머지다.
+- `tests/test_taeguk_install.py` 23곳. 같은 모듈의 내부 함수 대체가 16곳(`source_version`, `roles`, `cargo_target_dir`, `published_commit`, `cli_bundle`, `skill_files`, `engine.payload`, `engine.is_link`)이다. `os` 모듈 교체 1곳(`:386`), `subprocess.run` 교체 3곳(`:195`, `:253`, `:262`), 환경 변수 `patch.dict` 3곳이 나머지다.
 
 대표 사례:
 
@@ -46,7 +46,7 @@ ID: 현행 VER-003~005, archive 후보 VER-001·002, 미승인 후보 VER-006(�
 >
 > 결과나 상태가 목적이면 결과를 확인한다. 호출 횟수·순서·인수 검증은 외부 협력 자체가 계약일 때만 쓴다.
 >
-> 이 기준은 언어와 관계없이 같다. 기존 테스트를 이 규칙만을 이유로 한 번에 재작성하지 않는다.
+> 적용 대상은 Taeguk 자체 작업과 시험 프로젝트(hoplites, acropolis, thesmothetai, archon)에서 시작 기준 이후 새로 시작하는 작업이다. Taeguk의 시작 기준은 승인 시점이다. 시험 프로젝트의 시작 기준은 승인된 규칙 사본이 그 프로젝트 `main`에 머지된 시점이다. 이 기준은 언어와 관계없이 같다. 기존 테스트를 이 규칙만을 이유로 한 번에 재작성하지 않는다.
 >
 > 증거: 대역별 종류, 대체한 경계, 쓴 이유. mock 라이브러리를 썼다면 직접 만들지 않은 이유. 구조 변경 신호로 분류한 위치와 처리(구조 변경 또는 후속 기록).
 
@@ -71,7 +71,7 @@ ID: 현행 VER-003~005, archive 후보 VER-001·002, 미승인 후보 VER-006(�
 ## 비용·권한 영향
 
 - 새 테스트에서 구조 변경이 필요해지면 작업 범위가 커질 수 있다. 범위를 넘으면 후속 기록으로 미뤄서 현재 작업을 막지 않는다.
-- fake를 직접 관리하는 비용이 생긴다. 실제 구현과 fake에 같은 계약 검사를 돌려 어긋남을 잡는다.
+- fake를 직접 관리하는 비용이 생긴다. 프로젝트 소유·상태 있는 구성 요소의 fake는 실제 구현과 같은 계약 검사를 돌려 어긋남을 잡는다. 외부 대상 fake는 적힌 계약과 별도 통합 확인으로 잡는다.
 - 데일리 정리의 자동 머지 범위가 넓어진다. 현행 정리 정의(`taeguk-daily-cleanup` 스킬의 Cleanup versus restructuring 절)는 호출자 없는 코드, 모듈 안 중복, 낡은 주석·이름·참조, 남은 디버그 코드, 깨진 링크로 닫혀 있다. 테스트 대역 교체는 여기에 없으므로, 결정 항목 3은 정리 정의에 새 항목을 더하는 실행 권한 변경이다. 이 개정의 승인이 그 확인을 겸한다. 범위 검사(`check_worker_scope.py`)는 `tests/` 경로를 허용하므로 기계 검사는 바꾸지 않는다.
 - 그 밖의 실행 권한은 바뀌지 않는다. 제품 코드에 주입 지점을 만드는 변경은 지금처럼 구조 개선 후보로 보고하고 BOSS 승인 뒤 시작한다.
 
