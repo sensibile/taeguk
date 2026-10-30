@@ -110,12 +110,12 @@ approval = "approvals.md#approval-2026-10-28"
 
 [[rules]]
 id = "VER-007"
-version = "1.0"
+version = "1.1"
 status = "approved"
 scope = "Taeguk and Taeguk pilot projects: hoplites, acropolis, thesmothetai, archon"
 document = "verification.md#ver-007"
 enforcement = "guidance"
-approval = "approvals.md#approval-2026-10-30"
+approval = "approvals.md#approval-2026-10-30-ver007-general"
 
 [[rules]]
 id = "DEV-003"
