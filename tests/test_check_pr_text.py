@@ -13,15 +13,19 @@ PR16_LINE = '- `scripts/codex_review_gate.py`: 시간 기준 규칙(10분 간격
 CLEAN = '## 로컬 리뷰\n\nCodex 리뷰 요청 없이 push로 자동 리뷰가 돈다. 연락처 ops@codex.example 은 멘션이 아니다.\n'
 
 
+def invoke(*args, stdin=None):
+    result = subprocess.run([sys.executable, '-I', str(SCRIPT), *args], input=stdin,
+                            capture_output=True, text=True, encoding='utf-8')
+    return result.returncode, json.loads(result.stdout)
+
+
 def run(text, *args):
     with tempfile.NamedTemporaryFile('w', suffix='.md', encoding='utf-8', delete=False) as handle:
         handle.write(text)
     try:
-        result = subprocess.run([sys.executable, '-I', str(SCRIPT), *args, handle.name],
-                                capture_output=True, text=True, encoding='utf-8')
+        return invoke(*args, handle.name)
     finally:
         Path(handle.name).unlink()
-    return result.returncode, json.loads(result.stdout)
 
 
 class CheckPrTextTest(unittest.TestCase):
@@ -45,6 +49,41 @@ class CheckPrTextTest(unittest.TestCase):
         self.assertEqual(run('@codex review\n', '--allow-review-request')[0], 0)
         self.assertEqual(run('@codex review\n')[0], 1)
         self.assertEqual(run('@codex review\n\n그리고 이것도 봐줘\n', '--allow-review-request')[0], 1)
+
+    def test_hangul_next_to_the_name_does_not_hide_a_mention(self):
+        for text in ('@codex에게 넘기지 않는다\n', '리뷰어@codex 호출\n', '`@codex`로 부르지 않는다\n', '참고.@codex\n'):
+            self.assertEqual(run(text)[0], 1, text)
+
+    def test_emails_and_other_accounts_are_not_mentions(self):
+        for text in ('ops@codex.example\n', '@codex-bot\n', '@codexreview\n', '@codex_x\n'):
+            self.assertEqual(run(text)[:1], (0,), text)
+
+    def test_each_finding_names_its_file_and_line_across_files_and_crlf(self):
+        with tempfile.TemporaryDirectory() as directory:
+            clean, dirty = Path(directory)/'title.txt', Path(directory)/'body.md'
+            clean.write_text('제목\n', encoding='utf-8')
+            dirty.write_bytes('요약\r\n\r\n(@codex)\r\n'.encode())
+            code, report = invoke(str(clean), str(dirty))
+        self.assertEqual(code, 1)
+        self.assertEqual([(item['file'], item['line']) for item in report['findings']], [(str(dirty), 3)])
+
+    def test_stdin_is_checked(self):
+        self.assertEqual(invoke(stdin='@codex\n')[0], 1)
+        self.assertEqual(invoke('-', stdin='본문\n')[1]['status'], 'PASS')
+
+    def test_missing_or_empty_input_is_unknown_not_pass(self):
+        code, report = invoke('/nonexistent/body.md')
+        self.assertEqual((code, report['status'], report['errors'][0]['file']), (2, 'UNKNOWN', '/nonexistent/body.md'))
+        self.assertEqual(invoke(stdin='')[:1], (2,))
+        self.assertEqual(run('  \n')[1]['status'], 'UNKNOWN')
+
+    def test_a_mention_outweighs_an_unreadable_file(self):
+        with tempfile.NamedTemporaryFile('w', suffix='.md', encoding='utf-8', delete=False) as handle:
+            handle.write('@codex\n')
+        try:
+            self.assertEqual(invoke(handle.name, '/nonexistent/body.md')[1]['status'], 'FAIL')
+        finally:
+            Path(handle.name).unlink()
 
 
 if __name__ == '__main__':
