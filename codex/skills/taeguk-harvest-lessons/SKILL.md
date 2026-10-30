@@ -1,11 +1,11 @@
 ---
 name: taeguk-harvest-lessons
-description: "Mine one finished task's own records (this repository's session transcripts, PR bodies, review adjudications, worker reports and BOSS corrections) for durable lessons through three separate lenses, filter them, and route each surviving lesson to a skill edit, a description fix, the mistake-class ledger, a rule proposal or a self-improvement cycle; report to BOSS and edit nothing. Use when a task taught something, after a long or corrected run, or when BOSS says reflect or harvest lessons."
+description: "Mine one finished task's agent process (not product outcomes, which belong to taeguk-learn-from-outcome): read its own records (this repository's session transcripts, PR bodies, review adjudications, worker reports and BOSS corrections) for durable lessons through three separate lenses, filter them, and route each surviving lesson to a skill edit, a description fix, the mistake-class ledger, a rule proposal or a self-improvement cycle; report to BOSS and edit nothing. Use when a task taught something, after a long or corrected run, or when BOSS says reflect or harvest lessons."
 ---
 
 # taeguk-harvest-lessons
 
-`$taeguk-self-improve` starts from a concrete retrospective signal, but nothing collects those signals. Lessons stay in one session's context, in a PR body nobody rereads, or in one agent's private memory that other agents never see. This run turns a finished task's records into routed, evidenced candidates. It changes no file.
+`$taeguk-self-improve` starts from a concrete retrospective signal. `$taeguk-learn-from-outcome` produces such signals from delivered product outcomes; nothing collects them from how the agents worked: their mistakes, BOSS corrections and review adjudications. Those lessons stay in one session's context, in a PR body nobody rereads, or in one agent's private memory that other agents never see. This run turns a finished task's records into routed, evidenced candidates. It changes no file.
 
 ## Authority
 
@@ -13,13 +13,13 @@ BOSS asked for this intake on 2026-10-30, adapted from the pstack `reflect` skil
 
 ## Where it runs
 
-The Taeguk repository (`sensibile/taeguk`). The skill is in the installed bundle, but an installed project runs it only after that project records BOSS approval in its own operations document.
+The Taeguk repository (`sensibile/taeguk`). The skill is in the installed bundle, but an installed project runs it only after that project records BOSS approval in its own operations document; there, "this repository" below means that project's checkout, worktrees and remote, and its own PR flow replaces Taeguk's.
 
 ## Sources
 
 Read only records of this repository (this checkout, its worktrees and `sensibile/taeguk`), never another repository's sessions; another project's lessons belong to that project's session.
 
-- Session transcripts whose working directory is this repository or one of its worktrees: Claude Code under `~/.claude/projects/<cwd with / replaced by ->/` (each worktree has its own directory), Codex under `~/.codex/sessions/` filtered by the `cwd` in each session's first record. Take the session the task ran in; for a run across sessions, the ones BOSS names or that the task's PR links.
+- Session transcripts whose working directory is this repository or one of its worktrees: Claude Code under `~/.claude/projects/<cwd with every non-alphanumeric character replaced by ->/` (each worktree has its own directory; find them with `ls ~/.claude/projects | grep <repository name>`), Codex under `~/.codex/sessions/` filtered by the `cwd` in each session's first record. Take the session the task ran in; for a run across sessions, the ones BOSS names or that the task's PR links.
 - The task's PR body, review threads and local review records (target SHAs, findings, adjudications).
 - Worker reports under `.taeguk/` for the window, when the task was a worker run.
 - Agent memory files for this repository, read as claims to check, not as evidence.
