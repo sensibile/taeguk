@@ -12,6 +12,10 @@ Taeguk 저장소의 [기존 규칙 목록](https://github.com/sensibile/taeguk/b
 
 커버리지를 빈 곳을 찾는 측정 도구로만 쓰고 목표·수용 기준으로 쓰지 않는 규칙 후보다. [커버리지 측정 도구 개정안](coverage-as-instrument.md)이 BOSS 확인을 기다린다.
 
+## VER-007 후보
+
+테스트 대역이 필요하면 직접 만든 fake 같은 단순한 대역을 먼저 쓰고, 구조 변경이 필요한 곳을 mock으로 덮지 않는 규칙 후보다. [테스트 대역 선택 개정안](test-double-preference.md)이 BOSS 확인을 기다린다.
+
 ## DEV-003
 
 2026-10-29 승인되어 DEV-003 1.0으로 현행 규칙에 반영했다. [작업 전용 워크트리 개정안](worktree-first.md)은 개정 근거로 보존한다.
