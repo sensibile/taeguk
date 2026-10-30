@@ -1,6 +1,6 @@
 # 실수 유형 원장
 
-에이전트가 이 저장소에서 반복한 실수 유형과, 그 실수를 지금 무엇이 막고 있는지를 짝지어 둔다. 갱신 절차는 [`taeguk-encode-mistake-class`](../codex/skills/taeguk-encode-mistake-class/SKILL.md) 스킬, 원장에 올릴 후보 수집은 [`taeguk-harvest-lessons`](../codex/skills/taeguk-harvest-lessons/SKILL.md) 스킬이 맡는다. 이 원장의 운영 기준(두 번 발생, 강제 수단 순서, 반복 시 상향)은 [학습 수집·강제 개정안](rules/proposals/lesson-enforcement.md)의 제안 기본값이다. BOSS 확인 전에는 현행 규칙이 아니다.
+에이전트가 이 저장소에서 반복한 실수 유형과, 그 실수를 지금 무엇이 막고 있는지를 짝지어 둔다. 갱신 절차는 [`taeguk-encode-mistake-class`](../codex/skills/taeguk-encode-mistake-class/SKILL.md) 스킬, 원장에 올릴 후보 수집은 [`taeguk-harvest-lessons`](../codex/skills/taeguk-harvest-lessons/SKILL.md) 스킬이 맡는다. 이 원장의 운영 기준(두 번 발생, 강제 수단 순서, 반복 시 상향)은 [DEV-004](rules/development.md#dev-004) 1.0이다(2026-10-30 승인).
 
 ## 읽는 법
 

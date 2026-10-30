@@ -118,6 +118,15 @@ enforcement = "guidance"
 approval = "approvals.md#approval-2026-10-29-worktree"
 
 [[rules]]
+id = "DEV-004"
+version = "1.0"
+status = "approved"
+scope = "Taeguk and explicitly assigned workflows"
+document = "development.md#dev-004"
+enforcement = "guidance"
+approval = "approvals.md#approval-2026-10-30-lessons"
+
+[[rules]]
 id = "GOV-005"
 version = "0.1"
 status = "proposed"

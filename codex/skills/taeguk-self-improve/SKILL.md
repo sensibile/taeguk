@@ -5,7 +5,7 @@ description: "Carry an observed Taeguk workflow problem through a bounded repair
 
 # taeguk-self-improve
 
-Use a concrete retrospective signal, not a speculative list of improvements. Separate product defects from Taeguk defects and select one Taeguk problem with raw evidence and a reproducible baseline. For a signal taken from a `$taeguk-harvest-lessons` report, use the report row and shared records as raw evidence, or reproduce the problem afresh; do not reopen the private records the row cites. Work only within the user's assigned scope. Rule meaning, thresholds, exceptions and execution authority changes remain proposals until BOSS confirms them. Do not alter an oracle to make a candidate pass.
+Use a concrete retrospective signal, not a speculative list of improvements. Separate product defects from Taeguk defects and select one Taeguk problem with raw evidence and a reproducible baseline. Work only within the user's assigned scope. Rule meaning, thresholds, exceptions and execution authority changes remain proposals until BOSS confirms them. Do not alter an oracle to make a candidate pass.
 
 Read [cycle contract](references/cycle.md) to register the cycle through `taeguk state create/command/get/history`. The API must be running with a dedicated project database and local token. It records evidence and gates progress; it does not call models, execute a patch, approve rules or establish the truth of a report. If unavailable, report that the persistent loop has not run rather than claiming completion from prose alone.
 

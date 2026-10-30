@@ -8,9 +8,9 @@ Taeguk 저장소의 [기존 규칙 목록](https://github.com/sensibile/taeguk/b
 
 새 개정안은 Taeguk 저장소에서 작성하며 현재 ID·버전, 문제 사례, 변경 전후 판정, 정상·실패 사례 검사, 비용·권한 영향, 전환·되돌림 조건을 기록한다. BOSS 확인 전에는 현행 기준을 유지한다. 스킬: taeguk-propose-rule-change.
 
-## DEV-004 후보
+## DEV-004
 
-작업 기록에서 교훈을 모으고, 반복된 실수를 구조·기계 검사·테스트로 막는 규칙 후보다. [학습 수집·강제 개정안](lesson-enforcement.md)이 BOSS 확인을 기다린다. 스킬: taeguk-harvest-lessons, taeguk-encode-mistake-class.
+2026-10-30 승인되어 DEV-004 1.0으로 현행 규칙에 반영했다. [학습 수집·강제 개정안](lesson-enforcement.md)은 개정 근거로 보존한다.
 
 ## VER-006 후보
 
