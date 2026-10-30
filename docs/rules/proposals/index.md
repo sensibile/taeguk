@@ -16,6 +16,10 @@ Taeguk 저장소의 [기존 규칙 목록](https://github.com/sensibile/taeguk/b
 
 커버리지를 빈 곳을 찾는 측정 도구로만 쓰고 목표·수용 기준으로 쓰지 않는 규칙 후보다. [커버리지 측정 도구 개정안](coverage-as-instrument.md)이 BOSS 확인을 기다린다.
 
+## VER-007 1.1 후보
+
+시험 프로젝트에서 태극 작업으로 지정되지 않은 일반 개발에도 VER-007을 적용하는 개정 후보다. 일반 개발은 예외만 기록한다. [테스트 대역 규칙의 일반 개발 확대 개정안](test-double-general-dev.md)이 BOSS 확인을 기다린다.
+
 ## VER-007
 
 2026-10-30 승인되어 VER-007 1.0으로 현행 규칙에 반영했다. [테스트 대역 선택 개정안](test-double-preference.md)은 개정 근거로 보존한다.
