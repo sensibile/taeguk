@@ -25,7 +25,11 @@ def published_source(tmp, names):
     source = Path(tmp).resolve()
     for name in names:
         shutil.copytree(SOURCE/name, source/name, ignore=shutil.ignore_patterns('__pycache__'))
-    env = {**install.git_env(), 'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@t', 'GIT_COMMITTER_NAME': 't', 'GIT_COMMITTER_EMAIL': 't@t'}
+    # Keep files the checkout ignores (local caches, secrets) out of the commit, as Git keeps them out of SOURCE.
+    shutil.copy2(SOURCE/'.gitignore', source/'.gitignore')
+    # The developer's global config (signing, hooks) must not decide whether the commit succeeds.
+    env = {**install.git_env(), 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1',
+           'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@t', 'GIT_COMMITTER_NAME': 't', 'GIT_COMMITTER_EMAIL': 't@t'}
     git = lambda *a: subprocess.run(['git', '-C', str(source), *a], check=True, capture_output=True, text=True, env=env).stdout.strip()
     git('init', '-q', '-b', 'main')
     git('add', '-A')
