@@ -20,6 +20,21 @@ spec.loader.exec_module(install)
 CLI_STUB = {install.CLI: (b'cli', 0o755)}
 
 
+def published_source(tmp, names):
+    """A clean Git checkout of the named source directories whose HEAD is also origin/main; returns it and HEAD."""
+    source = Path(tmp).resolve()
+    for name in names:
+        shutil.copytree(SOURCE/name, source/name, ignore=shutil.ignore_patterns('__pycache__'))
+    env = {**install.git_env(), 'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@t', 'GIT_COMMITTER_NAME': 't', 'GIT_COMMITTER_EMAIL': 't@t'}
+    git = lambda *a: subprocess.run(['git', '-C', str(source), *a], check=True, capture_output=True, text=True, env=env).stdout.strip()
+    git('init', '-q', '-b', 'main')
+    git('add', '-A')
+    git('commit', '-q', '-m', 'source')
+    head = git('rev-parse', 'HEAD')
+    git('update-ref', 'refs/remotes/origin/main', head)
+    return source, head
+
+
 class BundleTest(unittest.TestCase):
     def test_project_bundles_cover_every_role_and_skill(self):
         roles = sorted(p.stem for p in (SOURCE/'codex/agents').glob('taeguk_*.toml'))
@@ -248,14 +263,13 @@ class BundleTest(unittest.TestCase):
                 self.assertEqual(install.cli_bundle(source), {install.CLI: (b'cli', 0o755)})
 
     def test_failed_ignore_listing_stops_bundle(self):
-        real = subprocess.run
-        def failing(args, **kwargs):
-            if 'ls-files' in args:
-                return subprocess.CompletedProcess(args, 128, b'', b'fatal: index file corrupt')
-            return real(args, **kwargs)
-        with patch.object(install.subprocess, 'run', side_effect=failing):
-            with self.assertRaises(ValueError):
-                install.project_bundle('codex', SOURCE)
+        with tempfile.TemporaryDirectory() as tmp:
+            source, _ = published_source(tmp, ['codex'])
+            # Git still finds the repository but cannot list ignored files from a corrupt index.
+            (source/'.git/index').write_bytes(b'corrupt')
+            with self.assertRaises(ValueError) as caught:
+                install.project_bundle('codex', source)
+        self.assertIn('cannot list Git-ignored source files', str(caught.exception))
 
     def test_cargo_metadata_runs_from_the_crate(self):
         calls = []
