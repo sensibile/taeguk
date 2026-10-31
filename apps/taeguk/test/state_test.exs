@@ -208,6 +208,27 @@ defmodule Taeguk.StateTest do
     assert {:ok, _} = State.command(other["id"], start)
   end
 
+  test "update_run records the run handle readable through get" do
+    p = fixture()
+    resource = "db:" <> Ecto.UUID.generate()
+
+    assert {:ok, ack} =
+             State.command(
+               p["id"],
+               cmd(1, "start_run", %{"label" => "handle", "resources" => [resource]})
+             )
+
+    assert {:ok, _} =
+             State.command(
+               p["id"],
+               cmd(2, "update_run", %{"run_id" => ack["run_id"], "handle" => "session:42"})
+             )
+
+    assert {:ok, %{runs: [run]}} = State.get(p["id"])
+    assert run["id"] == ack["run_id"]
+    assert run["handle"] == "session:42"
+  end
+
   test "event insertion failure rolls back observation and revision" do
     p = fixture("tool")
 
