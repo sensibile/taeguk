@@ -93,8 +93,8 @@ class BundleTest(unittest.TestCase):
             for path in list(source.rglob('*.md')) + list(source.rglob('*.toml')):
                 path.write_bytes(path.read_bytes().replace(b'\n', b'\r\n'))
             crlf = {**install.project_bundle('codex', source), **install.rules_bundle(source)}
-        with patch.object(install, 'source_version', return_value='unknown'):
-            lf = {**install.project_bundle('codex', SOURCE), **install.rules_bundle(SOURCE)}
+        # The unpacked copy has no commit to pin rule links to; leave the checkout's links on main too.
+        lf = {**install.project_bundle('codex', SOURCE), **install.rules_bundle(SOURCE, link_pin='')}
         self.assertEqual(crlf, lf)
 
     def test_git_ignored_skill_directory_is_skipped_before_validation(self):
