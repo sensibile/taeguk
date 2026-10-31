@@ -20,6 +20,25 @@ spec.loader.exec_module(install)
 CLI_STUB = {install.CLI: (b'cli', 0o755)}
 
 
+def published_source(tmp, names):
+    """A clean Git checkout of the named source directories whose HEAD is also origin/main; returns it and HEAD."""
+    source = Path(tmp).resolve()
+    for name in names:
+        shutil.copytree(SOURCE/name, source/name, ignore=shutil.ignore_patterns('__pycache__'))
+    # Keep files the checkout ignores (local caches, secrets) out of the commit, as Git keeps them out of SOURCE.
+    shutil.copy2(SOURCE/'.gitignore', source/'.gitignore')
+    # The developer's global config (signing, hooks) must not decide whether the commit succeeds.
+    env = {**install.git_env(), 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1',
+           'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@t', 'GIT_COMMITTER_NAME': 't', 'GIT_COMMITTER_EMAIL': 't@t'}
+    git = lambda *a: subprocess.run(['git', '-C', str(source), *a], check=True, capture_output=True, text=True, env=env).stdout.strip()
+    git('init', '-q', '-b', 'main')
+    git('add', '-A')
+    git('commit', '-q', '-m', 'source')
+    head = git('rev-parse', 'HEAD')
+    git('update-ref', 'refs/remotes/origin/main', head)
+    return source, head
+
+
 class BundleTest(unittest.TestCase):
     def test_project_bundles_cover_every_role_and_skill(self):
         roles = sorted(p.stem for p in (SOURCE/'codex/agents').glob('taeguk_*.toml'))
@@ -93,8 +112,8 @@ class BundleTest(unittest.TestCase):
             for path in list(source.rglob('*.md')) + list(source.rglob('*.toml')):
                 path.write_bytes(path.read_bytes().replace(b'\n', b'\r\n'))
             crlf = {**install.project_bundle('codex', source), **install.rules_bundle(source)}
-        with patch.object(install, 'source_version', return_value='unknown'):
-            lf = {**install.project_bundle('codex', SOURCE), **install.rules_bundle(SOURCE)}
+        # The unpacked copy has no commit to pin rule links to; leave the checkout's links on main too.
+        lf = {**install.project_bundle('codex', SOURCE), **install.rules_bundle(SOURCE, link_pin='')}
         self.assertEqual(crlf, lf)
 
     def test_git_ignored_skill_directory_is_skipped_before_validation(self):
@@ -222,12 +241,15 @@ class BundleTest(unittest.TestCase):
                 install.own_repository(source)
 
     def test_claude_role_name_collision_is_rejected(self):
-        roles = install.roles(SOURCE)
-        clash = (roles[0][0].with_name('taeguk_a-b.toml'), {**roles[0][1], 'name': 'taeguk_a-b'})
-        twin = (roles[0][0].with_name('taeguk_a_b.toml'), {**roles[0][1], 'name': 'taeguk_a_b'})
-        with patch.object(install, 'roles', return_value=[clash, twin]):
-            with self.assertRaises(ValueError):
-                install.project_bundle('claude', SOURCE)
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp).resolve()
+            agents = source/'codex/agents'
+            agents.mkdir(parents=True)
+            for name in ('taeguk_a-b', 'taeguk_a_b'):
+                (agents/f'{name}.toml').write_text(f'name = "{name}"\ndescription = "d"\ndeveloper_instructions = "i"\n')
+            with self.assertRaises(ValueError) as caught:
+                install.project_bundle('claude', source)
+        self.assertIn('roles collide', str(caught.exception))
 
     def test_symlinked_cargo_target_is_skipped(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -245,14 +267,13 @@ class BundleTest(unittest.TestCase):
                 self.assertEqual(install.cli_bundle(source), {install.CLI: (b'cli', 0o755)})
 
     def test_failed_ignore_listing_stops_bundle(self):
-        real = subprocess.run
-        def failing(args, **kwargs):
-            if 'ls-files' in args:
-                return subprocess.CompletedProcess(args, 128, b'', b'fatal: index file corrupt')
-            return real(args, **kwargs)
-        with patch.object(install.subprocess, 'run', side_effect=failing):
-            with self.assertRaises(ValueError):
-                install.project_bundle('codex', SOURCE)
+        with tempfile.TemporaryDirectory() as tmp:
+            source, _ = published_source(tmp, ['codex'])
+            # Git still finds the repository but cannot list ignored files from a corrupt index.
+            (source/'.git/index').write_bytes(b'corrupt')
+            with self.assertRaises(ValueError) as caught:
+                install.project_bundle('codex', source)
+        self.assertIn('cannot list Git-ignored source files', str(caught.exception))
 
     def test_cargo_metadata_runs_from_the_crate(self):
         calls = []
@@ -312,11 +333,12 @@ class BundleTest(unittest.TestCase):
             self.assertEqual(install.cli_bundle(source), {install.CLI: (b'cli', 0o755)})
 
     def test_rule_links_follow_installed_commit(self):
-        commit = 'a' * 40
-        with patch.object(install, 'published_commit', return_value=commit):
-            pinned = install.rules_bundle(SOURCE)['.taeguk/rules/approvals.md'][0]
-        with patch.object(install, 'published_commit', return_value=None):
-            unpinned = install.rules_bundle(SOURCE)['.taeguk/rules/approvals.md'][0]
+        with tempfile.TemporaryDirectory() as tmp:
+            source, commit = published_source(tmp, ['docs/rules'])
+            pinned = install.rules_bundle(source)['.taeguk/rules/approvals.md'][0]
+            subprocess.run(['git', '-C', str(source), 'update-ref', '-d', 'refs/remotes/origin/main'], check=True,
+                           env=install.git_env())
+            unpinned = install.rules_bundle(source)['.taeguk/rules/approvals.md'][0]
         self.assertIn(f'taeguk/blob/{commit}/docs/research'.encode(), pinned)
         self.assertNotIn(b'taeguk/blob/main/', pinned)
         self.assertIn(b'taeguk/blob/main/docs/research', unpinned)
@@ -498,8 +520,12 @@ class ScopeTest(unittest.TestCase):
 
     def test_uninstall_does_not_need_current_skills(self):
         install.project(SOURCE, self.root, self.home, ['claude'], 'apply')
-        with patch.object(install, 'skill_files', side_effect=ValueError('bundle has no skills')):
-            result = install.project(SOURCE, self.root, self.home, ['claude'], 'uninstall')
+        source = Path(self.tmp.name)/'source'
+        for name in ('codex/agents', 'docs/rules', 'installer'):
+            shutil.copytree(SOURCE/name, source/name, ignore=shutil.ignore_patterns('__pycache__'))
+        with self.assertRaises(ValueError):
+            install.skill_files(source)
+        result = install.project(source, self.root, self.home, ['claude'], 'uninstall')
         self.assertEqual(result['components']['claude']['status'], 'removed')
 
     def test_crlf_checkout_still_verifies(self):
@@ -616,12 +642,13 @@ class ScopeTest(unittest.TestCase):
         self.assertNotEqual(json.loads(path.read_text())['source_version'], 'older')
 
     def test_check_reuses_recorded_link_pin(self):
-        commit = 'b' * 40
-        with patch.object(install, 'published_commit', return_value=commit):
-            install.project(SOURCE, self.root, self.home, ['claude'], 'apply')
+        source, commit = published_source(Path(self.tmp.name)/'source', ['codex', 'docs/rules', 'installer'])
+        install.project(source, self.root, self.home, ['claude'], 'apply')
         self.assertEqual(json.loads((self.root/install.receipt('rules')).read_text())['link_pin'], commit)
-        with patch.object(install, 'published_commit', return_value=None):
-            result = install.project(SOURCE, self.root, self.home, ['claude'], 'check')
+        subprocess.run(['git', '-C', str(source), 'update-ref', '-d', 'refs/remotes/origin/main'], check=True,
+                       env=install.git_env())
+        self.assertIsNone(install.published_commit(source))
+        result = install.project(source, self.root, self.home, ['claude'], 'check')
         self.assertEqual(result['components']['rules']['status'], 'verified')
 
     def test_partial_uninstall_keeps_shared_components(self):
