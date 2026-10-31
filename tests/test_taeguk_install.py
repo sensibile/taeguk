@@ -516,8 +516,12 @@ class ScopeTest(unittest.TestCase):
 
     def test_uninstall_does_not_need_current_skills(self):
         install.project(SOURCE, self.root, self.home, ['claude'], 'apply')
-        with patch.object(install, 'skill_files', side_effect=ValueError('bundle has no skills')):
-            result = install.project(SOURCE, self.root, self.home, ['claude'], 'uninstall')
+        source = Path(self.tmp.name)/'source'
+        for name in ('codex/agents', 'docs/rules', 'installer'):
+            shutil.copytree(SOURCE/name, source/name, ignore=shutil.ignore_patterns('__pycache__'))
+        with self.assertRaises(ValueError):
+            install.skill_files(source)
+        result = install.project(source, self.root, self.home, ['claude'], 'uninstall')
         self.assertEqual(result['components']['claude']['status'], 'removed')
 
     def test_crlf_checkout_still_verifies(self):
