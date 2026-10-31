@@ -329,11 +329,12 @@ class BundleTest(unittest.TestCase):
             self.assertEqual(install.cli_bundle(source), {install.CLI: (b'cli', 0o755)})
 
     def test_rule_links_follow_installed_commit(self):
-        commit = 'a' * 40
-        with patch.object(install, 'published_commit', return_value=commit):
-            pinned = install.rules_bundle(SOURCE)['.taeguk/rules/approvals.md'][0]
-        with patch.object(install, 'published_commit', return_value=None):
-            unpinned = install.rules_bundle(SOURCE)['.taeguk/rules/approvals.md'][0]
+        with tempfile.TemporaryDirectory() as tmp:
+            source, commit = published_source(tmp, ['docs/rules'])
+            pinned = install.rules_bundle(source)['.taeguk/rules/approvals.md'][0]
+            subprocess.run(['git', '-C', str(source), 'update-ref', '-d', 'refs/remotes/origin/main'], check=True,
+                           env=install.git_env())
+            unpinned = install.rules_bundle(source)['.taeguk/rules/approvals.md'][0]
         self.assertIn(f'taeguk/blob/{commit}/docs/research'.encode(), pinned)
         self.assertNotIn(b'taeguk/blob/main/', pinned)
         self.assertIn(b'taeguk/blob/main/docs/research', unpinned)
