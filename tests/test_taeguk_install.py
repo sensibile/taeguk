@@ -638,12 +638,13 @@ class ScopeTest(unittest.TestCase):
         self.assertNotEqual(json.loads(path.read_text())['source_version'], 'older')
 
     def test_check_reuses_recorded_link_pin(self):
-        commit = 'b' * 40
-        with patch.object(install, 'published_commit', return_value=commit):
-            install.project(SOURCE, self.root, self.home, ['claude'], 'apply')
+        source, commit = published_source(Path(self.tmp.name)/'source', ['codex', 'docs/rules', 'installer'])
+        install.project(source, self.root, self.home, ['claude'], 'apply')
         self.assertEqual(json.loads((self.root/install.receipt('rules')).read_text())['link_pin'], commit)
-        with patch.object(install, 'published_commit', return_value=None):
-            result = install.project(SOURCE, self.root, self.home, ['claude'], 'check')
+        subprocess.run(['git', '-C', str(source), 'update-ref', '-d', 'refs/remotes/origin/main'], check=True,
+                       env=install.git_env())
+        self.assertIsNone(install.published_commit(source))
+        result = install.project(source, self.root, self.home, ['claude'], 'check')
         self.assertEqual(result['components']['rules']['status'], 'verified')
 
     def test_partial_uninstall_keeps_shared_components(self):
