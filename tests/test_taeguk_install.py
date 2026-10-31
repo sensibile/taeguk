@@ -222,12 +222,15 @@ class BundleTest(unittest.TestCase):
                 install.own_repository(source)
 
     def test_claude_role_name_collision_is_rejected(self):
-        roles = install.roles(SOURCE)
-        clash = (roles[0][0].with_name('taeguk_a-b.toml'), {**roles[0][1], 'name': 'taeguk_a-b'})
-        twin = (roles[0][0].with_name('taeguk_a_b.toml'), {**roles[0][1], 'name': 'taeguk_a_b'})
-        with patch.object(install, 'roles', return_value=[clash, twin]):
-            with self.assertRaises(ValueError):
-                install.project_bundle('claude', SOURCE)
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp).resolve()
+            agents = source/'codex/agents'
+            agents.mkdir(parents=True)
+            for name in ('taeguk_a-b', 'taeguk_a_b'):
+                (agents/f'{name}.toml').write_text(f'name = "{name}"\ndescription = "d"\ndeveloper_instructions = "i"\n')
+            with self.assertRaises(ValueError) as caught:
+                install.project_bundle('claude', source)
+        self.assertIn('roles collide', str(caught.exception))
 
     def test_symlinked_cargo_target_is_skipped(self):
         with tempfile.TemporaryDirectory() as tmp:
