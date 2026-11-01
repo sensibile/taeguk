@@ -312,6 +312,21 @@ defmodule Taeguk.StateTest do
     end
   end
 
+  test "API answers a stale revision with 409" do
+    # docs/workflow-state-usage.md: a stale revision is 409.
+    p = fixture("tool")
+    assert {:ok, _} = State.command(p["id"], observation(1))
+    token = Application.fetch_env!(:taeguk, :state_token)
+
+    conn =
+      Plug.Test.conn(:post, "/api/work-items/#{p["id"]}/commands", Jason.encode!(observation(1)))
+      |> Plug.Conn.put_req_header("content-type", "application/json")
+      |> Plug.Conn.put_req_header("x-taeguk-token", token)
+      |> TaegukWeb.Router.call(TaegukWeb.Router.init([]))
+
+    assert conn.status == 409
+  end
+
   test "different work items contend for one resource on separate connections" do
     first = fixture()
     second = fixture()
