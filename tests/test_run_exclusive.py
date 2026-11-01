@@ -78,6 +78,16 @@ class ExclusiveRunTests(unittest.TestCase):
         self.assertFalse(marker.exists())
         self.assertEqual(target.read_text(), 'preserve')
 
+    def test_special_file_lock_does_not_start_command(self):
+        # references/reverification.md: a lock that cannot be opened returns exit 2 without starting
+        # the command; docs/verification-efficiency-retrospective.md: special lock files are refused.
+        os.mkfifo(self.lock)
+        marker = Path(self.tmp.name) / 'should-not-exist'
+        result = self.run_once(f'from pathlib import Path; Path({str(marker)!r}).touch()')
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(marker.exists())
+        self.assertTrue(stat.S_ISFIFO(self.lock.lstat().st_mode))
+
     def run_with_signal_around_spawn(self, signum, after_spawn, code):
         """Deliver a signal to the wrapper as Popen starts or right after it returns."""
         pid_file = Path(self.tmp.name) / 'child.pid'
