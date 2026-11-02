@@ -2131,3 +2131,32 @@ fn tampered_graph_is_rejected() {
     assert!(!ok);
     assert!(v["error"].as_str().unwrap().contains("digest"));
 }
+
+#[test]
+fn languages_are_detected_from_markers_and_tracked_python() {
+    if !available("cargo", "--version") || !available("python3", "--version") {
+        return;
+    }
+    // Without --lang, Cargo.toml selects rust and a tracked .py file selects python
+    // (docs/code-graph-plan.md); a language left out would leave a PASS graph without it.
+    let w = work("rust");
+    fs::write(w.repo().join("gen.py"), "import os\n").unwrap();
+    git(&w.repo(), &["add", "gen.py"]);
+    git(&w.repo(), &["commit", "-qm", "python"]);
+    let (ok, v) = taeguk(&[
+        "graph",
+        "build",
+        w.repo().to_str().unwrap(),
+        "--out",
+        w.graph().to_str().unwrap(),
+    ]);
+    assert!(ok, "{v}");
+    let g: Value = serde_json::from_slice(&fs::read(w.graph()).unwrap()).unwrap();
+    let langs: BTreeSet<&str> = g["analyzers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["lang"].as_str().unwrap())
+        .collect();
+    assert_eq!(langs, BTreeSet::from(["python", "rust"]), "{g}");
+}
