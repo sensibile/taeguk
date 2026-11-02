@@ -2160,3 +2160,35 @@ fn languages_are_detected_from_markers_and_tracked_python() {
         .collect();
     assert_eq!(langs, BTreeSet::from(["python", "rust"]), "{g}");
 }
+
+#[test]
+fn impact_rejects_duplicate_node_ids() {
+    if !available("python3", "--version") {
+        return;
+    }
+    // The digest is not a signature, so impact checks node ids are unique (docs/code-graph-plan.md).
+    let w = work("python");
+    build(&w, "python");
+    let query = || {
+        taeguk(&[
+            "graph",
+            "impact",
+            w.graph().to_str().unwrap(),
+            w.repo().to_str().unwrap(),
+            "--changed",
+            "common.py",
+        ])
+    };
+    let mut g: Value = serde_json::from_slice(&fs::read(w.graph()).unwrap()).unwrap();
+    let version = g["analyzers"][0]["version"].as_str().unwrap().to_string();
+    // The same rewrite without a duplicate is accepted, so the refusal below is the duplicate's.
+    with_version(&w.graph(), &version);
+    let (ok, v) = query();
+    assert!(ok, "{v}");
+    let first = g["nodes"][0].clone();
+    g["nodes"].as_array_mut().unwrap().push(first);
+    fs::write(w.graph(), serde_json::to_string(&g).unwrap()).unwrap();
+    with_version(&w.graph(), &version);
+    let (ok, v) = query();
+    assert!(!ok, "{v}");
+}
